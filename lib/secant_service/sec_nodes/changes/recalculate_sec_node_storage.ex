@@ -1,4 +1,4 @@
-defmodule SecantServicee.SecNodes.Changes.RecalculateSecNodeStorage do
+defmodule SecantService.SecNodes.Changes.RecalculateSecNodeStorage do
   @moduledoc """
   Change to recalculate storage for all parameters of a sec node and transition
   node state from `:processed` to `:archived` when applicable.
@@ -7,7 +7,7 @@ defmodule SecantServicee.SecNodes.Changes.RecalculateSecNodeStorage do
   use Ash.Resource.Change
   require Logger
 
-  alias SecantServicee.SecNodes.SecNode
+  alias SecantService.SecNodes.SecNode
 
   @impl true
   def change(changeset, _opts, _context) do
