@@ -69,10 +69,11 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
         plot_mode = assigns[:plot_mode] || :live
 
-        ifclass = case secop_obj do
-          %SecantService.SecNodes.Parameter{} = _param -> nil
-          %SecantService.SecNodes.Module{} = module -> module.highest_interface_class
-        end
+        ifclass =
+          case secop_obj do
+            %SecantService.SecNodes.Parameter{} = _param -> nil
+            %SecantService.SecNodes.Module{} = module -> module.highest_interface_class
+          end
 
         socket =
           cond do
@@ -162,6 +163,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   def handle_event("request-plotly-data", %{"id" => chart_id}, %{assigns: assigns} = socket) do
     if String.ends_with?(chart_id, "-calib") do
       calib = assigns.calibration_plot.result
+
       {:noreply,
        push_event(socket, "plotly-data-#{chart_id}", %{
          data: calib.data,
@@ -265,7 +267,9 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         :calibration ->
           if socket.assigns.calibration_plot == nil do
             secop_obj = socket.assigns.secop_obj
-            socket |> assign_async(:calibration_plot, fn ->
+
+            socket
+            |> assign_async(:calibration_plot, fn ->
               {:ok, %{calibration_plot: PlotDB.calibration_plot(secop_obj)}}
             end)
           else

@@ -307,9 +307,18 @@ defmodule SecantService.PlotDB do
     Map.put(plot_map, :data, data)
   end
 
-
   # calibratable with scalar data
-  def get_data(%{plotly: nil} = plot_map, value_ts, value_val, value_uncalibrated_ts, value_uncalibrated_val, target_ts, target_val, target_calibrated_ts, target_calibrated_val) do
+  def get_data(
+        %{plotly: nil} = plot_map,
+        value_ts,
+        value_val,
+        value_uncalibrated_ts,
+        value_uncalibrated_val,
+        target_ts,
+        target_val,
+        target_calibrated_ts,
+        target_calibrated_val
+      ) do
     data = [
       %{
         x: value_ts,
@@ -611,15 +620,17 @@ defmodule SecantService.PlotDB do
     end
   end
 
-    def module_plot(module, :calibratable, mode) do
+  def module_plot(module, :calibratable, mode) do
     plot_map = %{mode: mode}
 
     value_param = Enum.find(module.parameters, fn param -> param.name == "value" end)
     target_param = Enum.find(module.parameters, fn param -> param.name == "target" end)
 
-    value_uncalibrated_param = Enum.find(module.parameters, fn param -> param.name == "_value_uncalibrated" end)
-    target_calibrated_param = Enum.find(module.parameters, fn param -> param.name == "_target_calibrated" end)
+    value_uncalibrated_param =
+      Enum.find(module.parameters, fn param -> param.name == "_value_uncalibrated" end)
 
+    target_calibrated_param =
+      Enum.find(module.parameters, fn param -> param.name == "_target_calibrated" end)
 
     if plottable?(value_param) or Map.has_key?(module.custom_properties || %{}, "_plotly") do
       plot_map =
@@ -649,14 +660,22 @@ defmodule SecantService.PlotDB do
 
       plot_map
       |> plot_available(value_val)
-      |> get_data(value_ts, value_val, value_uncalibrated_ts, value_uncalibrated_val, target_ts, target_val, target_calibrated_ts, target_calibrated_val)
+      |> get_data(
+        value_ts,
+        value_val,
+        value_uncalibrated_ts,
+        value_uncalibrated_val,
+        target_ts,
+        target_val,
+        target_calibrated_ts,
+        target_calibrated_val
+      )
       |> get_layout()
       |> Map.put(:config, %{responsive: true, displayModeBar: false})
     else
       not_plottable()
     end
   end
-
 
   def module_plot(_module, :acquisition, mode), do: module_plot(_module, :readable, mode)
   def module_plot(_module, _interface_class, _mode), do: not_plottable()
@@ -673,19 +692,20 @@ defmodule SecantService.PlotDB do
     module_atom = String.to_existing_atom(module.name)
 
     lookup_param_value = fn param_name ->
-        case NodeTable.lookup(
-          {:service, node_id},
-          {:data_report, module_atom, String.to_existing_atom(param_name)}
-          ) do
-          {:ok, %{data_report: [value, _]}} -> value
-          {:error, _} -> nil
-        end
+      case NodeTable.lookup(
+             {:service, node_id},
+             {:data_report, module_atom, String.to_existing_atom(param_name)}
+           ) do
+        {:ok, %{data_report: [value, _]}} -> value
+        {:error, _} -> nil
+      end
     end
 
     # 1. target_limits
     case lookup_param_value.("target_limits") do
       [min, max] when is_number(min) and is_number(max) and min < max ->
         {min * 1.0, max * 1.0}
+
       _ ->
         target_param = Enum.find(module.parameters, fn p -> p.name == "target" end)
         target_datainfo = if target_param, do: target_param.datainfo || %{}, else: %{}
@@ -742,30 +762,27 @@ defmodule SecantService.PlotDB do
       |> Ash.Query.for_read(:get_node_id, %{id: module.id})
       |> Ash.read_first!()
 
-    fwd_coeffs = case NodeTable.lookup(
-           {:service, node_id},
-           {:data_report, String.to_existing_atom(module.name),
-            String.to_existing_atom("_forward_calibration_coefficients")}
-         ) do
-      {:ok, %{data_report: [value, _]}} ->   value
-
-      {:error,_} -> nil
+    fwd_coeffs =
+      case NodeTable.lookup(
+             {:service, node_id},
+             {:data_report, String.to_existing_atom(module.name),
+              String.to_existing_atom("_forward_calibration_coefficients")}
+           ) do
+        {:ok, %{data_report: [value, _]}} -> value
+        {:error, _} -> nil
       end
 
-    inv_coeffs = case NodeTable.lookup(
-           {:service, node_id},
-           {:data_report, String.to_existing_atom(module.name),
-            String.to_existing_atom("_inverse_calibration_coefficients")}
-         ) do
-      {:ok, %{data_report: [value, _]}} ->   value
-
-      {:error,_} -> nil
+    inv_coeffs =
+      case NodeTable.lookup(
+             {:service, node_id},
+             {:data_report, String.to_existing_atom(module.name),
+              String.to_existing_atom("_inverse_calibration_coefficients")}
+           ) do
+        {:ok, %{data_report: [value, _]}} -> value
+        {:error, _} -> nil
       end
-
 
     # Ranges
-
-
 
     case {fwd_coeffs, inv_coeffs} do
       {nil, _} ->
@@ -793,40 +810,107 @@ defmodule SecantService.PlotDB do
 
         data = [
           # --- subplot 1: forward ---
-          %{x: setpoints, y: hw_values, type: "scatter", mode: "lines",
-            name: "hardware value", line: %{color: "steelblue"},
-            xaxis: "x", yaxis: "y"},
-          %{x: setpoints, y: setpoints, type: "scatter", mode: "lines",
-            name: "identity", line: identity_style, opacity: 0.5,
-            showlegend: false, xaxis: "x", yaxis: "y"},
+          %{
+            x: setpoints,
+            y: hw_values,
+            type: "scatter",
+            mode: "lines",
+            name: "hardware value",
+            line: %{color: "steelblue"},
+            xaxis: "x",
+            yaxis: "y"
+          },
+          %{
+            x: setpoints,
+            y: setpoints,
+            type: "scatter",
+            mode: "lines",
+            name: "identity",
+            line: identity_style,
+            opacity: 0.5,
+            showlegend: false,
+            xaxis: "x",
+            yaxis: "y"
+          },
           # --- subplot 2: inverse ---
-          %{x: hw_values, y: calib_readback, type: "scatter", mode: "lines",
-            name: "calibrated readback", line: %{color: "crimson"},
-            xaxis: "x2", yaxis: "y2"},
-          %{x: hw_values, y: hw_values, type: "scatter", mode: "lines",
-            name: "identity2", line: identity_style, opacity: 0.5,
-            showlegend: false, xaxis: "x2", yaxis: "y2"},
+          %{
+            x: hw_values,
+            y: calib_readback,
+            type: "scatter",
+            mode: "lines",
+            name: "calibrated readback",
+            line: %{color: "crimson"},
+            xaxis: "x2",
+            yaxis: "y2"
+          },
+          %{
+            x: hw_values,
+            y: hw_values,
+            type: "scatter",
+            mode: "lines",
+            name: "identity2",
+            line: identity_style,
+            opacity: 0.5,
+            showlegend: false,
+            xaxis: "x2",
+            yaxis: "y2"
+          },
           # --- subplot 3: roundtrip ---
-          %{x: setpoints, y: calib_readback, type: "scatter", mode: "lines",
-            name: "roundtrip result", line: %{color: "seagreen"},
-            xaxis: "x3", yaxis: "y3"},
-          %{x: setpoints, y: setpoints, type: "scatter", mode: "lines",
-            name: "identity3", line: identity_style, opacity: 0.5,
-            showlegend: false, xaxis: "x3", yaxis: "y3"},
+          %{
+            x: setpoints,
+            y: calib_readback,
+            type: "scatter",
+            mode: "lines",
+            name: "roundtrip result",
+            line: %{color: "seagreen"},
+            xaxis: "x3",
+            yaxis: "y3"
+          },
+          %{
+            x: setpoints,
+            y: setpoints,
+            type: "scatter",
+            mode: "lines",
+            name: "identity3",
+            line: identity_style,
+            opacity: 0.5,
+            showlegend: false,
+            xaxis: "x3",
+            yaxis: "y3"
+          },
           # --- subplot 4: error ---
-          %{x: setpoints, y: roundtrip_err, type: "scatter", mode: "lines",
-            name: "roundtrip error", line: %{color: "mediumpurple"},
-            xaxis: "x4", yaxis: "y4"}
+          %{
+            x: setpoints,
+            y: roundtrip_err,
+            type: "scatter",
+            mode: "lines",
+            name: "roundtrip error",
+            line: %{color: "mediumpurple"},
+            xaxis: "x4",
+            yaxis: "y4"
+          }
         ]
 
         layout = %{
           grid: %{rows: 2, columns: 2, pattern: "independent"},
-          xaxis:  %{title: %{text: "Setpoint#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
-          yaxis:  %{title: %{text: "Hardware value#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
-          xaxis2: %{title: %{text: "Raw hardware value#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
-          yaxis2: %{title: %{text: "Calibrated readback#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
+          xaxis: %{title: %{text: "Setpoint#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
+          yaxis: %{
+            title: %{text: "Hardware value#{unit_label}"},
+            gridcolor: "rgba(128,128,128,0.3)"
+          },
+          xaxis2: %{
+            title: %{text: "Raw hardware value#{unit_label}"},
+            gridcolor: "rgba(128,128,128,0.3)"
+          },
+          yaxis2: %{
+            title: %{text: "Calibrated readback#{unit_label}"},
+            gridcolor: "rgba(128,128,128,0.3)"
+          },
           xaxis3: %{title: %{text: "Setpoint#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
-          yaxis3: %{title: %{text: "Calibrated readback#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
+          yaxis3: %{
+            title: %{text: "Calibrated readback#{unit_label}"},
+            gridcolor: "rgba(128,128,128,0.3)"
+          },
           xaxis4: %{title: %{text: "Setpoint#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
           yaxis4: %{
             title: %{text: "Error#{unit_label}"},
@@ -841,18 +925,46 @@ defmodule SecantService.PlotDB do
           height: 700,
           margin: %{t: 50, b: 50, l: 60, r: 20},
           annotations: [
-            %{text: "Forward Calibration: Setpoint → Hardware",
-              showarrow: false, x: 0.225, xref: "paper", y: 1.04, yref: "paper",
-              xanchor: "center", font: %{size: 12}},
-            %{text: "Inverse Calibration: Hardware → Readback",
-              showarrow: false, x: 0.775, xref: "paper", y: 1.04, yref: "paper",
-              xanchor: "center", font: %{size: 12}},
-            %{text: "Roundtrip: Setpoint → Forward → Inverse",
-              showarrow: false, x: 0.225, xref: "paper", y: 0.46, yref: "paper",
-              xanchor: "center", font: %{size: 12}},
-            %{text: "Roundtrip Error",
-              showarrow: false, x: 0.775, xref: "paper", y: 0.46, yref: "paper",
-              xanchor: "center", font: %{size: 12}}
+            %{
+              text: "Forward Calibration: Setpoint → Hardware",
+              showarrow: false,
+              x: 0.225,
+              xref: "paper",
+              y: 1.04,
+              yref: "paper",
+              xanchor: "center",
+              font: %{size: 12}
+            },
+            %{
+              text: "Inverse Calibration: Hardware → Readback",
+              showarrow: false,
+              x: 0.775,
+              xref: "paper",
+              y: 1.04,
+              yref: "paper",
+              xanchor: "center",
+              font: %{size: 12}
+            },
+            %{
+              text: "Roundtrip: Setpoint → Forward → Inverse",
+              showarrow: false,
+              x: 0.225,
+              xref: "paper",
+              y: 0.46,
+              yref: "paper",
+              xanchor: "center",
+              font: %{size: 12}
+            },
+            %{
+              text: "Roundtrip Error",
+              showarrow: false,
+              x: 0.775,
+              xref: "paper",
+              y: 0.46,
+              yref: "paper",
+              xanchor: "center",
+              font: %{size: 12}
+            }
           ]
         }
 

@@ -464,7 +464,7 @@ defmodule SecantServiceWeb.DashboardComponents do
   def dash_command(assigns) do
     ~H"""
     <div class="card mb-4 bg-neutral p-4 shadow-md">
-
+      
     <!-- Parameter Name -->
       <div>
         <div class="flex ">
@@ -485,7 +485,7 @@ defmodule SecantServiceWeb.DashboardComponents do
           >
             {@command.description}
           </.property>
-
+          
     <!-- Optional Properties -->
           <%= if @command.group do %>
             <.property prop_key="Group" key_class="text-neutral-content font-semibold">
@@ -513,7 +513,7 @@ defmodule SecantServiceWeb.DashboardComponents do
               {@command.checkable}
             </.property>
           <% end %>
-
+          
     <!-- Custom Properties -->
           <%= for {property_name, property_value} <- @command.custom_properties || %{} do %>
             <.property
