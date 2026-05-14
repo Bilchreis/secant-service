@@ -6,22 +6,30 @@ services:
     restart: always
     volumes:
       - ./postgres-data:/var/lib/postgresql/data
+    ports:
+      # Bound to loopback only — keeps postgres off the LAN while still reachable
+      # by secop-service (host networking) and mix phx.server on this machine.
+      # 5433 avoids collision with a native postgres install on the default 5432.
+      - 127.0.0.1:5433:5432
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
-    
-
-
 
   secop-service:
     image: ghcr.io/bilchreis/secant-service:latest
     restart: always
     env_file: ".env.example"
-    ports:
-      - 4001:4001
+    # host networking is required for the SECoP UDP broadcast discovery (port 10767)
+    # to reach the physical LAN — Docker's bridge network confines broadcasts to the
+    # virtual network. As a side effect, the container binds port 4001 directly on
+    # the host; the dev server (mix phx.server) uses 4000, so there is no conflict.
+    network_mode: host
+    environment:
+      # 'db' hostname is not resolvable with host networking (no Docker DNS),
+      # so we point directly at localhost where the db container port is mapped.
+      - DATABASE_URL=ecto://postgres:postgres@localhost:5433/secant_service_db
     depends_on:
       db:
         condition: service_healthy
-    
