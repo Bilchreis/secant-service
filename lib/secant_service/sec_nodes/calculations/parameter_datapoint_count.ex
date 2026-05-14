@@ -1,4 +1,4 @@
-defmodule SecantServicee.SecNodes.Calculations.ParameterDatapointCount do
+defmodule SecantService.SecNodes.Calculations.ParameterDatapointCount do
   @moduledoc """
   Calculation to compute datapoint count for parameters.
 
@@ -9,7 +9,7 @@ defmodule SecantServicee.SecNodes.Calculations.ParameterDatapointCount do
 
   use Ash.Resource.Calculation
 
-  alias SecantServicee.SecNodes.ParameterValue
+  alias SecantService.SecNodes.ParameterValue
 
   @aggregate_by_storage_type %{
     int: :parameter_values_ints_count,
