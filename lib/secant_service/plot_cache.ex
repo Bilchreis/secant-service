@@ -50,7 +50,7 @@ defmodule SecantService.PlotCacheDispatcher do
   use GenServer
   require Logger
 
-  @client_pubsub_name :secop_client_pubsub
+  @client_pubsub_name :secant_client_pubsub
 
   def start_link(node_id) do
     GenServer.start_link(__MODULE__, node_id,
