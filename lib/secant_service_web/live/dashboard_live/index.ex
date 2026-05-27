@@ -2,7 +2,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   use SecantServiceWeb, :live_view
 
   alias SecantService.Model
-  alias SecopClient
+  alias SecantClient
   alias NodeDiscover
   alias SEC_Node_Supervisor
 
@@ -47,10 +47,10 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       Logger.info("No active nodes detected")
     end
 
-    Phoenix.PubSub.subscribe(:secop_client_pubsub, "descriptive_data_change")
-    Phoenix.PubSub.subscribe(:secop_client_pubsub, "state_change")
-    Phoenix.PubSub.subscribe(:secop_client_pubsub, "secop_conn_state")
-    Phoenix.PubSub.subscribe(:secop_client_pubsub, "new_node")
+    Phoenix.PubSub.subscribe(:secant_client_pubsub, "descriptive_data_change")
+    Phoenix.PubSub.subscribe(:secant_client_pubsub, "state_change")
+    Phoenix.PubSub.subscribe(:secant_client_pubsub, "secop_conn_state")
+    Phoenix.PubSub.subscribe(:secant_client_pubsub, "new_node")
 
     socket =
       socket

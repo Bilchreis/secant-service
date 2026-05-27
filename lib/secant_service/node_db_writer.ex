@@ -4,7 +4,7 @@ defmodule SecantService.NodeDBWriter do
 
   alias SecantService.SecNodes.ParameterValue
 
-  @pubsub_name :secop_client_pubsub
+  @pubsub_name :secant_client_pubsub
   # Batch parameter values for 5 seconds
   @batch_interval 10_000
   # Safety limit for batch size

@@ -7,7 +7,7 @@ defmodule SecantService.NodeManager do
   alias SecantService.NodeSupervisor
   alias SecantService.DescribeMessageTransformer
 
-  @pubsub_name :secop_client_pubsub
+  @pubsub_name :secant_client_pubsub
   # Check for node changes every minute
   @check_interval 1000 * 60 * 10
 

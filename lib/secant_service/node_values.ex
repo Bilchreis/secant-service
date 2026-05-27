@@ -3,7 +3,7 @@ defmodule SecantService.NodeValues do
   alias NodeTable
   require Logger
 
-  @pubsub_name :secop_client_pubsub
+  @pubsub_name :secant_client_pubsub
 
   def start_link(node_db) do
     state = %{node_db: node_db}
