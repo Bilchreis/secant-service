@@ -11,8 +11,6 @@ defmodule SecantServiceWeb.DashboardComponents do
 
   import SecantServiceWeb.SECoPComponents
   import SecantServiceWeb.Components.ParameterFormFieldComponents
-  import SecantServiceWeb.CoreComponents
-  alias Phoenix.LiveView.JS
 
   defp sort_commands_with_priority(commands) do
     priority_order = [
@@ -464,8 +462,7 @@ defmodule SecantServiceWeb.DashboardComponents do
   def dash_command(assigns) do
     ~H"""
     <div class="card mb-4 bg-neutral p-4 shadow-md">
-      
-    <!-- Parameter Name -->
+      <!-- Parameter Name -->
       <div>
         <div class="flex ">
           <div>
@@ -485,8 +482,8 @@ defmodule SecantServiceWeb.DashboardComponents do
           >
             {@command.description}
           </.property>
-          
-    <!-- Optional Properties -->
+
+          <!-- Optional Properties -->
           <%= if @command.group do %>
             <.property prop_key="Group" key_class="text-neutral-content font-semibold">
               {@command.group}
@@ -513,8 +510,8 @@ defmodule SecantServiceWeb.DashboardComponents do
               {@command.checkable}
             </.property>
           <% end %>
-          
-    <!-- Custom Properties -->
+
+          <!-- Custom Properties -->
           <%= for {property_name, property_value} <- @command.custom_properties || %{} do %>
             <.property
               prop_key={String.replace_prefix(property_name, "_", "")}

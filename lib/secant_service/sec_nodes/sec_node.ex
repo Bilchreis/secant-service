@@ -391,7 +391,7 @@ defmodule SecantService.SecNodes.SecNode do
       public? true
     end
 
-    timestamps(public?: true)
+    timestamps public?: true
   end
 
   relationships do

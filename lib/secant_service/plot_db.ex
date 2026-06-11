@@ -6,7 +6,6 @@ defmodule SecantService.PlotDB do
   alias SecantService.SecNodes.ParameterValue
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.Module
-  alias SecantService.NodeValues
   alias NodeTable
   require Logger
 
@@ -307,6 +306,41 @@ defmodule SecantService.PlotDB do
     Map.put(plot_map, :data, data)
   end
 
+  # drivable with plotly specification
+  def get_data(%{plotly: plotly} = plot_map, value_ts, value_val, target_ts, target_val) do
+    raw_data = %{
+      "value" => %{"timestamp" => value_ts, "value" => value_val},
+      "target" => %{"timestamp" => target_ts, "value" => target_val}
+    }
+
+    data = Map.get(plotly, "data", [])
+
+    processed_cache = build_plot_data_cache(data, raw_data)
+
+    data =
+      Enum.reduce(data, [], fn trace, data_acc ->
+        new_data =
+          Enum.reduce(trace, %{}, fn {key, value}, acc ->
+            acc = Map.put(acc, key, value)
+
+            case value do
+              # Use cached processed data
+              %{"path" => _path, "parameter" => _parameter} ->
+                cache_key = {key, value}
+                Map.put(acc, key, Map.get(processed_cache, cache_key))
+
+              _ ->
+                Map.put(acc, key, value)
+            end
+          end)
+
+        [new_data | data_acc]
+      end)
+
+    data = Enum.reverse(data)
+    Map.put(plot_map, :data, data)
+  end
+
   # calibratable with scalar data
   def get_data(
         %{plotly: nil} = plot_map,
@@ -356,41 +390,6 @@ defmodule SecantService.PlotDB do
       }
     ]
 
-    Map.put(plot_map, :data, data)
-  end
-
-  # drivable with plotly specification
-  def get_data(%{plotly: plotly} = plot_map, value_ts, value_val, target_ts, target_val) do
-    raw_data = %{
-      "value" => %{"timestamp" => value_ts, "value" => value_val},
-      "target" => %{"timestamp" => target_ts, "value" => target_val}
-    }
-
-    data = Map.get(plotly, "data", [])
-
-    processed_cache = build_plot_data_cache(data, raw_data)
-
-    data =
-      Enum.reduce(data, [], fn trace, data_acc ->
-        new_data =
-          Enum.reduce(trace, %{}, fn {key, value}, acc ->
-            acc = Map.put(acc, key, value)
-
-            case value do
-              # Use cached processed data
-              %{"path" => _path, "parameter" => _parameter} ->
-                cache_key = {key, value}
-                Map.put(acc, key, Map.get(processed_cache, cache_key))
-
-              _ ->
-                Map.put(acc, key, value)
-            end
-          end)
-
-        [new_data | data_acc]
-      end)
-
-    data = Enum.reverse(data)
     Map.put(plot_map, :data, data)
   end
 
@@ -677,7 +676,7 @@ defmodule SecantService.PlotDB do
     end
   end
 
-  def module_plot(_module, :acquisition, mode), do: module_plot(_module, :readable, mode)
+  def module_plot(module, :acquisition, mode), do: module_plot(module, :readable, mode)
   def module_plot(_module, _interface_class, _mode), do: not_plottable()
 
   # Evaluate polynomial with ascending-order coefficients [c0, c1, c2, ...]

@@ -9,7 +9,6 @@ defmodule SecantService.SecNodes.Changes.RecalculateParameterStorage do
   """
 
   use Ash.Resource.Change
-  require Ash.Query
   require Logger
 
   @impl true
@@ -50,9 +49,6 @@ defmodule SecantService.SecNodes.Changes.RecalculateParameterStorage do
     rescue
       e ->
         {:error, Exception.message(e)}
-    catch
-      :error, reason ->
-        {:error, inspect(reason)}
     end
   end
 end

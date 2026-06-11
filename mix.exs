@@ -5,7 +5,7 @@ defmodule SecantService.MixProject do
     [
       app: :secant_service,
       version: "0.0.15",
-      elixir: "~> 1.19.3",
+      elixir: "~> 1.20.1",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
@@ -83,6 +83,7 @@ defmodule SecantService.MixProject do
       {:exprintf, "~> 0.2.1"},
       {:pythonx, "~> 0.4.4"},
       {:flame_on, git: "https://github.com/DockYard/flame_on.git", only: :dev},
+      {:meck, "~> 1.0", override: true},
       {:benchee, "~> 1.5", only: :dev},
       {:igniter, "~> 0.6", only: :dev},
       {:usage_rules, "~> 0.1.26", only: :dev}

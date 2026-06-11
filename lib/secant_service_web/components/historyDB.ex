@@ -460,7 +460,6 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         <% :empty -> %>
           <!-- Nothing is rendered here, for example communicator modules
             that do not have a main param like value -->
-
         <% _ -> %>
           <div class="flex items-center justify-center h-full text-center bg-gray-300 p-4 rounded-lg">
             <span class="text-gray-800">Unknown display mode</span>

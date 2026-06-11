@@ -284,13 +284,13 @@ defmodule SecantServiceWeb.BrowseComponents do
         >
           {@parameter.description}
         </.property>
-        
-    <!-- Readonly -->
+
+        <!-- Readonly -->
         <.property prop_key="Readonly" key_class="text-neutral-content/80 font-semibold">
           {@parameter.readonly}
         </.property>
-        
-    <!-- Optional Properties -->
+
+        <!-- Optional Properties -->
         <%= if @parameter.group do %>
           <.property prop_key="Group" key_class="text-neutral-content/80 font-semibold"></.property>
         <% end %>
@@ -321,8 +321,8 @@ defmodule SecantServiceWeb.BrowseComponents do
             > <.enum enum={@parameter.datainfo} />
           </.property>
         <% end %>
-        
-    <!-- Custom Properties -->
+
+        <!-- Custom Properties -->
         <%= for {property_name, property_value} <- @parameter.custom_properties do %>
           <.property
             prop_key={String.replace_prefix(property_name, "_", "")}
@@ -336,8 +336,8 @@ defmodule SecantServiceWeb.BrowseComponents do
           <.status_tuple status_tuple={@parameter.datainfo} />
         <% end %>
       </ul>
-      
-    <!-- Datainfo -->
+
+      <!-- Datainfo -->
       <.datainfo_collapsible datainfo={@parameter_pretty} />
     </div>
     """
@@ -355,8 +355,7 @@ defmodule SecantServiceWeb.BrowseComponents do
 
     ~H"""
     <div class="card mb-4 bg-neutral p-4 shadow-md">
-      
-    <!-- Parameter Name -->
+      <!-- Parameter Name -->
       <div>
         <span class="text-lg font-bold text-neutral-content">
           {Util.display_name(@command.name)}:
@@ -370,8 +369,8 @@ defmodule SecantServiceWeb.BrowseComponents do
           >
             {@command.description}
           </.property>
-          
-    <!-- Optional Properties -->
+
+          <!-- Optional Properties -->
           <%= if @command.group do %>
             <.property prop_key="Group" key_class="text-neutral-content font-semibold">
               {@command.group}
@@ -398,8 +397,8 @@ defmodule SecantServiceWeb.BrowseComponents do
               {@command.checkable}
             </.property>
           <% end %>
-          
-    <!-- Custom Properties -->
+
+          <!-- Custom Properties -->
           <%= for {property_name, property_value} <- @command.custom_properties || %{} do %>
             <.property
               prop_key={String.replace_prefix(property_name, "_", "")}
@@ -410,8 +409,8 @@ defmodule SecantServiceWeb.BrowseComponents do
           <% end %>
         </ul>
       </div>
-      
-    <!-- Datainfo -->
+
+      <!-- Datainfo -->
       <.datainfo_collapsible datainfo={@datainfo_pretty} />
     </div>
     """
