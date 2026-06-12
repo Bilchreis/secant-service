@@ -101,27 +101,25 @@ defmodule SecantService.PlotDB do
     # This makes "10m" the default
     active_button_index = 1
 
-    # Calculate the initial range based on the active button
+    # Calculate the initial range based on the active button.
+    # Use Unix ms so data and range are interpreted consistently by Plotly
+    # (Plotly strips timezone from ISO strings, causing a UTC vs local time mismatch).
     active_button = Enum.at(buttons, active_button_index)
-    now = DateTime.utc_now()
+    now_ms = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
     initial_range =
       case active_button do
         %{step: "all"} ->
-          # Let Plotly auto-range for "all"
           nil
 
         %{step: "minute", count: count} ->
-          start_time = DateTime.add(now, -count * 60, :second)
-          [DateTime.to_iso8601(start_time), DateTime.to_iso8601(now)]
+          [now_ms - count * 60 * 1000, now_ms]
 
         %{step: "hour", count: count} ->
-          start_time = DateTime.add(now, -count * 3600, :second)
-          [DateTime.to_iso8601(start_time), DateTime.to_iso8601(now)]
+          [now_ms - count * 3600 * 1000, now_ms]
 
         %{step: "day", count: count} ->
-          start_time = DateTime.add(now, -count * 86400, :second)
-          [DateTime.to_iso8601(start_time), DateTime.to_iso8601(now)]
+          [now_ms - count * 86_400 * 1000, now_ms]
 
         _ ->
           nil
