@@ -46,7 +46,6 @@ defmodule SecantService.SecNodes.ParameterValueArrayDouble do
 
     read :read do
       primary? true
-      prepare build(sort: [timestamp: :asc])
     end
 
     read :for_parameter do

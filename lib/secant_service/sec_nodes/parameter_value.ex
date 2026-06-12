@@ -164,11 +164,8 @@ defmodule SecantService.SecNodes.ParameterValue do
   # Create a value with proper type handling based on parameter type
   def create_changeset(raw_value, parameter, timestamp, qualifiers \\ %{}) do
     param_val_map = create_map(raw_value, parameter, timestamp, qualifiers)
-
     schema_module = get_resource_module(parameter)
-
-    struct(schema_module)
-    |> schema_module.changeset(param_val_map)
+    Ash.Changeset.for_create(schema_module, :create, param_val_map)
   end
 
   # Get raw value (handles all storage types)
@@ -218,12 +215,7 @@ defmodule SecantService.SecNodes.ParameterValue do
         actual_value = raw_value * scale
         # Convert Decimal to float for formatting
         # Ensure we have a float for formatting
-        float_value =
-          cond do
-            is_float(actual_value) -> actual_value
-            is_integer(actual_value) -> actual_value * 1.0
-            true -> actual_value
-          end
+        float_value = actual_value * 1.0
 
         format_string = parameter.datainfo["fmtstr"] || "%.6g"
 
