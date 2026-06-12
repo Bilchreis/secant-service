@@ -5,6 +5,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   alias SecantService.PlotDB
   alias SecantService.SecNodes.ParameterValue
   alias Phoenix.LiveView.JS
+  alias Phoenix.LiveView.AsyncResult
 
   defp get_tabledata(secop_obj, params \\ %{}) do
     parameter = get_parameter(secop_obj)
@@ -81,7 +82,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
               assign(socket, :display_mode, :graph)
               |> assign(:plottable, true)
               |> assign(:plot_mode, plot_mode)
-              |> assign_async(:plot, fn -> {:ok, %{plot: PlotDB.init(secop_obj, plot_mode)}} end)
+              |> assign(:plot, AsyncResult.loading())
+              |> start_async(:load_plot, fn -> PlotDB.init(secop_obj, plot_mode) end)
 
             tabular?(secop_obj) ->
               assign(socket, :display_mode, :table)
@@ -236,7 +238,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
               plot_mode = socket.assigns[:plot_mode] || :live
 
               socket
-              |> assign_async(:plot, fn -> {:ok, %{plot: PlotDB.init(secop_obj, plot_mode)}} end)
+              |> assign(:plot, AsyncResult.loading())
+              |> start_async(:load_plot, fn -> PlotDB.init(secop_obj, plot_mode) end)
             else
               socket
             end
@@ -281,6 +284,29 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       end
 
     {:noreply, assign(socket, :display_mode, display_mode)}
+  end
+
+  @impl true
+  def handle_async(:load_plot, {:ok, plot}, socket) do
+    socket = assign(socket, :plot, AsyncResult.ok(socket.assigns.plot, plot))
+
+    socket =
+      if socket.assigns.display_mode == :graph and Map.get(plot, :plottable) and
+           Map.get(plot, :data) do
+        push_event(socket, "plotly-data-#{socket.assigns.id}", %{
+          data: plot.data,
+          layout: plot.layout,
+          config: plot.config
+        })
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_async(:load_plot, {:exit, reason}, socket) do
+    {:noreply, assign(socket, :plot, AsyncResult.failed(socket.assigns.plot, {:exit, reason}))}
   end
 
   @impl true
