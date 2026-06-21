@@ -234,7 +234,7 @@ defmodule SecantService.PlotDB do
       %{
         x: value_ts,
         y: value_val,
-        type: "scatter",
+        type: "scattergl",
         mode: "lines+markers",
         name: "value",
         marker: %{size: @markersize}
@@ -286,7 +286,7 @@ defmodule SecantService.PlotDB do
       %{
         x: value_ts,
         y: value_val,
-        type: "scatter",
+        type: "scattergl",
         mode: "lines+markers",
         name: "value",
         marker: %{size: @markersize}
@@ -294,7 +294,7 @@ defmodule SecantService.PlotDB do
       %{
         x: target_ts,
         y: target_val,
-        type: "scatter",
+        type: "scattergl",
         mode: "lines+markers",
         name: "target",
         marker: %{size: @markersize}
@@ -355,7 +355,7 @@ defmodule SecantService.PlotDB do
       %{
         x: value_ts,
         y: value_val,
-        type: "scatter",
+        type: "scattergl",
         mode: "lines+markers",
         name: "value",
         marker: %{size: @markersize}
@@ -363,7 +363,7 @@ defmodule SecantService.PlotDB do
       %{
         x: target_ts,
         y: target_val,
-        type: "scatter",
+        type: "scattergl",
         mode: "lines+markers",
         name: "target",
         marker: %{size: @markersize}
@@ -371,7 +371,7 @@ defmodule SecantService.PlotDB do
       %{
         x: value_uncalibrated_ts,
         y: value_uncalibrated_val,
-        type: "scatter",
+        type: "scattergl",
         mode: "lines+markers",
         name: "_value_uncalibrated",
         marker: %{size: @markersize},
@@ -380,7 +380,7 @@ defmodule SecantService.PlotDB do
       %{
         x: target_calibrated_ts,
         y: target_calibrated_val,
-        type: "scatter",
+        type: "scattergl",
         mode: "lines+markers",
         name: "_target_calibrated",
         marker: %{size: @markersize},
@@ -810,7 +810,7 @@ defmodule SecantService.PlotDB do
           %{
             x: setpoints,
             y: hw_values,
-            type: "scatter",
+            type: "scattergl",
             mode: "lines",
             name: "hardware value",
             line: %{color: "steelblue"},
@@ -820,7 +820,7 @@ defmodule SecantService.PlotDB do
           %{
             x: setpoints,
             y: setpoints,
-            type: "scatter",
+            type: "scattergl",
             mode: "lines",
             name: "identity",
             line: identity_style,
@@ -833,7 +833,7 @@ defmodule SecantService.PlotDB do
           %{
             x: hw_values,
             y: calib_readback,
-            type: "scatter",
+            type: "scattergl",
             mode: "lines",
             name: "calibrated readback",
             line: %{color: "crimson"},
@@ -843,7 +843,7 @@ defmodule SecantService.PlotDB do
           %{
             x: hw_values,
             y: hw_values,
-            type: "scatter",
+            type: "scattergl",
             mode: "lines",
             name: "identity2",
             line: identity_style,
@@ -856,7 +856,7 @@ defmodule SecantService.PlotDB do
           %{
             x: setpoints,
             y: calib_readback,
-            type: "scatter",
+            type: "scattergl",
             mode: "lines",
             name: "roundtrip result",
             line: %{color: "seagreen"},
@@ -866,7 +866,7 @@ defmodule SecantService.PlotDB do
           %{
             x: setpoints,
             y: setpoints,
-            type: "scatter",
+            type: "scattergl",
             mode: "lines",
             name: "identity3",
             line: identity_style,
@@ -879,7 +879,7 @@ defmodule SecantService.PlotDB do
           %{
             x: setpoints,
             y: roundtrip_err,
-            type: "scatter",
+            type: "scattergl",
             mode: "lines",
             name: "roundtrip error",
             line: %{color: "mediumpurple"},
