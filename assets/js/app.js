@@ -59,12 +59,16 @@ Hooks.EChartsChart = {
       (echartsOption.series || []).forEach((s, i) => {
         this._seriesData[i] = s.data || [];
       });
-      // Seed min/max from initial historical data
-      if (this._arrayLen != null) {
+      // Seed min/max from initial data and bake into the option (visualMap present = heatmap)
+      if (echartsOption.visualMap) {
         for (const p of (this._seriesData[0] || [])) {
           const v = p[2];
           if (this._visualMapMin === null || v < this._visualMapMin) this._visualMapMin = v;
           if (this._visualMapMax === null || v > this._visualMapMax) this._visualMapMax = v;
+        }
+        if (this._visualMapMin !== null) {
+          const vMax = this._visualMapMax === this._visualMapMin ? this._visualMapMax + 1 : this._visualMapMax;
+          echartsOption.visualMap = { ...echartsOption.visualMap, min: this._visualMapMin, max: vMax };
         }
       }
 
