@@ -229,10 +229,6 @@ defmodule SecantService.PlotDB do
 
     array_len = value_val |> List.first([]) |> length()
 
-    members = get_in(parameter.datainfo, ["members"]) || %{}
-    value_min = Map.get(members, "min")
-    value_max = Map.get(members, "max")
-
     series = [
       %{
         type: "scatter",
@@ -248,8 +244,6 @@ defmodule SecantService.PlotDB do
     |> Map.put(:series, series)
     |> Map.put(:array_len, array_len)
     |> Map.put(:plot_type, :array_heatmap)
-    |> Map.put(:value_min, value_min)
-    |> Map.put(:value_max, value_max)
   end
 
   defp get_layout_array(%{array_len: array_len, mode: mode} = plot_map) do
@@ -269,20 +263,14 @@ defmodule SecantService.PlotDB do
       "#a50026"
     ]
 
-    value_min = Map.get(plot_map, :value_min)
-    value_max = Map.get(plot_map, :value_max)
-
-    visual_map =
-      %{
-        calculable: true,
-        orient: "vertical",
-        right: 0,
-        top: "center",
-        dimension: 2,
-        inRange: %{color: color_scale}
-      }
-      |> then(fn vm -> if value_min != nil, do: Map.put(vm, :min, value_min), else: vm end)
-      |> then(fn vm -> if value_max != nil, do: Map.put(vm, :max, value_max), else: vm end)
+    visual_map = %{
+      calculable: true,
+      orient: "vertical",
+      right: 0,
+      top: "center",
+      dimension: 2,
+      inRange: %{color: color_scale}
+    }
 
     base_option = %{
       animation: false,

@@ -41,6 +41,8 @@ Hooks.EChartsChart = {
     this._activeButton = null;
     this._pendingOption = null; // buffered if server data arrives before chart is ready
     this._arrayLen = null; // non-null for heatmap plots; drives yAxis.max updates
+    this._visualMapMin = null; // running min/max for heatmap color scale
+    this._visualMapMax = null;
 
     this._flushInterval = setInterval(() => this._flushBuffer(), 1000);
 
@@ -52,9 +54,19 @@ Hooks.EChartsChart = {
       this._arrayLen = _arrayLen != null ? _arrayLen : null;
 
       this._seriesData = {};
+      this._visualMapMin = null;
+      this._visualMapMax = null;
       (echartsOption.series || []).forEach((s, i) => {
         this._seriesData[i] = s.data || [];
       });
+      // Seed min/max from initial historical data
+      if (this._arrayLen != null) {
+        for (const p of (this._seriesData[0] || [])) {
+          const v = p[2];
+          if (this._visualMapMin === null || v < this._visualMapMin) this._visualMapMin = v;
+          if (this._visualMapMax === null || v > this._visualMapMax) this._visualMapMax = v;
+        }
+      }
 
       if (this._chart) {
         this._applyInitialOption(echartsOption);
@@ -72,6 +84,14 @@ Hooks.EChartsChart = {
       (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
         if (!this._seriesData[seriesIndex]) this._seriesData[seriesIndex] = [];
         this._seriesData[seriesIndex].push(...data);
+        // Update running min/max for heatmap series (values at index 2)
+        if (this._arrayLen != null && seriesIndex === 0) {
+          for (const p of data) {
+            const v = p[2];
+            if (this._visualMapMin === null || v < this._visualMapMin) this._visualMapMin = v;
+            if (this._visualMapMax === null || v > this._visualMapMax) this._visualMapMax = v;
+          }
+        }
       });
       if (arrayLen != null && arrayLen !== this._arrayLen) {
         this._arrayLen = arrayLen;
@@ -215,6 +235,10 @@ Hooks.EChartsChart = {
     if (this._arrayLen != null) {
       patch.yAxis = { max: this._arrayLen - 1 };
       patch.animation = false;
+      if (this._visualMapMin !== null && this._visualMapMax !== null) {
+        const vMax = this._visualMapMax === this._visualMapMin ? this._visualMapMax + 1 : this._visualMapMax;
+        patch.visualMap = { min: this._visualMapMin, max: vMax };
+      }
     }
 
     try {
