@@ -23,192 +23,213 @@ import { LiveSocket } from "phoenix_live_view";
 import { hooks as colocatedHooks } from "phoenix-colocated/secant_service";
 import topbar from "../vendor/topbar";
 
-// Import Plotly.js
-import Plotly from "plotly.js-dist-min";
+import * as echarts from "echarts";
 
 let csrfToken = document
   .querySelector("meta[name='csrf-token']")
   .getAttribute("content");
 
-const maxPoints = 20000; // Default max points for extendTraces
+const maxPoints = 20000;
 
-// Add this to your Hooks object
 let Hooks = {};
 
-Hooks.PlotlyChart = {
+Hooks.EChartsChart = {
   mounted() {
-    // Buffer for incoming trace data: { traceIndex -> { x: [], y: [] } }
-    this._traceBuffer = {};
+    // seriesIndex → [[ts, val], ...]  — maintained across flushes for windowing
+    this._seriesData = {};
+    this._rangeButtons = null;
+    this._activeButton = null;
+    this._pendingOption = null; // buffered if server data arrives before chart is ready
+    this._arrayLen = null; // non-null for heatmap plots; drives yAxis.max updates
 
-    // Flush buffered trace data to Plotly at a fixed render rate (2s),
-    // decoupled from however often the server sends push_events.
-    this._flushInterval = setInterval(() => this._flushTraceBuffer(), 3000);
+    this._flushInterval = setInterval(() => this._flushBuffer(), 1000);
 
-    // Send the chart ID when requesting data
-    this.handleEvent(
-      `plotly-data-${this.el.id}`,
-      ({ data, layout, config }) => {
-        // Only update if this event is for this chart or if no ID is specified
+    // Register handlers immediately — server may send data before rAF fires (eager push)
+    this.handleEvent(`echarts-data-${this.el.id}`, ({ option }) => {
+      const { _rangeButtons, _activeButton, _arrayLen, ...echartsOption } = option;
+      this._rangeButtons = _rangeButtons || null;
+      this._activeButton = _activeButton != null ? _activeButton : null;
+      this._arrayLen = _arrayLen != null ? _arrayLen : null;
 
-        // Get the loading element ID from data attribute
-        const loadingId = this.el.dataset.loadingId;
-        const loadingElement = document.getElementById(loadingId);
+      this._seriesData = {};
+      (echartsOption.series || []).forEach((s, i) => {
+        this._seriesData[i] = s.data || [];
+      });
 
-        // After Plotly is initialized and chart is rendered
-        Plotly.newPlot(this.el, data, layout, config).then(() => {
-          // Hide the loading overlay when Plotly is ready
-          if (loadingElement) {
-            loadingElement.style.display = "none";
-          }
-        });
-      },
-    );
-
-    this.handleEvent("plotly-update", ({ data, layout, config }) => {
-      // Only update if this event is for this chart or if no ID is specified
-
-      Plotly.react(this.el, data, layout || {});
-
-      // Explicitly null out references to help garbage collection
-      data = null;
-      layout = null;
-      config = null;
+      if (this._chart) {
+        this._applyInitialOption(echartsOption);
+      } else {
+        this._pendingOption = echartsOption;
+      }
     });
 
-    // Buffer incoming trace updates instead of calling Plotly immediately.
-    // The _flushTraceBuffer timer will drain the buffer and call extendTraces once.
-    this.handleEvent(
-      `extend-traces-${this.el.id}`,
-      ({ x, y, traceIndices }) => {
-        const indices = traceIndices || [0];
-        indices.forEach((traceIdx, i) => {
-          if (!this._traceBuffer[traceIdx]) {
-            this._traceBuffer[traceIdx] = { x: [], y: [] };
-          }
-          this._traceBuffer[traceIdx].x.push(...x[i]);
-          this._traceBuffer[traceIdx].y.push(...y[i]);
-        });
-      },
-    );
+    this.handleEvent("chart-update", ({ option }) => {
+      const { _rangeButtons, _activeButton, ...echartsOption } = option;
+      this._chart && this._chart.setOption(echartsOption, { notMerge: true });
+    });
+
+    this.handleEvent(`extend-chart-${this.el.id}`, ({ seriesUpdates, arrayLen }) => {
+      (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
+        if (!this._seriesData[seriesIndex]) this._seriesData[seriesIndex] = [];
+        this._seriesData[seriesIndex].push(...data);
+      });
+      if (arrayLen != null && arrayLen !== this._arrayLen) {
+        this._arrayLen = arrayLen;
+      }
+    });
 
     this._toggleRangeslider = (e) => {
-      if (e.target.dataset.chartId === this.el.id) {
-        const currentVisible =
-          this.el.layout?.xaxis?.rangeslider?.visible ?? false;
-        Plotly.relayout(this.el, {
-          "xaxis.rangeslider.visible": !currentVisible,
-        });
-      }
+      if (e.target.dataset.chartId !== this.el.id || !this._chart) return;
+      const currentOption = this._chart.getOption();
+      const hasSlider = (currentOption.dataZoom || []).some(
+        (dz) => dz.type === "slider",
+      );
+      this._chart.setOption(
+        { dataZoom: hasSlider ? [] : [{ type: "slider", xAxisIndex: 0 }] },
+        { replaceMerge: ["dataZoom"] },
+      );
     };
     document.addEventListener("toggle-rangeslider", this._toggleRangeslider);
 
-    // Handle cleanup event
-    this.handleEvent(`cleanup-plots`, () => {
+    this.handleEvent("cleanup-charts", () => {
       this.destroyed();
     });
 
-    // Purge plot when a parent modal closes
     this._onCloseModal = () => {
       if (this.el.closest("dialog")) {
-        Plotly.purge(this.el);
+        this._disposeChart();
       }
     };
     window.addEventListener("myapp:close-modal", this._onCloseModal);
 
-    // Request initial data when the hook is mounted, include the chart ID
-    this.pushEventTo(this.el, "request-plotly-data", { id: this.el.id });
+    // Defer echarts.init until after paint so clientWidth/clientHeight are non-zero
+    requestAnimationFrame(() => {
+      if (!this.el) return;
+      this._chart = echarts.init(this.el, null, { renderer: "canvas" });
+
+      this._resizeObserver = new ResizeObserver(() => {
+        this._chart && this._chart.resize();
+      });
+      this._resizeObserver.observe(this.el);
+
+      // Apply option that arrived before the chart was ready
+      if (this._pendingOption) {
+        this._applyInitialOption(this._pendingOption);
+        this._pendingOption = null;
+      } else {
+        // Normal path: request data now that chart is initialized
+        this.pushEventTo(this.el, "request-chart-data", { id: this.el.id });
+      }
+    });
   },
 
-  _flushTraceBuffer() {
-    if (!this.el._fullData) return;
+  _applyInitialOption(echartsOption) {
+    this._chart.setOption(echartsOption, { notMerge: true });
+    const loadingEl = document.getElementById(this.el.dataset.loadingId);
+    if (loadingEl) loadingEl.style.display = "none";
+    this._renderRangeButtons();
+  },
 
-    const indices = Object.keys(this._traceBuffer).map(Number);
-    if (indices.length === 0) return;
+  _disposeChart() {
+    if (this._chart) {
+      this._chart.dispose();
+      this._chart = null;
+    }
+  },
 
-    // Drain the buffer atomically so concurrent events don't race
-    const buffer = this._traceBuffer;
-    this._traceBuffer = {};
+  _renderRangeButtons() {
+    const buttonsEl = document.getElementById(`range-buttons-${this.el.id}`);
+    if (!buttonsEl || !this._rangeButtons) return;
 
-    const sortedIndices = indices.sort((a, b) => a - b);
-    const xData = sortedIndices.map((i) => buffer[i].x);
-    const yData = sortedIndices.map((i) => buffer[i].y);
+    buttonsEl.innerHTML = "";
+    this._rangeButtons.forEach((btn, index) => {
+      const el = document.createElement("button");
+      el.textContent = btn.label;
+      el.className =
+        "btn btn-xs " +
+        (index === this._activeButton ? "btn-primary" : "btn-neutral");
+      el.addEventListener("click", () => {
+        this._activeButton = index;
+        buttonsEl
+          .querySelectorAll("button")
+          .forEach((b, i) =>
+            b.classList.toggle("btn-primary", i === index),
+          );
+        buttonsEl
+          .querySelectorAll("button")
+          .forEach((b, i) =>
+            b.classList.toggle("btn-neutral", i !== index),
+          );
+
+        const now = Date.now();
+        const { xMin, xMax } = this._computeRange(btn, now);
+        if (xMin !== null) {
+          this._chart.setOption({ xAxis: { min: xMin, max: xMax } });
+        } else {
+          // "all" — remove explicit range constraints
+          this._chart.setOption({ xAxis: { min: null, max: null } });
+        }
+      });
+      buttonsEl.appendChild(el);
+    });
+  },
+
+  _computeRange(btn, now) {
+    if (btn.step === "all") return { xMin: null, xMax: null };
+    const msMap = { minute: 60_000, hour: 3_600_000, day: 86_400_000 };
+    const windowMs = (msMap[btn.step] || 0) * (btn.count || 1);
+    return { xMin: now - windowMs, xMax: now };
+  },
+
+  _flushBuffer() {
+    if (!this._chart || !this._rangeButtons) return;
+
+    const hasData = Object.values(this._seriesData).some(
+      (d) => d.length > 0,
+    );
+    if (!hasData) return;
+
+    const now = Date.now();
+
+
+    Object.keys(this._seriesData).forEach((idx) => {
+      const d = this._seriesData[idx];
+      if (d.length > maxPoints) {
+        this._seriesData[idx] = d.slice(d.length - maxPoints);
+      }
+    });
+
+    const updatedSeries = Object.keys(this._seriesData).map((idx) => ({
+      data: this._seriesData[idx],
+    }));
+
+    const patch = { series: updatedSeries };
+
+    // Only slide the x-axis window for live mode (has range buttons)
+    if (this._rangeButtons && this._activeButton != null) {
+      const btn = this._rangeButtons[this._activeButton];
+      const { xMin, xMax } = this._computeRange(btn, now);
+      if (xMin !== null) patch.xAxis = { min: xMin, max: xMax };
+    }
+
+    if (this._arrayLen != null) {
+      patch.yAxis = { max: this._arrayLen - 1 };
+      patch.animation = false;
+    }
 
     try {
-      Plotly.extendTraces(
-        this.el,
-        { x: xData, y: yData },
-        sortedIndices,
-        maxPoints,
-      );
-
-      // Update x-axis range once per flush, not once per incoming event
-      const now = new Date();
-      const layout = this.el.layout;
-      const currentXRange = layout.xaxis.range;
-      let shouldUpdateRange = false;
-      let newRange = null;
-
-      const rangeSelector = layout.xaxis.rangeselector;
-      const activeButton = rangeSelector ? rangeSelector.activebutton : null;
-
-      if (activeButton !== null && activeButton !== undefined) {
-        const button = rangeSelector.buttons[activeButton];
-        if (button.step !== "all") {
-          let startTime;
-          if (button.step === "minute") {
-            startTime = new Date(now.getTime() - button.count * 60 * 1000);
-          } else if (button.step === "hour") {
-            startTime = new Date(
-              now.getTime() - button.count * 60 * 60 * 1000,
-            );
-          } else if (button.step === "day") {
-            startTime = new Date(
-              now.getTime() - button.count * 24 * 60 * 60 * 1000,
-            );
-          }
-          if (startTime) {
-            newRange = [startTime, now];
-            shouldUpdateRange = true;
-          }
-        }
-      } else if (currentXRange && currentXRange.length === 2) {
-        const rightEdge = new Date(currentXRange[1]);
-        const timeDiff = Math.abs(rightEdge.getTime() - now.getTime());
-        if (timeDiff < 60000) {
-          const windowSize =
-            rightEdge.getTime() - new Date(currentXRange[0]).getTime();
-          newRange = [new Date(now.getTime() - windowSize), now];
-          shouldUpdateRange = true;
-        }
-      } else {
-        newRange = [new Date(now.getTime() - 10 * 60 * 1000), now];
-        shouldUpdateRange = true;
-      }
-
-      if (shouldUpdateRange && newRange) {
-        Plotly.relayout(this.el, { "xaxis.range": newRange });
-      }
+      this._chart.setOption(patch);
     } catch (error) {
-      console.error("Error flushing trace buffer:", error);
+      console.error("ECharts flush error:", error);
     }
   },
 
   destroyed() {
-    if (this._flushInterval) {
-      clearInterval(this._flushInterval);
-    }
-    if (this._toggleRangeslider) {
-      document.removeEventListener(
-        "toggle-rangeslider",
-        this._toggleRangeslider,
-      );
-    }
-    if (this._onCloseModal) {
-      window.removeEventListener("myapp:close-modal", this._onCloseModal);
-    }
-    if (this.el) {
-      Plotly.purge(this.el);
-    }
+    clearInterval(this._flushInterval);
+    this._resizeObserver && this._resizeObserver.disconnect();
+    document.removeEventListener("toggle-rangeslider", this._toggleRangeslider);
+    window.removeEventListener("myapp:close-modal", this._onCloseModal);
+    this._disposeChart();
   },
 };
 

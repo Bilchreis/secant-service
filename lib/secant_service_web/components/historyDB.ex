@@ -150,7 +150,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
               parameter
             )
 
-          push_event(socket, "extend-traces-#{socket.assigns.id}", update_data)
+          push_event(socket, "extend-chart-#{socket.assigns.id}", update_data)
         else
           socket
         end
@@ -162,22 +162,18 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   @impl true
-  def handle_event("request-plotly-data", %{"id" => chart_id}, %{assigns: assigns} = socket) do
+  def handle_event("request-chart-data", %{"id" => chart_id}, %{assigns: assigns} = socket) do
     if String.ends_with?(chart_id, "-calib") do
       calib = assigns.calibration_plot.result
 
       {:noreply,
-       push_event(socket, "plotly-data-#{chart_id}", %{
-         data: calib.data,
-         layout: calib.layout,
-         config: calib.config
+       push_event(socket, "echarts-data-#{chart_id}", %{
+         option: calib.option
        })}
     else
       {:noreply,
-       push_event(socket, "plotly-data-#{socket.assigns.id}", %{
-         data: assigns.plot.result.data,
-         layout: assigns.plot.result.layout,
-         config: assigns.plot.result.config
+       push_event(socket, "echarts-data-#{socket.assigns.id}", %{
+         option: assigns.plot.result.option
        })}
     end
   end
@@ -250,10 +246,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           # trip race between pushEventTo → request-plotly-data → push_event.
           case socket.assigns[:plot] do
             %{ok?: true, result: plot} ->
-              push_event(socket, "plotly-data-#{socket.assigns.id}", %{
-                data: plot.data,
-                layout: plot.layout,
-                config: plot.config
+              push_event(socket, "echarts-data-#{socket.assigns.id}", %{
+                option: plot.option
               })
 
             _ ->
@@ -292,11 +286,9 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
     socket =
       if socket.assigns.display_mode == :graph and Map.get(plot, :plottable) and
-           Map.get(plot, :data) do
-        push_event(socket, "plotly-data-#{socket.assigns.id}", %{
-          data: plot.data,
-          layout: plot.layout,
-          config: plot.config
+           Map.get(plot, :option) do
+        push_event(socket, "echarts-data-#{socket.assigns.id}", %{
+          option: plot.option
         })
       else
         socket
@@ -393,10 +385,11 @@ defmodule SecantServiceWeb.Components.HistoryDB do
               </:failed>
 
               <div class="flex-1 bg-gray-300 p-1 rounded-lg">
+                <div id={"range-buttons-#{@id}"} class="flex space-x-1 mb-1"></div>
                 <div
                   id={@id}
-                  class=""
-                  phx-hook="PlotlyChart"
+                  class="h-[340px]"
+                  phx-hook="EChartsChart"
                   phx-update="ignore"
                 >
                 </div>
@@ -477,7 +470,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
             <div class="flex-1 bg-gray-300 p-1 rounded-lg">
               <div
                 id={"#{@id}-calib"}
-                phx-hook="PlotlyChart"
+                class="h-[700px]"
+                phx-hook="EChartsChart"
                 phx-update="ignore"
               >
               </div>

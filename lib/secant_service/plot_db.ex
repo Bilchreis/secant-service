@@ -10,6 +10,7 @@ defmodule SecantService.PlotDB do
   require Logger
 
   @markersize 5
+  @max_array_len 100
 
   defp read_from_device_if_empty({_value_val, _value_ts} = readings, param_id) do
     case readings do
@@ -68,280 +69,107 @@ defmodule SecantService.PlotDB do
     |> Ash.read!()
   end
 
-  def get_layout(%{plotly: nil, mode: :historical} = plot_map) do
-    layout = %{
-      xaxis: %{
-        title: %{text: "Time"},
-        type: "date",
-        rangeslider: %{visible: false}
-      },
-      yaxis: %{title: %{text: "#{plot_map.unit}"}},
-      margin: %{t: 10, b: 40, l: 50, r: 20},
-      paper_bgcolor: "rgba(0,0,0,0)",
-      plot_bgcolor: "rgba(0,0,0,0)",
-      autosize: true,
-      height: 340
+  def get_layout(%{mode: :historical} = plot_map) do
+    option = %{
+      backgroundColor: "transparent",
+      legend: %{orient: "vertical", right: 0, top: "center"},
+      grid: %{top: 10, bottom: 40, left: 60, right: 80},
+      xAxis: %{type: "time"},
+      yAxis: %{type: "value", name: plot_map.unit || ""},
+      series: []
     }
 
-    Map.put(plot_map, :layout, layout)
+    Map.put(plot_map, :option, option)
   end
 
-  def get_layout(%{plotly: nil} = plot_map) do
-    # Define the buttons first so we can reference them
+  def get_layout(plot_map) do
     buttons = [
-      %{count: 1, label: "1m", step: "minute", stepmode: "backward"},
-      %{count: 10, label: "10m", step: "minute", stepmode: "backward"},
-      %{count: 30, label: "30m", step: "minute", stepmode: "backward"},
-      %{count: 1, label: "1h", step: "hour", stepmode: "backward"},
-      %{count: 1, label: "1d", step: "day", stepmode: "backward"},
-      %{step: "all", label: "all"}
+      %{label: "1m", step: "minute", count: 1},
+      %{label: "10m", step: "minute", count: 10},
+      %{label: "30m", step: "minute", count: 30},
+      %{label: "1h", step: "hour", count: 1},
+      %{label: "1d", step: "day", count: 1},
+      %{label: "all", step: "all"}
     ]
 
-    # Set which button should be active (0-based index)
-    # This makes "10m" the default
     active_button_index = 1
-
-    # Calculate the initial range based on the active button.
-    # Use Unix ms so data and range are interpreted consistently by Plotly
-    # (Plotly strips timezone from ISO strings, causing a UTC vs local time mismatch).
-    active_button = Enum.at(buttons, active_button_index)
     now_ms = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+    {x_min, x_max} = compute_range(Enum.at(buttons, active_button_index), now_ms)
 
-    initial_range =
-      case active_button do
-        %{step: "all"} ->
-          nil
-
-        %{step: "minute", count: count} ->
-          [now_ms - count * 60 * 1000, now_ms]
-
-        %{step: "hour", count: count} ->
-          [now_ms - count * 3600 * 1000, now_ms]
-
-        %{step: "day", count: count} ->
-          [now_ms - count * 86_400 * 1000, now_ms]
-
-        _ ->
-          nil
-      end
-
-    layout = %{
-      xaxis: %{
-        title: %{text: "Time"},
-        type: "date",
-        # Set the initial range if we calculated one
-        range: initial_range,
-        rangeselector: %{
-          buttons: buttons,
-          # This makes the button appear selected
-          active: active_button_index,
-          x: 0,
-          y: 1.02,
-          xanchor: "left",
-          yanchor: "bottom"
-        },
-        rangeslider: %{visible: false}
-      },
-      yaxis: %{title: %{text: "#{plot_map.unit}"}},
-      margin: %{t: 10, b: 40, l: 50, r: 20},
-      # background color of the chart container space,
-      paper_bgcolor: "rgba(0,0,0,0",
-      ## background color of plot area
-      plot_bgcolor: "rgba(0,0,0,0)",
-      autosize: true,
-      height: 340
+    option = %{
+      backgroundColor: "transparent",
+      legend: %{orient: "vertical", right: 0, top: "center"},
+      grid: %{top: 10, bottom: 40, left: 60, right: 80},
+      xAxis: %{type: "time", min: x_min, max: x_max},
+      yAxis: %{type: "value", name: plot_map.unit || ""},
+      series: [],
+      _rangeButtons: buttons,
+      _activeButton: active_button_index
     }
 
-    Map.put(plot_map, :layout, layout)
+    Map.put(plot_map, :option, option)
   end
 
-  def get_layout(%{plotly: plotly} = plot_map) do
-    layout = Map.get(plotly, "layout", [])
+  defp compute_range(%{step: "all"}, _now_ms), do: {nil, nil}
 
-    Map.put(plot_map, :layout, layout)
-  end
+  defp compute_range(%{step: step, count: count}, now_ms) do
+    ms =
+      case step do
+        "minute" -> count * 60 * 1_000
+        "hour" -> count * 3_600 * 1_000
+        "day" -> count * 86_400 * 1_000
+        _ -> 0
+      end
 
-  defp get_element(value, path) do
-    case path do
-      [] ->
-        value
-
-      [key | tail] when is_binary(key) ->
-        # Handle both string and atom keys
-        result = Map.get(value, key) || Map.get(value, String.to_atom(key))
-        get_element(result, tail)
-
-      [index | tail] when is_integer(index) ->
-        get_element(Enum.at(value, index), tail)
-    end
-  end
-
-  defp map_to(key, nil), do: key
-
-  defp map_to(key, map) do
-    str_key = to_string(key)
-
-    case Map.get(map, str_key, :not_found) do
-      :not_found ->
-        Logger.warning("Key #{inspect(str_key)} not found in map")
-        nil
-
-      value ->
-        value
-    end
-  end
-
-  defp default(value, nil) do
-    value
-  end
-
-  defp default(_value, default) do
-    default
-  end
-
-  defp process_plot_data(raw_data, plotly_specifier) do
-    {type, path} = Map.get(plotly_specifier, "path", []) |> List.pop_at(0)
-    parameter = Map.get(plotly_specifier, "parameter", "")
-    indices = Map.get(plotly_specifier, "indices", "all")
-    mapping = Map.get(plotly_specifier, "map_to", nil)
-    default_val = Map.get(plotly_specifier, "default", nil)
-
-    data =
-      raw_data
-      |> Map.get(parameter, [])
-      |> Map.get(type, [])
-
-    case indices do
-      "all" ->
-        # Use direct list comprehension instead of Enum.map
-        for value <- data do
-          get_element(value, path)
-          |> map_to(mapping)
-          |> default(default_val)
-        end
-
-      0 ->
-        Enum.at(data, 0)
-        |> get_element(path)
-        |> map_to(mapping)
-        |> default(default_val)
-    end
+    {now_ms - ms, now_ms}
   end
 
   # single parameter/readable with scalar data
-  def get_data(%{plotly: nil} = plot_map, value_ts, value_val) do
-    data = [
+  def get_data(plot_map, value_ts, value_val) do
+    series = [
       %{
-        x: value_ts,
-        y: value_val,
-        type: "scattergl",
-        mode: "lines+markers",
         name: "value",
-        marker: %{size: @markersize}
+        type: "line",
+        data: Enum.zip_with(value_ts, value_val, &[&1, &2]),
+        symbol: "circle",
+        symbolSize: @markersize,
+        large: true,
+        largeThreshold: 2000
       }
     ]
 
-    Map.put(plot_map, :data, data)
-  end
-
-  # readable/single parameter with plotly specification
-  def get_data(%{plotly: plotly} = plot_map, value_ts, value_val) do
-    raw_data = %{
-      "value" => %{"timestamp" => value_ts, "value" => value_val}
-    }
-
-    data = Map.get(plotly, "data", [])
-
-    # Pre-process all plot data specifications once
-    processed_cache = build_plot_data_cache(data, raw_data)
-
-    data =
-      Enum.reduce(data, [], fn trace, data_acc ->
-        new_data =
-          Enum.reduce(trace, %{}, fn {key, value}, acc ->
-            acc = Map.put(acc, key, value)
-
-            case value do
-              # Plotly path and parameter
-              %{"path" => _path, "parameter" => _parameter} ->
-                cache_key = {key, value}
-                Map.put(acc, key, Map.get(processed_cache, cache_key))
-
-              # Standard plotly specifier
-              _ ->
-                Map.put(acc, key, value)
-            end
-          end)
-
-        [new_data | data_acc]
-      end)
-
-    data = Enum.reverse(data)
-    Map.put(plot_map, :data, data)
+    Map.put(plot_map, :series, series)
   end
 
   # drivable with scalar data
-  def get_data(%{plotly: nil} = plot_map, value_ts, value_val, target_ts, target_val) do
-    data = [
+  def get_data(plot_map, value_ts, value_val, target_ts, target_val) do
+    series = [
       %{
-        x: value_ts,
-        y: value_val,
-        type: "scattergl",
-        mode: "lines+markers",
         name: "value",
-        marker: %{size: @markersize}
+        type: "line",
+        data: Enum.zip_with(value_ts, value_val, &[&1, &2]),
+        symbol: "circle",
+        symbolSize: @markersize,
+        large: true,
+        largeThreshold: 2000
       },
       %{
-        x: target_ts,
-        y: target_val,
-        type: "scattergl",
-        mode: "lines+markers",
         name: "target",
-        marker: %{size: @markersize}
+        type: "line",
+        data: Enum.zip_with(target_ts, target_val, &[&1, &2]),
+        symbol: "circle",
+        symbolSize: @markersize,
+        large: true,
+        largeThreshold: 2000
       }
     ]
 
-    Map.put(plot_map, :data, data)
-  end
-
-  # drivable with plotly specification
-  def get_data(%{plotly: plotly} = plot_map, value_ts, value_val, target_ts, target_val) do
-    raw_data = %{
-      "value" => %{"timestamp" => value_ts, "value" => value_val},
-      "target" => %{"timestamp" => target_ts, "value" => target_val}
-    }
-
-    data = Map.get(plotly, "data", [])
-
-    processed_cache = build_plot_data_cache(data, raw_data)
-
-    data =
-      Enum.reduce(data, [], fn trace, data_acc ->
-        new_data =
-          Enum.reduce(trace, %{}, fn {key, value}, acc ->
-            acc = Map.put(acc, key, value)
-
-            case value do
-              # Use cached processed data
-              %{"path" => _path, "parameter" => _parameter} ->
-                cache_key = {key, value}
-                Map.put(acc, key, Map.get(processed_cache, cache_key))
-
-              _ ->
-                Map.put(acc, key, value)
-            end
-          end)
-
-        [new_data | data_acc]
-      end)
-
-    data = Enum.reverse(data)
-    Map.put(plot_map, :data, data)
+    Map.put(plot_map, :series, series)
   end
 
   # calibratable with scalar data
   def get_data(
-        %{plotly: nil} = plot_map,
+        plot_map,
         value_ts,
         value_val,
         value_uncalibrated_ts,
@@ -351,162 +179,198 @@ defmodule SecantService.PlotDB do
         target_calibrated_ts,
         target_calibrated_val
       ) do
-    data = [
+    series = [
       %{
-        x: value_ts,
-        y: value_val,
-        type: "scattergl",
-        mode: "lines+markers",
         name: "value",
-        marker: %{size: @markersize}
+        type: "line",
+        data: Enum.zip_with(value_ts, value_val, &[&1, &2]),
+        symbol: "circle",
+        symbolSize: @markersize,
+        large: true,
+        largeThreshold: 2000
       },
       %{
-        x: target_ts,
-        y: target_val,
-        type: "scattergl",
-        mode: "lines+markers",
         name: "target",
-        marker: %{size: @markersize}
+        type: "line",
+        data: Enum.zip_with(target_ts, target_val, &[&1, &2]),
+        symbol: "circle",
+        symbolSize: @markersize,
+        large: true,
+        largeThreshold: 2000
       },
       %{
-        x: value_uncalibrated_ts,
-        y: value_uncalibrated_val,
-        type: "scattergl",
-        mode: "lines+markers",
         name: "_value_uncalibrated",
-        marker: %{size: @markersize},
-        visible: "legendonly"
+        type: "line",
+        data: Enum.zip_with(value_uncalibrated_ts, value_uncalibrated_val, &[&1, &2]),
+        symbol: "circle",
+        symbolSize: @markersize,
+        large: true,
+        largeThreshold: 2000
       },
       %{
-        x: target_calibrated_ts,
-        y: target_calibrated_val,
-        type: "scattergl",
-        mode: "lines+markers",
         name: "_target_calibrated",
-        marker: %{size: @markersize},
-        visible: "legendonly"
+        type: "line",
+        data: Enum.zip_with(target_calibrated_ts, target_calibrated_val, &[&1, &2]),
+        symbol: "circle",
+        symbolSize: @markersize,
+        large: true,
+        largeThreshold: 2000
       }
     ]
 
-    Map.put(plot_map, :data, data)
+    Map.put(plot_map, :series, series)
   end
 
-  # Build a cache of all processed plot data upfront
-  defp build_plot_data_cache(traces, raw_data) do
-    traces
-    |> Enum.flat_map(fn trace ->
-      Enum.filter(trace, fn {_key, value} ->
-        match?(%{"path" => _, "parameter" => _}, value)
-      end)
-    end)
-    |> Map.new(fn {key, spec} ->
-      {{key, spec}, process_plot_data(raw_data, spec)}
-    end)
-  end
-
-  def get_trace_updates_batch(%{plotly: nil} = plot_map, datapoints, parameter) do
-    trace_index =
-      Enum.find_index(plot_map.data, fn trace ->
-        trace[:name] == parameter
-      end) || 0
-
-    # Extract all timestamps and values from the batch
-    {values, timestamps} = Enum.unzip(datapoints)
-
-    # Format data for the extend-traces event
-    # The event expects arrays of arrays (one per trace)
-    %{
-      # Add one timestamp to the specified trace
-      x: [timestamps],
-      # Add one value to the specified trace
-      y: [values],
-      traceIndices: [trace_index]
-    }
-  end
-
-  def get_trace_updates_batch(%{plotly: _plotly} = plot_map, datapoints, parameter) do
-    trace_data =
-      Enum.reduce(datapoints, %{}, fn {value, timestamp}, acc ->
-        update = get_trace_updates(plot_map, value, timestamp, parameter)
-
-        Map.merge(acc, update, fn _key, {x1, y1}, {x2, y2} ->
-          {x1 ++ x2, y1 ++ y2}
-        end)
+  defp get_data_array(plot_map, value_ts, value_val, parameter) do
+    data =
+      Enum.flat_map(Enum.zip(value_ts, value_val), fn {ts, arr} ->
+        arr |> Enum.with_index() |> Enum.map(fn {v, i} -> [ts, i, v] end)
       end)
 
-    # Convert to Plotly format: %{x: [[...], [...]], y: [[...], [...]], traceIndices: [0, 1]}
-    # Sort by trace index to ensure consistent ordering
-    trace_data
-    |> Enum.sort_by(fn {index, _data} -> index end)
-    |> Enum.reduce(%{x: [], y: [], traceIndices: []}, fn {index, {x, y}}, acc ->
+    array_len = value_val |> List.first([]) |> length()
+
+    members = get_in(parameter.datainfo, ["members"]) || %{}
+    value_min = Map.get(members, "min")
+    value_max = Map.get(members, "max")
+
+    series = [
       %{
-        x: acc.x ++ [x],
-        y: acc.y ++ [y],
-        traceIndices: acc.traceIndices ++ [index]
+        type: "scatter",
+        data: data,
+        symbol: "rect",
+        symbolSize: 8,
+        encode: %{x: 0, y: 1},
+        progressive: 0
       }
-    end)
+    ]
+
+    plot_map
+    |> Map.put(:series, series)
+    |> Map.put(:array_len, array_len)
+    |> Map.put(:plot_type, :array_heatmap)
+    |> Map.put(:value_min, value_min)
+    |> Map.put(:value_max, value_max)
   end
 
-  # Get the updates for an incoming datareport with plotly specification
-  def get_trace_updates(%{plotly: plotly} = _plot_map, value, timestamp, parameter) do
-    raw_data = %{
-      parameter => %{"timestamp" => [timestamp], "value" => [value]}
+  defp get_layout_array(%{array_len: array_len, mode: mode} = plot_map) do
+    y_max = max(array_len - 1, 0)
+
+    color_scale = [
+      "#313695",
+      "#4575b4",
+      "#74add1",
+      "#abd9e9",
+      "#e0f3f8",
+      "#ffffbf",
+      "#fee090",
+      "#fdae61",
+      "#f46d43",
+      "#d73027",
+      "#a50026"
+    ]
+
+    value_min = Map.get(plot_map, :value_min)
+    value_max = Map.get(plot_map, :value_max)
+
+    visual_map =
+      %{
+        calculable: true,
+        orient: "vertical",
+        right: 0,
+        top: "center",
+        dimension: 2,
+        inRange: %{color: color_scale}
+      }
+      |> then(fn vm -> if value_min != nil, do: Map.put(vm, :min, value_min), else: vm end)
+      |> then(fn vm -> if value_max != nil, do: Map.put(vm, :max, value_max), else: vm end)
+
+    base_option = %{
+      animation: false,
+      backgroundColor: "transparent",
+      grid: %{top: 10, bottom: 40, left: 60, right: 100},
+      xAxis: %{type: "time"},
+      yAxis: %{type: "value", min: 0, max: y_max, minInterval: 1},
+      visualMap: visual_map,
+      series: []
     }
 
-    # Only collect traces that match the parameter
-    matching_traces =
-      plotly["data"]
-      |> Enum.with_index()
-      |> Enum.filter(fn {trace, _index} ->
-        Map.get(trace, "parameter", "") == parameter
-      end)
-
-    # If no matching traces, return empty update
-    update =
-      if Enum.empty?(matching_traces) do
-        %{}
+    option =
+      if mode == :historical do
+        base_option
       else
-        # Process only the matching traces
-        Enum.reduce(matching_traces, %{}, fn {trace, index}, acc ->
-          {x, y, trace_indices} = get_extension(trace, index, raw_data)
+        buttons = [
+          %{label: "1m", step: "minute", count: 1},
+          %{label: "10m", step: "minute", count: 10},
+          %{label: "30m", step: "minute", count: 30},
+          %{label: "1h", step: "hour", count: 1},
+          %{label: "1d", step: "day", count: 1},
+          %{label: "all", step: "all"}
+        ]
 
-          Map.put(acc, trace_indices, {x, y})
-        end)
+        active_button_index = 1
+        now_ms = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+        {x_min, x_max} = compute_range(Enum.at(buttons, active_button_index), now_ms)
+
+        base_option
+        |> Map.put(:xAxis, %{type: "time", min: x_min, max: x_max})
+        |> Map.put(:_rangeButtons, buttons)
+        |> Map.put(:_activeButton, active_button_index)
+        |> Map.put(:_arrayLen, array_len)
       end
 
-    update
+    Map.put(plot_map, :option, option)
   end
 
-  def get_extension(trace, trace_index, raw_data) do
-    xdata =
-      if Map.has_key?(trace, "x") do
-        process_plot_data(raw_data, trace["x"])
-      else
-        [nil]
+  def get_trace_updates_batch(%{plot_type: :array_heatmap} = _plot_map, datapoints, _parameter) do
+    data =
+      Enum.flat_map(datapoints, fn {arr, ts} ->
+        arr |> Enum.with_index() |> Enum.map(fn {v, i} -> [ts, i, v] end)
+      end)
+
+    array_len =
+      case List.first(datapoints) do
+        {arr, _ts} -> length(arr)
+        _ -> 0
       end
 
-    ydata =
-      if Map.has_key?(trace, "y") do
-        process_plot_data(raw_data, trace["y"])
-      else
-        [nil]
-      end
+    %{seriesUpdates: [%{seriesIndex: 0, data: data}], arrayLen: array_len}
+  end
 
-    {xdata, ydata, trace_index}
+  def get_trace_updates_batch(plot_map, datapoints, parameter) do
+    series_index =
+      Enum.find_index(plot_map.option.series, fn s -> s.name == parameter end) || 0
+
+    {values, timestamps} = Enum.unzip(datapoints)
+    data = Enum.zip(timestamps, values) |> Enum.map(&Tuple.to_list/1)
+
+    %{seriesUpdates: [%{seriesIndex: series_index, data: data}]}
   end
 
   def plottable?(%SecantService.SecNodes.Parameter{} = parameter) do
-    has_plotly_property = Map.has_key?(parameter.custom_properties || %{}, "_plotly")
+    case parameter.datainfo do
+      %{"type" => numeric} when numeric in ["double", "int", "scaled"] ->
+        true
 
-    case parameter.datainfo["type"] do
-      numeric when numeric in ["double", "int", "scaled"] -> true
-      # TODO
-      "bool" -> has_plotly_property
-      # TODO
-      "enum" -> has_plotly_property
-      # TODO
-      "array" -> has_plotly_property
-      _ -> has_plotly_property
+      %{"type" => "array", "members" => %{"type" => member_type}}
+      when member_type in ["double", "int", "scaled"] ->
+        latest =
+          ParameterValue.get_resource_module(parameter)
+          |> Ash.Query.for_read(:for_parameter, %{
+            parameter_id: parameter.id,
+            limit: 1,
+            order: :desc
+          })
+          |> Ash.read_first()
+
+        case latest do
+          {:ok, nil} -> true
+          {:ok, record} when is_list(record.value) -> length(record.value) <= @max_array_len
+          {:ok, _} -> true
+          {:error, _} -> true
+        end
+
+      _ ->
+        false
     end
   end
 
@@ -515,7 +379,7 @@ defmodule SecantService.PlotDB do
 
     case value_param do
       nil -> false
-      param -> plottable?(param) or Map.has_key?(module.custom_properties || %{}, "_plotly")
+      param -> plottable?(param)
     end
   end
 
@@ -555,6 +419,25 @@ defmodule SecantService.PlotDB do
     Map.put(plot_map, :chart_id, chart_id)
   end
 
+  defp finalize(%{option: option, series: series} = pm) do
+    Map.put(pm, :option, Map.put(option, :series, series))
+    |> Map.delete(:series)
+  end
+
+  defp finalize(pm), do: pm
+
+  defp hide_calibratable_legend_series(%{option: option} = pm) do
+    updated_option =
+      Map.update(option, :legend, %{}, fn legend ->
+        Map.put(legend, :selected, %{
+          "_value_uncalibrated" => false,
+          "_target_calibrated" => false
+        })
+      end)
+
+    Map.put(pm, :option, updated_option)
+  end
+
   def module_plot(module, mode \\ :live) do
     module_plot(module, Util.get_highest_if_class(module.interface_classes), mode)
   end
@@ -568,18 +451,25 @@ defmodule SecantService.PlotDB do
       plot_map =
         Map.put(plot_map, :plottable, true)
         |> get_unit(value_param)
-        |> Map.put(:plotly, Map.get(module.custom_properties || %{}, "_plotly", nil))
 
       {value_val, value_ts} =
         get_values(value_param)
         |> ParameterValue.extract_value_timestamp_lists(value_param)
         |> read_from_device_if_empty(value_param.id)
 
-      plot_map
-      |> plot_available(value_val)
-      |> get_data(value_ts, value_val)
-      |> get_layout()
-      |> Map.put(:config, %{responsive: true, displayModeBar: false})
+      base = plot_map |> plot_available(value_val)
+
+      case value_param.datainfo["type"] do
+        "array" ->
+          if value_val |> List.first([]) |> length() > @max_array_len do
+            not_plottable()
+          else
+            base |> get_data_array(value_ts, value_val, value_param) |> get_layout_array() |> finalize()
+          end
+
+        _ ->
+          base |> get_data(value_ts, value_val) |> get_layout() |> finalize()
+      end
     else
       not_plottable()
     end
@@ -591,27 +481,34 @@ defmodule SecantService.PlotDB do
     value_param = Enum.find(module.parameters, fn param -> param.name == "value" end)
     target_param = Enum.find(module.parameters, fn param -> param.name == "target" end)
 
-    if plottable?(value_param) or Map.has_key?(module.custom_properties || %{}, "_plotly") do
+    if plottable?(value_param) do
       plot_map =
         Map.put(plot_map, :plottable, true)
         |> get_unit(value_param)
-        |> Map.put(:plotly, Map.get(module.custom_properties || %{}, "_plotly", nil))
 
       {value_val, value_ts} =
         get_values(value_param)
         |> ParameterValue.extract_value_timestamp_lists(value_param)
         |> read_from_device_if_empty(value_param.id)
 
-      {target_val, target_ts} =
-        get_values(target_param)
-        |> ParameterValue.extract_value_timestamp_lists(target_param)
-        |> read_from_device_if_empty(target_param.id)
+      base = plot_map |> plot_available(value_val)
 
-      plot_map
-      |> plot_available(value_val)
-      |> get_data(value_ts, value_val, target_ts, target_val)
-      |> get_layout()
-      |> Map.put(:config, %{responsive: true, displayModeBar: false})
+      case value_param.datainfo["type"] do
+        "array" ->
+          if value_val |> List.first([]) |> length() > @max_array_len do
+            not_plottable()
+          else
+            base |> get_data_array(value_ts, value_val, value_param) |> get_layout_array() |> finalize()
+          end
+
+        _ ->
+          {target_val, target_ts} =
+            get_values(target_param)
+            |> ParameterValue.extract_value_timestamp_lists(target_param)
+            |> read_from_device_if_empty(target_param.id)
+
+          base |> get_data(value_ts, value_val, target_ts, target_val) |> get_layout() |> finalize()
+      end
     else
       not_plottable()
     end
@@ -629,11 +526,10 @@ defmodule SecantService.PlotDB do
     target_calibrated_param =
       Enum.find(module.parameters, fn param -> param.name == "_target_calibrated" end)
 
-    if plottable?(value_param) or Map.has_key?(module.custom_properties || %{}, "_plotly") do
+    if plottable?(value_param) do
       plot_map =
         Map.put(plot_map, :plottable, true)
         |> get_unit(value_param)
-        |> Map.put(:plotly, Map.get(module.custom_properties || %{}, "_plotly", nil))
 
       {value_val, value_ts} =
         get_values(value_param)
@@ -668,7 +564,8 @@ defmodule SecantService.PlotDB do
         target_calibrated_val
       )
       |> get_layout()
-      |> Map.put(:config, %{responsive: true, displayModeBar: false})
+      |> hide_calibratable_legend_series()
+      |> finalize()
     else
       not_plottable()
     end
@@ -803,174 +700,129 @@ defmodule SecantService.PlotDB do
         unit = Map.get(value_param.datainfo || %{}, "unit", "")
         unit_label = if unit != "", do: " (#{unit})", else: ""
 
-        identity_style = %{color: "gray", dash: "dash"}
+        identity_line = Enum.zip_with(setpoints, setpoints, &[&1, &2])
 
-        data = [
-          # --- subplot 1: forward ---
+        identity_series_style = %{
+          type: "line",
+          symbol: "none",
+          lineStyle: %{color: "gray", type: "dashed", opacity: 0.5},
+          silent: true
+        }
+
+        series = [
+          # subplot 0 — forward calibration
           %{
-            x: setpoints,
-            y: hw_values,
-            type: "scattergl",
-            mode: "lines",
             name: "hardware value",
-            line: %{color: "steelblue"},
-            xaxis: "x",
-            yaxis: "y"
+            type: "line",
+            symbol: "none",
+            xAxisIndex: 0,
+            yAxisIndex: 0,
+            data: Enum.zip_with(setpoints, hw_values, &[&1, &2]),
+            lineStyle: %{color: "steelblue"}
           },
+          Map.merge(identity_series_style, %{
+            name: "identity_fwd",
+            xAxisIndex: 0,
+            yAxisIndex: 0,
+            data: identity_line
+          }),
+          # subplot 1 — inverse calibration
           %{
-            x: setpoints,
-            y: setpoints,
-            type: "scattergl",
-            mode: "lines",
-            name: "identity",
-            line: identity_style,
-            opacity: 0.5,
-            showlegend: false,
-            xaxis: "x",
-            yaxis: "y"
-          },
-          # --- subplot 2: inverse ---
-          %{
-            x: hw_values,
-            y: calib_readback,
-            type: "scattergl",
-            mode: "lines",
             name: "calibrated readback",
-            line: %{color: "crimson"},
-            xaxis: "x2",
-            yaxis: "y2"
+            type: "line",
+            symbol: "none",
+            xAxisIndex: 1,
+            yAxisIndex: 1,
+            data: Enum.zip_with(hw_values, calib_readback, &[&1, &2]),
+            lineStyle: %{color: "crimson"}
           },
+          Map.merge(identity_series_style, %{
+            name: "identity_inv",
+            xAxisIndex: 1,
+            yAxisIndex: 1,
+            data: Enum.zip_with(hw_values, hw_values, &[&1, &2])
+          }),
+          # subplot 2 — roundtrip
           %{
-            x: hw_values,
-            y: hw_values,
-            type: "scattergl",
-            mode: "lines",
-            name: "identity2",
-            line: identity_style,
-            opacity: 0.5,
-            showlegend: false,
-            xaxis: "x2",
-            yaxis: "y2"
-          },
-          # --- subplot 3: roundtrip ---
-          %{
-            x: setpoints,
-            y: calib_readback,
-            type: "scattergl",
-            mode: "lines",
             name: "roundtrip result",
-            line: %{color: "seagreen"},
-            xaxis: "x3",
-            yaxis: "y3"
+            type: "line",
+            symbol: "none",
+            xAxisIndex: 2,
+            yAxisIndex: 2,
+            data: Enum.zip_with(setpoints, calib_readback, &[&1, &2]),
+            lineStyle: %{color: "seagreen"}
           },
+          Map.merge(identity_series_style, %{
+            name: "identity_rt",
+            xAxisIndex: 2,
+            yAxisIndex: 2,
+            data: identity_line
+          }),
+          # subplot 3 — roundtrip error
           %{
-            x: setpoints,
-            y: setpoints,
-            type: "scattergl",
-            mode: "lines",
-            name: "identity3",
-            line: identity_style,
-            opacity: 0.5,
-            showlegend: false,
-            xaxis: "x3",
-            yaxis: "y3"
-          },
-          # --- subplot 4: error ---
-          %{
-            x: setpoints,
-            y: roundtrip_err,
-            type: "scattergl",
-            mode: "lines",
             name: "roundtrip error",
-            line: %{color: "mediumpurple"},
-            xaxis: "x4",
-            yaxis: "y4"
+            type: "line",
+            symbol: "none",
+            xAxisIndex: 3,
+            yAxisIndex: 3,
+            data: Enum.zip_with(setpoints, roundtrip_err, &[&1, &2]),
+            lineStyle: %{color: "mediumpurple"}
           }
         ]
 
-        layout = %{
-          grid: %{rows: 2, columns: 2, pattern: "independent"},
-          xaxis: %{title: %{text: "Setpoint#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
-          yaxis: %{
-            title: %{text: "Hardware value#{unit_label}"},
-            gridcolor: "rgba(128,128,128,0.3)"
-          },
-          xaxis2: %{
-            title: %{text: "Raw hardware value#{unit_label}"},
-            gridcolor: "rgba(128,128,128,0.3)"
-          },
-          yaxis2: %{
-            title: %{text: "Calibrated readback#{unit_label}"},
-            gridcolor: "rgba(128,128,128,0.3)"
-          },
-          xaxis3: %{title: %{text: "Setpoint#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
-          yaxis3: %{
-            title: %{text: "Calibrated readback#{unit_label}"},
-            gridcolor: "rgba(128,128,128,0.3)"
-          },
-          xaxis4: %{title: %{text: "Setpoint#{unit_label}"}, gridcolor: "rgba(128,128,128,0.3)"},
-          yaxis4: %{
-            title: %{text: "Error#{unit_label}"},
-            gridcolor: "rgba(128,128,128,0.3)",
-            zeroline: true,
-            zerolinecolor: "gray",
-            zerolinewidth: 1
-          },
-          paper_bgcolor: "rgba(0,0,0,0)",
-          plot_bgcolor: "rgba(0,0,0,0)",
-          autosize: true,
-          height: 700,
-          margin: %{t: 50, b: 50, l: 60, r: 20},
-          annotations: [
+        option = %{
+          backgroundColor: "transparent",
+          grid: [
+            %{left: "5%", top: "8%", width: "42%", height: "38%"},
+            %{left: "55%", top: "8%", width: "42%", height: "38%"},
+            %{left: "5%", top: "58%", width: "42%", height: "34%"},
+            %{left: "55%", top: "58%", width: "42%", height: "34%"}
+          ],
+          xAxis: [
+            %{gridIndex: 0, type: "value", name: "Setpoint#{unit_label}"},
+            %{gridIndex: 1, type: "value", name: "Raw hardware value#{unit_label}"},
+            %{gridIndex: 2, type: "value", name: "Setpoint#{unit_label}"},
+            %{gridIndex: 3, type: "value", name: "Setpoint#{unit_label}"}
+          ],
+          yAxis: [
+            %{gridIndex: 0, type: "value", name: "Hardware value#{unit_label}"},
+            %{gridIndex: 1, type: "value", name: "Calibrated readback#{unit_label}"},
+            %{gridIndex: 2, type: "value", name: "Calibrated readback#{unit_label}"},
+            %{gridIndex: 3, type: "value", name: "Error#{unit_label}"}
+          ],
+          title: [
             %{
               text: "Forward Calibration: Setpoint → Hardware",
-              showarrow: false,
-              x: 0.225,
-              xref: "paper",
-              y: 1.04,
-              yref: "paper",
-              xanchor: "center",
-              font: %{size: 12}
+              left: "26%",
+              top: "1%",
+              textAlign: "center",
+              textStyle: %{fontSize: 12}
             },
             %{
               text: "Inverse Calibration: Hardware → Readback",
-              showarrow: false,
-              x: 0.775,
-              xref: "paper",
-              y: 1.04,
-              yref: "paper",
-              xanchor: "center",
-              font: %{size: 12}
+              left: "76%",
+              top: "1%",
+              textAlign: "center",
+              textStyle: %{fontSize: 12}
             },
             %{
               text: "Roundtrip: Setpoint → Forward → Inverse",
-              showarrow: false,
-              x: 0.225,
-              xref: "paper",
-              y: 0.46,
-              yref: "paper",
-              xanchor: "center",
-              font: %{size: 12}
+              left: "26%",
+              top: "51%",
+              textAlign: "center",
+              textStyle: %{fontSize: 12}
             },
-            %{
-              text: "Roundtrip Error",
-              showarrow: false,
-              x: 0.775,
-              xref: "paper",
-              y: 0.46,
-              yref: "paper",
-              xanchor: "center",
-              font: %{size: 12}
-            }
-          ]
+            %{text: "Roundtrip Error", left: "76%", top: "51%", textAlign: "center",
+              textStyle: %{fontSize: 12}}
+          ],
+          legend: %{orient: "vertical", right: 0, top: "center", type: "scroll"},
+          series: series
         }
 
         %{
           plottable: true,
           plot_available: true,
-          data: data,
-          layout: layout,
-          config: %{responsive: true, displayModeBar: false},
+          option: option,
           fwd_coeffs: fwd,
           inv_coeffs: inv
         }
@@ -994,37 +846,32 @@ defmodule SecantService.PlotDB do
   def parameter_plot(parameter, mode \\ :live) do
     plot_map = %{mode: mode}
 
-    plot_map =
-      if plottable?(parameter) do
-        {value_val, value_ts} =
-          get_values(parameter)
-          |> ParameterValue.extract_value_timestamp_lists(parameter)
-          |> read_from_device_if_empty(parameter.id)
+    if plottable?(parameter) do
+      {value_val, value_ts} =
+        get_values(parameter)
+        |> ParameterValue.extract_value_timestamp_lists(parameter)
+        |> read_from_device_if_empty(parameter.id)
 
-        plot_map =
-          Map.put(plot_map, :plottable, true)
-          |> get_unit(parameter)
-          |> Map.put(:plotly, Map.get(parameter.custom_properties, "_plotly", nil))
+      base =
+        plot_map
+        |> Map.put(:plottable, true)
+        |> get_unit(parameter)
+        |> plot_available(value_val)
 
-        plot_map = plot_available(plot_map, value_val)
+      case parameter.datainfo["type"] do
+        "array" ->
+          if value_val |> List.first([]) |> length() > @max_array_len do
+            not_plottable()
+          else
+            base |> get_data_array(value_ts, value_val, parameter) |> get_layout_array() |> finalize()
+          end
 
-        plot_map =
-          plot_map
-          |> get_data(value_ts, value_val)
-          |> get_layout()
-
-        config =
-          %{
-            responsive: true,
-            displayModeBar: false
-          }
-
-        Map.put(plot_map, :config, config)
-      else
-        not_plottable()
+        _ ->
+          base |> get_data(value_ts, value_val) |> get_layout() |> finalize()
       end
-
-    plot_map
+    else
+      not_plottable()
+    end
   end
 
   def no_plot_available() do

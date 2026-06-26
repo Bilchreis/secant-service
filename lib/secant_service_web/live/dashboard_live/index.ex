@@ -338,7 +338,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   @impl true
   def handle_event("purge_plots", _params, socket) do
     Logger.info("Purging all plots...")
-    {:noreply, push_event(socket, "cleanup-plots", %{})}
+    {:noreply, push_event(socket, "cleanup-charts", %{})}
   end
 
   @impl true
