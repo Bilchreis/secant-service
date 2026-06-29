@@ -110,21 +110,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   def update(%{value_update: value_update_list, parameter: parameter} = _assigns, socket) do
-    param_list =
-      case socket.assigns.secop_obj do
-        %SecantService.SecNodes.Parameter{} = param ->
-          [param.name]
-
-        %SecantService.SecNodes.Module{} = module ->
-          case module.highest_interface_class do
-            "readable" -> ["value"]
-            "drivable" -> ["value", "target"]
-            "calibratable" -> ["value", "_value_uncalibrated", "target", "_target_calibrated"]
-            "communicator" -> []
-            "acquisition" -> ["value"]
-            _ -> []
-          end
-      end
+    param_list = PlotDB.param_list(socket.assigns.secop_obj)
 
     socket =
       if socket.assigns.plottable and parameter in param_list and socket.assigns.plot.ok? do
@@ -154,6 +140,22 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         else
           socket
         end
+      else
+        socket
+      end
+
+    socket =
+      if socket.assigns[:display_mode] == :calibration &&
+           parameter in [
+             "_forward_calibration_coefficients",
+             "_inverse_calibration_coefficients"
+           ] do
+
+        secop_obj = socket.assigns.secop_obj
+
+        start_async(socket, :reload_calibration_plot, fn ->
+          PlotDB.calibration_plot(secop_obj)
+        end)
       else
         socket
       end
@@ -299,6 +301,29 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   def handle_async(:load_plot, {:exit, reason}, socket) do
     {:noreply, assign(socket, :plot, AsyncResult.failed(socket.assigns.plot, {:exit, reason}))}
+  end
+
+  def handle_async(:reload_calibration_plot, {:ok, calib}, socket) do
+    socket =
+      assign(socket, :calibration_plot, AsyncResult.ok(socket.assigns.calibration_plot, calib))
+
+    socket =
+      if socket.assigns.display_mode == :calibration and Map.get(calib, :plot_available) do
+        push_event(socket, "echarts-data-#{socket.assigns.id}-calib", %{option: calib.option})
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_async(:reload_calibration_plot, {:exit, reason}, socket) do
+    {:noreply,
+     assign(
+       socket,
+       :calibration_plot,
+       AsyncResult.failed(socket.assigns.calibration_plot, {:exit, reason})
+     )}
   end
 
   @impl true
