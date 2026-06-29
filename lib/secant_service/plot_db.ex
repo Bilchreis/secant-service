@@ -111,6 +111,12 @@ defmodule SecantService.PlotDB do
             }
           end
 
+        "enum" ->
+          members = parameter.datainfo["members"]
+          series = [Builders.enum_series("value", ts, val, members)]
+          option = Builders.enum_timeseries_option(series, members, "value", mode)
+          %{plottable: true, plot_available: length(val) > 1, option: option}
+
         _ ->
           series = [Builders.scalar_line_series("value", ts, val)]
           option = Builders.timeseries_option(series, unit, mode)
