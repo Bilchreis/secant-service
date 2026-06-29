@@ -4,7 +4,7 @@ defmodule SecantService.MixProject do
   def project do
     [
       app: :secant_service,
-      version: "0.0.15",
+      version: "0.2.18",
       elixir: "~> 1.20.1",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
