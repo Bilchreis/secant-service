@@ -1,6 +1,11 @@
 defmodule SecantService.PlotDB do
   alias SecantService.Util
   alias SecantService.PlotDB.Builders
+  alias SecantService.PlotDB.DTypePlot
+  alias SecantService.PlotDB.DTypes.ArrayHeatmap
+  alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
+  alias SecantService.PlotDB.DTypes.Scalar
+  alias SecantService.PlotDB.DTypes.Struct, as: StructDType
 
   alias SecantService.SecNodes.ParameterValue
   alias SecantService.SecNodes.Parameter
@@ -96,8 +101,8 @@ defmodule SecantService.PlotDB do
             not_plottable()
           else
             option =
-              Builders.heatmap_option(
-                [Builders.heatmap_series(ts, val)],
+              ArrayHeatmap.heatmap_option(
+                [ArrayHeatmap.heatmap_series(ts, val)],
                 array_len,
                 unit,
                 mode
@@ -113,13 +118,24 @@ defmodule SecantService.PlotDB do
 
         "enum" ->
           members = parameter.datainfo["members"]
-          series = [Builders.enum_series("value", ts, val, members)]
-          option = Builders.enum_timeseries_option(series, members, "value", mode)
+          series = [EnumDType.enum_series("value", ts, val, members)]
+          option = EnumDType.enum_timeseries_option(series, members, "value", mode)
           %{plottable: true, plot_available: length(val) > 1, option: option}
 
+        "struct" ->
+          option = StructDType.build_struct_option("value", ts, val, parameter.datainfo, mode)
+          dtype_mod = DTypePlot.for_datainfo(parameter.datainfo)
+
+          %{
+            plottable: true,
+            plot_available: length(val) > 1,
+            option: option,
+            _param_dtype_modules: %{"value" => dtype_mod}
+          }
+
         _ ->
-          series = [Builders.scalar_line_series("value", ts, val)]
-          option = Builders.timeseries_option(series, unit, mode)
+          series = [Scalar.scalar_line_series("value", ts, val)]
+          option = Scalar.timeseries_option(series, unit, mode)
           %{plottable: true, plot_available: length(val) > 1, option: option}
       end
     else
@@ -154,6 +170,9 @@ defmodule SecantService.PlotDB do
           {:error, _} -> true
         end
 
+      %{"type" => "struct"} = datainfo ->
+        StructDType.supported_type?(datainfo)
+
       _ ->
         false
     end
@@ -172,19 +191,33 @@ defmodule SecantService.PlotDB do
   # Live update formatting
   # ---------------------------------------------------------------------------
 
+  # Module plots (from PlotSpec implementations) carry _plot_spec_module for clean dispatch.
+  def get_trace_updates_batch(%{_plot_spec_module: mod} = plot_map, datapoints, parameter) do
+    mod.trace_updates(plot_map, datapoints, parameter)
+  end
+
+  # Parameter plots and any legacy plot_maps fall back to the original inline dispatch.
   def get_trace_updates_batch(%{plot_type: :array_heatmap} = _plot_map, datapoints, _parameter) do
     data =
       Enum.flat_map(datapoints, fn {arr, ts} ->
         arr |> Enum.with_index() |> Enum.map(fn {v, i} -> [ts, i, v] end)
       end)
 
-    array_len =
-      case List.first(datapoints) do
-        {arr, _ts} -> length(arr)
-        _ -> 0
-      end
+    array_len = ArrayHeatmap.array_len_from_datapoints(datapoints)
 
     %{seriesUpdates: [%{seriesIndex: 0, data: data}], arrayLen: array_len}
+  end
+
+  def get_trace_updates_batch(%{_param_dtype_modules: mods, option: opt} = _plot_map, datapoints, parameter) do
+    dtype_mod = Map.get(mods, parameter)
+    series_upds = dtype_mod.series_updates(opt, datapoints, parameter)
+    result = %{seriesUpdates: series_upds}
+
+    if dtype_mod == ArrayHeatmap do
+      Map.put(result, :arrayLen, ArrayHeatmap.array_len_from_datapoints(datapoints))
+    else
+      result
+    end
   end
 
   def get_trace_updates_batch(plot_map, datapoints, parameter) do
@@ -199,13 +232,16 @@ defmodule SecantService.PlotDB do
           Enum.zip(timestamps, values) |> Enum.map(&Tuple.to_list/1)
 
         int_to_info ->
-          y_val = case Map.get(plot_map.option, :_enumSeriesY) do
-            nil -> 0
-            series_y -> Map.get(series_y, parameter, 0)
-          end
+          y_val =
+            case Map.get(plot_map.option, :_enumSeriesY) do
+              nil -> 0
+              series_y -> Map.get(series_y, parameter, 0)
+            end
 
           Enum.zip_with(timestamps, values, fn ts, v ->
-            %{name: name, color: color} = Map.get(int_to_info, to_string(v), %{name: to_string(v), color: "#888888"})
+            %{name: name, color: color} =
+              Map.get(int_to_info, to_string(v), %{name: to_string(v), color: "#888888"})
+
             %{value: [ts, y_val], name: "#{name} (#{v})", itemStyle: %{color: color}}
           end)
       end

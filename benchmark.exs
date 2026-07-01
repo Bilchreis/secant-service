@@ -1,28 +1,21 @@
 alias SecantService.PlotDB
-alias SecantService.Sec_Nodes
-alias Ecto.UUID
+alias SecantService.SecNodes.SecNode
+require Ash.Query
 
-abstract_modules =
-  Sec_Nodes.get_sec_node_by_uuid(UUID.dump!("aa134b51-c8ae-4b5a-93d0-49e4356d4d7c"))
-  |> Map.get(:modules)
+sec_node =
+  SecNode
+  |> Ash.Query.filter(uuid == ^"01c166b8-33bf-4ef6-9ff7-81faa6836354")
+  |> Ash.read_first!()
 
-gas_dosing_modules =
-  Sec_Nodes.get_sec_node_by_uuid(UUID.dump!("62245730-72b4-4fd5-8929-8a8c69e3f48e"))
-  |> Map.get(:modules)
-
-gas_op_mode = Enum.find(abstract_modules, fn m -> m.name == "gas_operation_mode" end)
-mfc_group1 = Enum.find(abstract_modules, fn m -> m.name == "MFC_group_1" end)
-mfc1 = Enum.find(gas_dosing_modules, fn m -> m.name == "massflow_contr1" end)
+mass_spec = Enum.find(sec_node.modules, fn m -> m.name == "mass_spec" end)
 
 Benchee.run(%{
-  "gas_op_mode" => fn -> PlotDB.drivable_plot(gas_op_mode) end,
-  "mfc_group1" => fn -> PlotDB.drivable_plot(mfc_group1) end,
-  "mfc1" => fn -> PlotDB.drivable_plot(mfc1) end
+  "mass_spec" => fn -> PlotDB.module_plot(mass_spec) end
 })
 
 :eprof.start_profiling([self()])
 
-PlotDB.drivable_plot(gas_op_mode)
+PlotDB.module_plot(mass_spec)
 
 :eprof.stop_profiling()
 :eprof.analyze()
