@@ -43,6 +43,7 @@ Hooks.EChartsChart = {
     this._arrayLen = null; // non-null for heatmap plots; drives yAxis.max updates
     this._visualMapMin = null; // running min/max for heatmap color scale
     this._visualMapMax = null;
+    this._xAxisCount = 1; // >1 for multi-grid charts (struct subplots)
 
     this._flushInterval = setInterval(() => this._flushBuffer(), 1000);
 
@@ -56,6 +57,7 @@ Hooks.EChartsChart = {
       this._seriesData = {};
       this._visualMapMin = null;
       this._visualMapMax = null;
+      this._xAxisCount = Array.isArray(echartsOption.xAxis) ? echartsOption.xAxis.length : 1;
       (echartsOption.series || []).forEach((s, i) => {
         this._seriesData[i] = s.data || [];
       });
@@ -68,7 +70,13 @@ Hooks.EChartsChart = {
         }
         if (this._visualMapMin !== null) {
           const vMax = this._visualMapMax === this._visualMapMin ? this._visualMapMax + 1 : this._visualMapMax;
-          echartsOption.visualMap = { ...echartsOption.visualMap, min: this._visualMapMin, max: vMax };
+          if (Array.isArray(echartsOption.visualMap)) {
+            echartsOption.visualMap = echartsOption.visualMap.map((vm, i) =>
+              i === 0 ? { ...vm, min: this._visualMapMin, max: vMax } : vm
+            );
+          } else {
+            echartsOption.visualMap = { ...echartsOption.visualMap, min: this._visualMapMin, max: vMax };
+          }
         }
       }
 
@@ -188,10 +196,10 @@ Hooks.EChartsChart = {
         const now = Date.now();
         const { xMin, xMax } = this._computeRange(btn, now);
         if (xMin !== null) {
-          this._chart.setOption({ xAxis: { min: xMin, max: xMax } });
+          this._chart.setOption({ xAxis: this._xAxisPatch({ min: xMin, max: xMax }) });
         } else {
           // "all" — remove explicit range constraints
-          this._chart.setOption({ xAxis: { min: null, max: null } });
+          this._chart.setOption({ xAxis: this._xAxisPatch({ min: null, max: null }) });
         }
       });
       buttonsEl.appendChild(el);
@@ -203,6 +211,11 @@ Hooks.EChartsChart = {
     const msMap = { minute: 60_000, hour: 3_600_000, day: 86_400_000 };
     const windowMs = (msMap[btn.step] || 0) * (btn.count || 1);
     return { xMin: now - windowMs, xMax: now };
+  },
+
+  _xAxisPatch(update) {
+    if (this._xAxisCount <= 1) return update;
+    return Array.from({ length: this._xAxisCount }, () => update);
   },
 
   _flushBuffer() {
@@ -233,7 +246,7 @@ Hooks.EChartsChart = {
     if (this._rangeButtons && this._activeButton != null) {
       const btn = this._rangeButtons[this._activeButton];
       const { xMin, xMax } = this._computeRange(btn, now);
-      if (xMin !== null) patch.xAxis = { min: xMin, max: xMax };
+      if (xMin !== null) patch.xAxis = this._xAxisPatch({ min: xMin, max: xMax });
     }
 
     if (this._arrayLen != null) {

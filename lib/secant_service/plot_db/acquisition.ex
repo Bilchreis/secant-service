@@ -6,4 +6,7 @@ defmodule SecantService.PlotDB.Acquisition do
 
   @impl true
   defdelegate param_names(), to: SecantService.PlotDB.Readable
+
+  @impl true
+  defdelegate trace_updates(plot_map, datapoints, param_name), to: SecantService.PlotDB.Readable
 end

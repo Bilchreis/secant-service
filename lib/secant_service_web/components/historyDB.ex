@@ -29,8 +29,14 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   @impl true
   def mount(socket) do
-    {:ok, socket}
+    {:ok, assign(socket, :chart_height, 340)}
   end
+
+  defp chart_height(%{option: %{_structFields: fields}}) when is_map(fields) do
+    max(map_size(fields) * 80, 340)
+  end
+
+  defp chart_height(_), do: 340
 
   defp get_parameter(secop_obj) do
     case secop_obj do
@@ -284,7 +290,10 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   @impl true
   def handle_async(:load_plot, {:ok, plot}, socket) do
-    socket = assign(socket, :plot, AsyncResult.ok(socket.assigns.plot, plot))
+    socket =
+      socket
+      |> assign(:plot, AsyncResult.ok(socket.assigns.plot, plot))
+      |> assign(:chart_height, chart_height(plot))
 
     socket =
       if socket.assigns.display_mode == :graph and Map.get(plot, :plottable) and
@@ -411,12 +420,14 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
               <div class="flex-1 bg-gray-300 p-1 rounded-lg">
                 <div id={"range-buttons-#{@id}"} class="flex space-x-1 mb-1"></div>
-                <div
-                  id={@id}
-                  class="h-[340px]"
-                  phx-hook="EChartsChart"
-                  phx-update="ignore"
-                >
+                <div style={"height: #{@chart_height}px"}>
+                  <div
+                    id={@id}
+                    class="h-full"
+                    phx-hook="EChartsChart"
+                    phx-update="ignore"
+                  >
+                  </div>
                 </div>
               </div>
             </.async_result>
