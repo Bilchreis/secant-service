@@ -22,6 +22,21 @@ defmodule SecantService.PlotDB.Builders do
     |> read_from_device_if_empty(param.id)
   end
 
+  def fetch_param_data_in_range(param, from_ms, to_ms) do
+    args =
+      %{parameter_id: param.id}
+      |> maybe_put(:start_timestamp, from_ms && DateTime.from_unix!(trunc(from_ms), :millisecond))
+      |> maybe_put(:end_timestamp, to_ms && DateTime.from_unix!(trunc(to_ms), :millisecond))
+
+    ParameterValue.get_resource_module(param)
+    |> Ash.Query.for_read(:for_parameter, args)
+    |> Ash.read!()
+    |> ParameterValue.extract_value_timestamp_lists(param)
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
   defp get_values(parameter) do
     ParameterValue.get_resource_module(parameter)
     |> Ash.Query.for_read(:for_parameter, %{parameter_id: parameter.id})

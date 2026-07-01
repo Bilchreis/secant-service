@@ -92,6 +92,13 @@ Hooks.EChartsChart = {
       this._chart && this._chart.setOption(echartsOption, { notMerge: true });
     });
 
+    this.handleEvent(`prepend-chart-data-${this.el.id}`, ({ seriesUpdates }) => {
+      (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
+        if (!this._seriesData[seriesIndex]) this._seriesData[seriesIndex] = [];
+        this._seriesData[seriesIndex] = [...data, ...this._seriesData[seriesIndex]];
+      });
+    });
+
     this.handleEvent(`extend-chart-${this.el.id}`, ({ seriesUpdates, arrayLen }) => {
       (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
         if (!this._seriesData[seriesIndex]) this._seriesData[seriesIndex] = [];
@@ -181,6 +188,7 @@ Hooks.EChartsChart = {
         "btn btn-xs " +
         (index === this._activeButton ? "btn-primary" : "btn-neutral");
       el.addEventListener("click", () => {
+        const prevBtn = this._activeButton != null ? this._rangeButtons[this._activeButton] : null;
         this._activeButton = index;
         buttonsEl
           .querySelectorAll("button")
@@ -194,11 +202,31 @@ Hooks.EChartsChart = {
           );
 
         const now = Date.now();
-        const { xMin, xMax } = this._computeRange(btn, now);
-        if (xMin !== null) {
-          this._chart.setOption({ xAxis: this._xAxisPatch({ min: xMin, max: xMax }) });
+        const { xMin: newXMin, xMax: newXMax } = this._computeRange(btn, now);
+        const prevXMin = prevBtn ? this._computeRange(prevBtn, now).xMin : null;
+
+        // Expanding = window is getting larger (xMin moves earlier, or going to "all")
+        const isExpanding = prevXMin !== null && (newXMin === null || newXMin < prevXMin);
+
+        if (isExpanding) {
+          const earliestTs = this._seriesData[0]?.[0]?.[0] ?? null;
+          if (earliestTs !== null && (newXMin === null || newXMin < earliestTs)) {
+            this.pushEventTo(this.el, "fetch-chart-range", { from: newXMin, to: earliestTs });
+          }
+        } else if (!isExpanding && newXMin !== null) {
+          // Shrinking: eagerly drop points that scrolled out
+          Object.keys(this._seriesData).forEach((idx) => {
+            const d = this._seriesData[idx];
+            if (d.length > 0 && d[0][0] < newXMin) {
+              const cutoff = d.findIndex(p => p[0] >= newXMin);
+              this._seriesData[idx] = cutoff === -1 ? [] : d.slice(cutoff);
+            }
+          });
+        }
+
+        if (newXMin !== null) {
+          this._chart.setOption({ xAxis: this._xAxisPatch({ min: newXMin, max: newXMax }) });
         } else {
-          // "all" — remove explicit range constraints
           this._chart.setOption({ xAxis: this._xAxisPatch({ min: null, max: null }) });
         }
       });
@@ -229,12 +257,29 @@ Hooks.EChartsChart = {
     const now = Date.now();
 
 
-    Object.keys(this._seriesData).forEach((idx) => {
-      const d = this._seriesData[idx];
-      if (d.length > maxPoints) {
-        this._seriesData[idx] = d.slice(d.length - maxPoints);
+    if (this._activeButton != null) {
+      const btn = this._rangeButtons[this._activeButton];
+      const { xMin } = this._computeRange(btn, now);
+      if (xMin !== null) {
+        Object.keys(this._seriesData).forEach((idx) => {
+          const d = this._seriesData[idx];
+          if (d.length > 0 && d[0][0] < xMin) {
+            const cutoff = d.findIndex(p => p[0] >= xMin);
+            this._seriesData[idx] = cutoff === -1 ? [] : d.slice(cutoff);
+          }
+        });
+      } else {
+        Object.keys(this._seriesData).forEach((idx) => {
+          const d = this._seriesData[idx];
+          if (d.length > maxPoints) this._seriesData[idx] = d.slice(d.length - maxPoints);
+        });
       }
-    });
+    } else {
+      Object.keys(this._seriesData).forEach((idx) => {
+        const d = this._seriesData[idx];
+        if (d.length > maxPoints) this._seriesData[idx] = d.slice(d.length - maxPoints);
+      });
+    }
 
     const updatedSeries = Object.keys(this._seriesData).map((idx) => ({
       data: this._seriesData[idx],

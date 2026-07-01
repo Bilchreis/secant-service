@@ -3,6 +3,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   import SecantServiceWeb.CoreComponents
   require Logger
   alias SecantService.PlotDB
+  alias SecantService.PlotDB.Builders
   alias SecantService.SecNodes.ParameterValue
   alias Phoenix.LiveView.JS
   alias Phoenix.LiveView.AsyncResult
@@ -170,6 +171,21 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   @impl true
+  def handle_event("fetch-chart-range", %{"from" => from_ms, "to" => to_ms}, socket) do
+    parameter = socket.assigns.parameter
+    plot = socket.assigns.plot.result
+
+    socket =
+      start_async(socket, :fetch_chart_range, fn ->
+        {values, timestamps} = Builders.fetch_param_data_in_range(parameter, from_ms, to_ms)
+        datapoints = Enum.zip(values, timestamps)
+        PlotDB.get_trace_updates_batch(plot, datapoints, parameter.name)
+      end)
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("request-chart-data", %{"id" => chart_id}, %{assigns: assigns} = socket) do
     if String.ends_with?(chart_id, "-calib") do
       calib = assigns.calibration_plot.result
@@ -310,6 +326,15 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   def handle_async(:load_plot, {:exit, reason}, socket) do
     {:noreply, assign(socket, :plot, AsyncResult.failed(socket.assigns.plot, {:exit, reason}))}
+  end
+
+  def handle_async(:fetch_chart_range, {:ok, update_data}, socket) do
+    {:noreply, push_event(socket, "prepend-chart-data-#{socket.assigns.id}", update_data)}
+  end
+
+  def handle_async(:fetch_chart_range, {:exit, reason}, socket) do
+    Logger.error("Chart range fetch failed: #{inspect(reason)}")
+    {:noreply, socket}
   end
 
   def handle_async(:reload_calibration_plot, {:ok, calib}, socket) do
