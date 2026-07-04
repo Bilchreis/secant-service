@@ -254,10 +254,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
     option = if map_size(enum_members) > 0, do: Map.put(option, :_enumMembers, enum_members), else: option
 
     if mode == :live do
-      buttons = Builders.range_buttons()
-      active = 1
-      now_ms = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
-      {x_min, x_max} = Builders.compute_range(Enum.at(buttons, active), now_ms)
+      {x_min, x_max, buttons, active} = Builders.default_live_range_ms()
       live_x_axes = Enum.map(option.xAxis, &Map.merge(&1, %{min: x_min, max: x_max}))
 
       option

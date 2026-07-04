@@ -15,10 +15,10 @@ defmodule SecantService.PlotDB.Calibratable do
     value_param = find_param(module, "value")
 
     if value_param && value_param.datainfo["type"] in @scalar_types do
-      {v_val, v_ts} = fetch_param_data(value_param)
-      {t_val, t_ts} = fetch_param_data(find_param(module, "target"))
-      {vu_val, vu_ts} = fetch_param_data(find_param(module, "_value_uncalibrated"))
-      {tc_val, tc_ts} = fetch_param_data(find_param(module, "_target_calibrated"))
+      {v_val, v_ts} = fetch_param_data(value_param, mode)
+      {t_val, t_ts} = fetch_param_data(find_param(module, "target"), mode)
+      {vu_val, vu_ts} = fetch_param_data(find_param(module, "_value_uncalibrated"), mode)
+      {tc_val, tc_ts} = fetch_param_data(find_param(module, "_target_calibrated"), mode)
 
       unit = get_in(value_param.datainfo, ["unit"])
 
@@ -42,7 +42,7 @@ defmodule SecantService.PlotDB.Calibratable do
       {:ok,
        %{
          plottable: true,
-         plot_available: length(v_val) > 1,
+         plot_available: plot_available?(v_val, value_param, mode),
          option: option,
          _plot_spec_module: __MODULE__,
          _param_dtype_modules: param_dtype_modules

@@ -31,6 +31,46 @@ let csrfToken = document
 
 const maxPoints = 20000;
 
+// Single shared timer driving all mounted EChartsChart flushes, instead of
+// one setInterval per chart — keeps per-tick cost bounded/coordinated rather
+// than scaling with the number of plots on the page.
+const ChartFlushDriver = {
+  _instances: new Set(),
+  _timer: null,
+  register(hook) {
+    this._instances.add(hook);
+    if (!this._timer) this._timer = setInterval(() => this._tick(), 1000);
+  },
+  unregister(hook) {
+    this._instances.delete(hook);
+    if (this._instances.size === 0 && this._timer) {
+      clearInterval(this._timer);
+      this._timer = null;
+    }
+  },
+  _tick() {
+    for (const hook of this._instances) {
+      try {
+        hook._flushBuffer();
+      } catch (error) {
+        console.error("ECharts flush error:", error);
+      }
+    }
+  },
+};
+
+// Single shared IntersectionObserver so fully off-screen charts skip their
+// setOption work entirely (data keeps buffering; the next visible tick
+// recomputes everything correctly from current state, so no catch-up logic
+// is needed).
+const ChartVisibilityObserver = new IntersectionObserver((entries) => {
+  entries.forEach((entry) => {
+    if (entry.target._echartsHook) {
+      entry.target._echartsHook._isVisible = entry.isIntersecting;
+    }
+  });
+});
+
 let Hooks = {};
 
 Hooks.EChartsChart = {
@@ -44,8 +84,12 @@ Hooks.EChartsChart = {
     this._visualMapMin = null; // running min/max for heatmap color scale
     this._visualMapMax = null;
     this._xAxisCount = 1; // >1 for multi-grid charts (struct subplots)
+    this._dataDirty = false; // true when _seriesData changed since the last flush
+    this._isVisible = true; // updated by ChartVisibilityObserver; default true pre-observation
 
-    this._flushInterval = setInterval(() => this._flushBuffer(), 1000);
+    ChartFlushDriver.register(this);
+    this.el._echartsHook = this;
+    ChartVisibilityObserver.observe(this.el);
 
     // Register handlers immediately — server may send data before rAF fires (eager push)
     this.handleEvent(`echarts-data-${this.el.id}`, ({ option }) => {
@@ -97,6 +141,7 @@ Hooks.EChartsChart = {
         if (!this._seriesData[seriesIndex]) this._seriesData[seriesIndex] = [];
         this._seriesData[seriesIndex] = [...data, ...this._seriesData[seriesIndex]];
       });
+      this._dataDirty = true;
     });
 
     this.handleEvent(`extend-chart-${this.el.id}`, ({ seriesUpdates, arrayLen }) => {
@@ -115,6 +160,7 @@ Hooks.EChartsChart = {
       if (arrayLen != null && arrayLen !== this._arrayLen) {
         this._arrayLen = arrayLen;
       }
+      this._dataDirty = true;
     });
 
     this._toggleRangeslider = (e) => {
@@ -209,16 +255,20 @@ Hooks.EChartsChart = {
         const isExpanding = prevXMin !== null && (newXMin === null || newXMin < prevXMin);
 
         if (isExpanding) {
-          const earliestTs = this._seriesData[0]?.[0]?.[0] ?? null;
-          if (earliestTs !== null && (newXMin === null || newXMin < earliestTs)) {
-            this.pushEventTo(this.el, "fetch-chart-range", { from: newXMin, to: earliestTs });
+          // No buffered point at all (e.g. a sparsely-updating parameter whose default
+          // live window had zero points) still means there may be older data to backfill —
+          // fall back to "now" so the request covers the whole newly-selected window.
+          const earliestTs = this._earliestBufferedTs();
+          const to = earliestTs !== null ? earliestTs : now;
+          if (newXMin === null || newXMin < to) {
+            this.pushEventTo(this.el, "fetch-chart-range", { from: newXMin, to });
           }
         } else if (!isExpanding && newXMin !== null) {
           // Shrinking: eagerly drop points that scrolled out
           Object.keys(this._seriesData).forEach((idx) => {
             const d = this._seriesData[idx];
-            if (d.length > 0 && d[0][0] < newXMin) {
-              const cutoff = d.findIndex(p => p[0] >= newXMin);
+            if (d.length > 0 && this._pointTs(d[0]) < newXMin) {
+              const cutoff = d.findIndex(p => this._pointTs(p) >= newXMin);
               this._seriesData[idx] = cutoff === -1 ? [] : d.slice(cutoff);
             }
           });
@@ -229,9 +279,30 @@ Hooks.EChartsChart = {
         } else {
           this._chart.setOption({ xAxis: this._xAxisPatch({ min: null, max: null }) });
         }
+        this._dataDirty = true;
       });
       buttonsEl.appendChild(el);
     });
+  },
+
+  // Timestamp of a buffered point, regardless of series data shape:
+  // plain [ts, ...] arrays (line/scatter/heatmap) or enum's {value: [ts, y], ...} objects.
+  _pointTs(point) {
+    if (!point) return null;
+    return Array.isArray(point) ? point[0] : (point.value ? point.value[0] : null);
+  },
+
+  // Earliest timestamp currently buffered across all series, or null if nothing is buffered yet
+  // (e.g. a live plot whose default window happens to contain zero points for a sparsely-updating
+  // parameter — this must not be confused with "nothing to backfill").
+  _earliestBufferedTs() {
+    let earliest = null;
+    Object.values(this._seriesData).forEach((d) => {
+      if (!d || d.length === 0) return;
+      const ts = this._pointTs(d[0]);
+      if (ts != null && (earliest === null || ts < earliest)) earliest = ts;
+    });
+    return earliest;
   },
 
   _computeRange(btn, now) {
@@ -247,24 +318,30 @@ Hooks.EChartsChart = {
   },
 
   _flushBuffer() {
-    if (!this._chart || !this._rangeButtons) return;
-
-    const hasData = Object.values(this._seriesData).some(
-      (d) => d.length > 0,
-    );
-    if (!hasData) return;
+    if (!this._chart || !this._rangeButtons || !this._isVisible) return;
 
     const now = Date.now();
+    const patch = {};
 
-
+    // Slide the x-axis window every tick, even with no new data — this is what
+    // makes a live chart visibly advance with wall-clock time while idle.
+    let xMin = null;
     if (this._activeButton != null) {
       const btn = this._rangeButtons[this._activeButton];
-      const { xMin } = this._computeRange(btn, now);
+      const range = this._computeRange(btn, now);
+      xMin = range.xMin;
+      if (xMin !== null) patch.xAxis = this._xAxisPatch({ min: xMin, max: range.xMax });
+    }
+
+    // The rest (trimming + rebuilding series + heatmap extras) is the expensive
+    // part — an ECharts re-diff over up to maxPoints per series — so only do it
+    // when data has actually changed since the last flush.
+    if (this._dataDirty) {
       if (xMin !== null) {
         Object.keys(this._seriesData).forEach((idx) => {
           const d = this._seriesData[idx];
-          if (d.length > 0 && d[0][0] < xMin) {
-            const cutoff = d.findIndex(p => p[0] >= xMin);
+          if (d.length > 0 && this._pointTs(d[0]) < xMin) {
+            const cutoff = d.findIndex(p => this._pointTs(p) >= xMin);
             this._seriesData[idx] = cutoff === -1 ? [] : d.slice(cutoff);
           }
         });
@@ -274,34 +351,24 @@ Hooks.EChartsChart = {
           if (d.length > maxPoints) this._seriesData[idx] = d.slice(d.length - maxPoints);
         });
       }
-    } else {
-      Object.keys(this._seriesData).forEach((idx) => {
-        const d = this._seriesData[idx];
-        if (d.length > maxPoints) this._seriesData[idx] = d.slice(d.length - maxPoints);
-      });
-    }
 
-    const updatedSeries = Object.keys(this._seriesData).map((idx) => ({
-      data: this._seriesData[idx],
-    }));
+      patch.series = Object.keys(this._seriesData).map((idx) => ({
+        data: this._seriesData[idx],
+      }));
 
-    const patch = { series: updatedSeries };
-
-    // Only slide the x-axis window for live mode (has range buttons)
-    if (this._rangeButtons && this._activeButton != null) {
-      const btn = this._rangeButtons[this._activeButton];
-      const { xMin, xMax } = this._computeRange(btn, now);
-      if (xMin !== null) patch.xAxis = this._xAxisPatch({ min: xMin, max: xMax });
-    }
-
-    if (this._arrayLen != null) {
-      patch.yAxis = { max: this._arrayLen - 1 };
-      patch.animation = false;
-      if (this._visualMapMin !== null && this._visualMapMax !== null) {
-        const vMax = this._visualMapMax === this._visualMapMin ? this._visualMapMax + 1 : this._visualMapMax;
-        patch.visualMap = { min: this._visualMapMin, max: vMax };
+      if (this._arrayLen != null) {
+        patch.yAxis = { max: this._arrayLen - 1 };
+        patch.animation = false;
+        if (this._visualMapMin !== null && this._visualMapMax !== null) {
+          const vMax = this._visualMapMax === this._visualMapMin ? this._visualMapMax + 1 : this._visualMapMax;
+          patch.visualMap = { min: this._visualMapMin, max: vMax };
+        }
       }
+
+      this._dataDirty = false;
     }
+
+    if (Object.keys(patch).length === 0) return;
 
     try {
       this._chart.setOption(patch);
@@ -311,7 +378,8 @@ Hooks.EChartsChart = {
   },
 
   destroyed() {
-    clearInterval(this._flushInterval);
+    ChartFlushDriver.unregister(this);
+    ChartVisibilityObserver.unobserve(this.el);
     this._resizeObserver && this._resizeObserver.disconnect();
     document.removeEventListener("toggle-rangeslider", this._toggleRangeslider);
     window.removeEventListener("myapp:close-modal", this._onCloseModal);

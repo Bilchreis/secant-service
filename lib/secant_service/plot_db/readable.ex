@@ -17,7 +17,7 @@ defmodule SecantService.PlotDB.Readable do
     value_param = find_param(module, "value")
 
     if value_param do
-      {val, ts} = fetch_param_data(value_param)
+      {val, ts} = fetch_param_data(value_param, mode)
       unit = get_in(value_param.datainfo, ["unit"])
       dtype_mod = DTypePlot.for_datainfo(value_param.datainfo)
 
@@ -36,7 +36,7 @@ defmodule SecantService.PlotDB.Readable do
             {:ok,
              %{
                plottable: true,
-               plot_available: length(val) > 1,
+               plot_available: plot_available?(val, value_param, mode),
                plot_type: :array_heatmap,
                option: option,
                _plot_spec_module: __MODULE__,
@@ -50,7 +50,7 @@ defmodule SecantService.PlotDB.Readable do
           {:ok,
            %{
              plottable: true,
-             plot_available: length(val) > 1,
+             plot_available: plot_available?(val, value_param, mode),
              option: option,
              _plot_spec_module: __MODULE__,
              _param_dtype_modules: %{"value" => dtype_mod}
@@ -63,7 +63,7 @@ defmodule SecantService.PlotDB.Readable do
           {:ok,
            %{
              plottable: true,
-             plot_available: length(val) > 1,
+             plot_available: plot_available?(val, value_param, mode),
              option: option,
              _plot_spec_module: __MODULE__,
              _param_dtype_modules: %{"value" => dtype_mod}

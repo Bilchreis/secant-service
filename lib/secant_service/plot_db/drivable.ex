@@ -18,7 +18,7 @@ defmodule SecantService.PlotDB.Drivable do
     value_param = find_param(module, "value")
 
     if value_param do
-      {v_val, v_ts} = fetch_param_data(value_param)
+      {v_val, v_ts} = fetch_param_data(value_param, mode)
       unit = get_in(value_param.datainfo, ["unit"])
       dtype_mod = DTypePlot.for_datainfo(value_param.datainfo)
 
@@ -37,7 +37,7 @@ defmodule SecantService.PlotDB.Drivable do
             {:ok,
              %{
                plottable: true,
-               plot_available: length(v_val) > 1,
+               plot_available: plot_available?(v_val, value_param, mode),
                plot_type: :array_heatmap,
                option: option,
                _plot_spec_module: __MODULE__,
@@ -47,7 +47,7 @@ defmodule SecantService.PlotDB.Drivable do
 
         StructDType ->
           target_param = find_param(module, "target")
-          {t_val, t_ts} = fetch_param_data(target_param)
+          {t_val, t_ts} = fetch_param_data(target_param, mode)
           target_opt = if length(t_val) > 0, do: [target: {t_ts, t_val}], else: []
 
           option = StructDType.build_struct_option("value", v_ts, v_val, value_param.datainfo, mode, target_opt)
@@ -60,7 +60,7 @@ defmodule SecantService.PlotDB.Drivable do
           {:ok,
            %{
              plottable: true,
-             plot_available: length(v_val) > 1,
+             plot_available: plot_available?(v_val, value_param, mode),
              option: option,
              _plot_spec_module: __MODULE__,
              _param_dtype_modules: param_mods
@@ -68,7 +68,7 @@ defmodule SecantService.PlotDB.Drivable do
 
         _enum_or_scalar ->
           target_param = find_param(module, "target")
-          {t_val, t_ts} = fetch_param_data(target_param)
+          {t_val, t_ts} = fetch_param_data(target_param, mode)
 
           {v_series, t_series, extra_opts} =
             if value_param.datainfo["type"] == "enum" do
@@ -88,7 +88,7 @@ defmodule SecantService.PlotDB.Drivable do
           {:ok,
            %{
              plottable: true,
-             plot_available: length(v_val) > 1,
+             plot_available: plot_available?(v_val, value_param, mode),
              option: option,
              _plot_spec_module: __MODULE__,
              _param_dtype_modules: %{"value" => dtype_mod, "target" => dtype_mod}
