@@ -108,6 +108,19 @@ config :secant_service, SecantServiceWeb.Endpoint,
 # at the `config/runtime.exs`.
 config :secant_service, SecantService.Mailer, adapter: Swoosh.Adapters.Local
 
+# Time-range buttons offered on live/historical plots, and which one is
+# selected by default for :live plots (index into range_buttons).
+config :secant_service, :plot_db,
+  range_buttons: [
+    %{label: "1m", step: "minute", count: 1},
+    %{label: "10m", step: "minute", count: 10},
+    %{label: "30m", step: "minute", count: 30},
+    %{label: "1h", step: "hour", count: 1},
+    %{label: "1d", step: "day", count: 1},
+    %{label: "all", step: "all"}
+  ],
+  default_active_range_index: 1
+
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.5",

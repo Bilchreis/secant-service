@@ -90,7 +90,7 @@ defmodule SecantService.PlotDB do
 
   def parameter_plot(parameter, mode \\ :live) do
     if plottable?(parameter) do
-      {val, ts} = Builders.fetch_param_data(parameter)
+      {val, ts} = Builders.fetch_param_data(parameter, mode)
       unit = get_in(parameter.datainfo, ["unit"])
 
       case parameter.datainfo["type"] do
@@ -110,7 +110,7 @@ defmodule SecantService.PlotDB do
 
             %{
               plottable: true,
-              plot_available: length(val) > 1,
+              plot_available: Builders.plot_available?(val, parameter, mode),
               plot_type: :array_heatmap,
               option: option
             }
@@ -120,7 +120,7 @@ defmodule SecantService.PlotDB do
           members = parameter.datainfo["members"]
           series = [EnumDType.enum_series("value", ts, val, members)]
           option = EnumDType.enum_timeseries_option(series, members, "value", mode)
-          %{plottable: true, plot_available: length(val) > 1, option: option}
+          %{plottable: true, plot_available: Builders.plot_available?(val, parameter, mode), option: option}
 
         "struct" ->
           option = StructDType.build_struct_option("value", ts, val, parameter.datainfo, mode)
@@ -128,7 +128,7 @@ defmodule SecantService.PlotDB do
 
           %{
             plottable: true,
-            plot_available: length(val) > 1,
+            plot_available: Builders.plot_available?(val, parameter, mode),
             option: option,
             _param_dtype_modules: %{"value" => dtype_mod}
           }
@@ -136,7 +136,7 @@ defmodule SecantService.PlotDB do
         _ ->
           series = [Scalar.scalar_line_series("value", ts, val)]
           option = Scalar.timeseries_option(series, unit, mode)
-          %{plottable: true, plot_available: length(val) > 1, option: option}
+          %{plottable: true, plot_available: Builders.plot_available?(val, parameter, mode), option: option}
       end
     else
       not_plottable()
