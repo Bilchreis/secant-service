@@ -49,6 +49,27 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     end
   end
 
+  # Resolves a plot's parameter name (e.g. "target") back to its %Parameter{} struct.
+  # A bare %Parameter{} secop_obj only ever has itself, regardless of the name PlotDB
+  # reports (e.g. array-heatmap plots report "value" for a parameter that isn't named that).
+  defp resolve_param(%SecantService.SecNodes.Parameter{} = param, _name), do: param
+
+  defp resolve_param(%SecantService.SecNodes.Module{} = module, name),
+    do: Builders.find_param(module, name)
+
+  # Combines the per-parameter trace-update maps produced for each series of a
+  # multi-parameter plot (e.g. drivable's "value"/"target") into the single
+  # payload the EChartsChart hook expects for one prepend-chart-data event.
+  defp merge_trace_updates(updates_list) do
+    series_updates = Enum.flat_map(updates_list, &Map.get(&1, :seriesUpdates, []))
+    array_len = Enum.find_value(updates_list, &Map.get(&1, :arrayLen))
+
+    case array_len do
+      nil -> %{seriesUpdates: series_updates}
+      len -> %{seriesUpdates: series_updates, arrayLen: len}
+    end
+  end
+
   def tabular?(%SecantService.SecNodes.Module{} = module) do
     if get_parameter(module) do
       true
@@ -172,14 +193,21 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   @impl true
   def handle_event("fetch-chart-range", %{"from" => from_ms, "to" => to_ms}, socket) do
-    parameter = socket.assigns.parameter
+    secop_obj = socket.assigns.secop_obj
     plot = socket.assigns.plot.result
+    param_names = PlotDB.param_list(secop_obj)
 
     socket =
       start_async(socket, :fetch_chart_range, fn ->
-        {values, timestamps} = Builders.fetch_param_data_in_range(parameter, from_ms, to_ms)
-        datapoints = Enum.zip(values, timestamps)
-        PlotDB.get_trace_updates_batch(plot, datapoints, parameter.name)
+        param_names
+        |> Enum.map(&resolve_param(secop_obj, &1))
+        |> Enum.reject(&is_nil/1)
+        |> Enum.map(fn param ->
+          {values, timestamps} = Builders.fetch_param_data_in_range(param, from_ms, to_ms)
+          datapoints = Enum.zip(values, timestamps)
+          PlotDB.get_trace_updates_batch(plot, datapoints, param.name)
+        end)
+        |> merge_trace_updates()
       end)
 
     {:noreply, socket}
