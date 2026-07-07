@@ -111,6 +111,7 @@ defmodule SecantService.SecNodes.SecNode do
                   :processed_values_pubsub_topic,
                   :error_pubsub_topic,
                   :node_id_str,
+                  :secop_version,
                   :display_description,
                   :display_equipment_id,
                   :datapoint_count,
@@ -134,6 +135,7 @@ defmodule SecantService.SecNodes.SecNode do
                   :processed_values_pubsub_topic,
                   :error_pubsub_topic,
                   :node_id_str,
+                  :secop_version,
                   :display_description,
                   :display_equipment_id,
                   modules: [:parameters, :commands]
@@ -215,6 +217,7 @@ defmodule SecantService.SecNodes.SecNode do
         :port,
         :description,
         :firmware,
+        :secop_version,
         :implementor,
         :timeout,
         :describe_message,
@@ -237,6 +240,7 @@ defmodule SecantService.SecNodes.SecNode do
         :port,
         :description,
         :firmware,
+        :secop_version,
         :implementor,
         :timeout,
         :describe_message,
@@ -257,6 +261,7 @@ defmodule SecantService.SecNodes.SecNode do
         :port,
         :description,
         :firmware,
+        :secop_version,
         :implementor,
         :timeout,
         :describe_message,
@@ -350,6 +355,10 @@ defmodule SecantService.SecNodes.SecNode do
     end
 
     attribute :description, :string do
+      public? true
+    end
+
+    attribute :secop_version, :string do
       public? true
     end
 

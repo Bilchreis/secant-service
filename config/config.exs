@@ -146,7 +146,7 @@ config :pythonx, :uv_init,
   version = "0.0.1"
   requires-python = "==3.13.*"
   dependencies = [
-    "secop_check @ git+https://github.com/SampleEnvironment/secop-checker.git",
+    "secop_check @ git+https://github.com/SampleEnvironment/secop-checker.git@work",
     "secop-ophyd"
   ]
   """
