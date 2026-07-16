@@ -176,7 +176,9 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       if socket.assigns[:display_mode] == :calibration &&
            parameter in [
              "_forward_calibration_coefficients",
-             "_inverse_calibration_coefficients"
+             "_inverse_calibration_coefficients",
+             "_forward_calib_coeff",
+             "_inverse_calib_coeff"
            ] do
 
         secop_obj = socket.assigns.secop_obj

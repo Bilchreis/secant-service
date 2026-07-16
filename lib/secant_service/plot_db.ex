@@ -259,25 +259,19 @@ defmodule SecantService.PlotDB do
       |> Ash.Query.for_read(:get_node_id, %{id: module.id})
       |> Ash.read_first!()
 
+    module_atom = String.to_existing_atom(module.name)
+
     fwd_coeffs =
-      case NodeTable.lookup(
-             {:service, node_id},
-             {:data_report, String.to_existing_atom(module.name),
-              String.to_existing_atom("_forward_calibration_coefficients")}
-           ) do
-        {:ok, %{data_report: [value, _]}} -> value
-        {:error, _} -> nil
-      end
+      lookup_calib_coeff(node_id, module_atom, [
+        "_forward_calib_coeff",
+        "_forward_calibration_coefficients"
+      ])
 
     inv_coeffs =
-      case NodeTable.lookup(
-             {:service, node_id},
-             {:data_report, String.to_existing_atom(module.name),
-              String.to_existing_atom("_inverse_calibration_coefficients")}
-           ) do
-        {:ok, %{data_report: [value, _]}} -> value
-        {:error, _} -> nil
-      end
+      lookup_calib_coeff(node_id, module_atom, [
+        "_inverse_calib_coeff",
+        "_inverse_calibration_coefficients"
+      ])
 
     case {fwd_coeffs, inv_coeffs} do
       {nil, _} ->
@@ -442,6 +436,21 @@ defmodule SecantService.PlotDB do
   # ---------------------------------------------------------------------------
   # Calibration helpers (private)
   # ---------------------------------------------------------------------------
+
+  # Tries each parameter name in order (new short name first, old long name as
+  # fallback) so both the pre- and post-rename Calibratable interface classes work.
+  defp lookup_calib_coeff(node_id, module_atom, names) do
+    Enum.find_value(names, fn name ->
+      try do
+        case NodeTable.lookup({:service, node_id}, {:data_report, module_atom, String.to_existing_atom(name)}) do
+          {:ok, %{data_report: [value, _]}} -> value
+          {:error, _} -> nil
+        end
+      rescue
+        ArgumentError -> nil
+      end
+    end)
+  end
 
   defp polyval(coeffs, x) do
     coeffs
