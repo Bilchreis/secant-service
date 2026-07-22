@@ -112,31 +112,70 @@ defmodule SecantServiceWeb.SECoPComponents do
       end
 
     ~H"""
-    <button
-      phx-click="node-select"
-      phx-value-pstopic={@pubsub_topic}
-      class={[
-        @button_col,
-        @border_col,
-        "min-w-[240px] border-4 text-neutral-content text-left font-bold py-2 px-4 rounded",
-        "font-mono"
-      ]}
-    >
-      <div class="text-xl font-sans">{@display_name}</div>
-      <div class="text-sm text-neutral-content/80 opacity-60">{@pubsub_topic}</div>
-      <div class="flex gap-2">
-        <div class="px-2 py-0.5 rounded-full text-base-content bg-base-200/80 font-mono">
-          {@state}
+    <div class="relative group">
+      <button
+        phx-click="node-select"
+        phx-value-pstopic={@pubsub_topic}
+        class={[
+          @button_col,
+          @border_col,
+          "min-w-[240px] border-4 text-neutral-content text-left font-bold py-2 px-4 rounded",
+          "font-mono"
+        ]}
+      >
+        <div class="text-xl font-sans">{@display_name}</div>
+        <div class="text-sm text-neutral-content/80 opacity-60">{@pubsub_topic}</div>
+        <div class="flex gap-2">
+          <div class="px-2 py-0.5 rounded-full text-base-content bg-base-200/80 font-mono">
+            {@state}
+          </div>
+          <div class="px-2 py-0.5 rounded-full text-base-content bg-base-200/80 font-mono">
+            <%= if @connstate do %>
+              <span class="text-success">active </span>
+            <% else %>
+              <span class="text-warning">inactive</span>
+            <% end %>
+          </div>
         </div>
-        <div class="px-2 py-0.5 rounded-full text-base-content bg-base-200/80 font-mono">
-          <%= if @connstate do %>
-            <span class="text-success">active </span>
-          <% else %>
-            <span class="text-warning">inactive</span>
-          <% end %>
-        </div>
-      </div>
-    </button>
+      </button>
+      <button
+        phx-click="toggle_hidden"
+        phx-value-pstopic={@pubsub_topic}
+        class="absolute top-1 right-1 btn btn-ghost btn-xs btn-circle opacity-0 group-hover:opacity-100 transition-opacity"
+        title="Hide node"
+      >
+        <.icon name="hero-eye-slash" class="w-4 h-4" />
+      </button>
+    </div>
+    """
+  end
+
+  attr :equipment_id, :string, required: true
+  attr :pubsub_topic, :string, required: true
+  attr :uuid, :string, required: true
+
+  def hidden_node_row(assigns) do
+    display_name =
+      if assigns.equipment_id != nil do
+        Util.display_name(assigns.equipment_id)
+      else
+        "node: " <> String.slice(assigns.uuid, 0, 8)
+      end
+
+    assigns = assign(assigns, :display_name, display_name)
+
+    ~H"""
+    <div class="flex items-center justify-between gap-2 bg-base-200 rounded px-2 py-1">
+      <span class="truncate text-sm">{@display_name}</span>
+      <button
+        phx-click="toggle_hidden"
+        phx-value-pstopic={@pubsub_topic}
+        class="btn btn-ghost btn-xs btn-circle"
+        title="Show node"
+      >
+        <.icon name="hero-eye" class="w-4 h-4" />
+      </button>
+    </div>
     """
   end
 

@@ -12,7 +12,7 @@
 
       <div class="flex-1">
         <ul class="flex flex-wrap text-sm font-medium text-center text-neutral-content items-cente ml-4">
-          <%= for {_addr,node} <- @active_nodes do %>
+          <%= for {node_id, node} <- @active_nodes, not MapSet.member?(@hidden_node_ids, node_id) do %>
             <li class="me-2 mb-2">
               <.node_button
                 equipment_id={node.equipment_id}
@@ -22,6 +22,41 @@
                 state={node.state}
                 connstate={node.active}
               />
+            </li>
+          <% end %>
+          <%= if MapSet.size(@hidden_node_ids) > 0 do %>
+            <li class="me-2 mb-2">
+              <div class="dropdown">
+                <div
+                  tabindex="0"
+                  role="button"
+                  class="min-w-[240px] border-4 border-gray-500 bg-neutral hover:bg-neutral/80 text-neutral-content text-left font-bold py-2 px-4 rounded font-mono cursor-pointer"
+                >
+                  <div class="text-xl font-sans flex items-center gap-2">
+                    <.icon name="hero-eye-slash" class="w-5 h-5" /> Hidden
+                  </div>
+                  <div class="text-sm text-neutral-content/80 opacity-60">
+                    {MapSet.size(@hidden_node_ids)} node(s)
+                  </div>
+                  <div class="flex gap-2">
+                    <div class="px-2 py-0.5 rounded-full text-base-content bg-base-200/80 font-mono">
+                      click to view
+                    </div>
+                  </div>
+                </div>
+                <div
+                  tabindex="0"
+                  class="dropdown-content z-20 mt-2 w-64 rounded-box bg-base-100 border border-base-300 shadow-lg p-2 flex flex-col gap-1"
+                >
+                  <%= for {node_id, node} <- @active_nodes, MapSet.member?(@hidden_node_ids, node_id) do %>
+                    <.hidden_node_row
+                      equipment_id={node.equipment_id}
+                      pubsub_topic={node.pubsub_topic}
+                      uuid={node.uuid}
+                    />
+                  <% end %>
+                </div>
+              </div>
             </li>
           <% end %>
           <li class="flex flex-col me-2 mb-2 justify-center">
