@@ -57,6 +57,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       |> Model.to_socket(model)
       |> assign(:show_connect_modal, false)
       |> assign(:selected_parameter, nil)
+      |> assign(:hidden_node_ids, MapSet.new())
 
     {:ok, socket}
   end
@@ -309,6 +310,21 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     end)
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("toggle_hidden", %{"pstopic" => pubsub_topic}, socket) do
+    node_id = pubsubtopic_to_node_id(pubsub_topic)
+    hidden = socket.assigns.hidden_node_ids
+
+    updated =
+      if MapSet.member?(hidden, node_id) do
+        MapSet.delete(hidden, node_id)
+      else
+        MapSet.put(hidden, node_id)
+      end
+
+    {:noreply, assign(socket, :hidden_node_ids, updated)}
   end
 
   @impl true
