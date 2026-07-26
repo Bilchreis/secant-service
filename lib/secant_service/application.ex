@@ -26,6 +26,7 @@ defmodule SecantService.Application do
       {Registry, keys: :unique, name: Registry.PlotCacheSupervisor},
       {Registry, keys: :unique, name: Registry.PlotCacheDispatcher},
       {Registry, keys: :unique, name: Registry.PlotCache},
+      SecantClient.Supervisor,
       SecantService.NodeManager,
       {SecantService.NodeSupervisor, []},
       # Start a worker by calling: SecantService.Worker.start_link(arg)

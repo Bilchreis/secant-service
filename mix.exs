@@ -22,7 +22,7 @@ defmodule SecantService.MixProject do
   def application do
     [
       mod: {SecantService.Application, []},
-      extra_applications: [:logger, :wx, :runtime_tools, :observer, :os_mon, :secant_client]
+      extra_applications: [:logger, :wx, :runtime_tools, :observer, :os_mon]
     ]
   end
 
@@ -77,7 +77,8 @@ defmodule SecantService.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.1.1"},
       {:bandit, "~> 1.5"},
-      {:secant_client, git: "https://github.com/Bilchreis/secant-client.git", tag: "v0.1.1"},
+      {:secant_client,
+       git: "https://github.com/Bilchreis/secant-client.git", tag: "v0.2.0", runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:tzdata, "~> 1.1"},
       {:exprintf, "~> 0.2.1"},
