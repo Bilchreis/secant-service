@@ -31,34 +31,33 @@ defmodule SecantServiceWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://hexdocs.pm/phoenix/scopes.html)"
 
+  attr :current_user, :map, default: nil, doc: "the signed-in user, if any"
+
   slot :inner_block, required: true
 
   def app(assigns) do
     ~H"""
-    <header class="flex items-center justify-between container mx-auto">
-      <div class="flex">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img id="logo" src={~p"/images/logo.svg"} width="70" />
-          <p class="bg-brand/5 text-brand rounded-full px-2 font-medium leading-6">
+    <header class="navbar bg-base-100 shadow-sm px-4 sm:px-6 lg:px-8">
+      <div class="navbar-start">
+        <a href="/" class="btn btn-ghost text-xl gap-2 px-2">
+          <img id="logo" src={~p"/images/logo.svg"} width="40" />
+          <span class="badge badge-primary badge-soft">
             v{Application.spec(:secant_service, :vsn)}
-          </p>
+          </span>
         </a>
       </div>
-      <div class="flex">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <!-- Main navigation -->
+
+      <div class="navbar-center hidden lg:flex">
+        <ul class="menu menu-horizontal gap-1 text-base font-semibold">
           <li>
-            <.link
-              href={~p"/dashboard"}
-              class="inline-flex items-center px-4 py-2 text-zinc-800 dark:text-zinc-100 text-lg font-semibold border-b-2 border-transparent hover:border-purple-500 transition-all"
-            >
+            <.link href={~p"/dashboard"}>
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke-width="1.5"
                 stroke="currentColor"
-                class="h-5 w-5 mr-2"
+                class="h-5 w-5"
               >
                 <path
                   stroke-linecap="round"
@@ -70,17 +69,14 @@ defmodule SecantServiceWeb.Layouts do
             </.link>
           </li>
           <li>
-            <.link
-              href={~p"/browse"}
-              class="inline-flex items-center px-4 py-2 text-zinc-800 dark:text-zinc-100 text-lg font-semibold border-b-2 border-transparent hover:border-purple-500 transition-all"
-            >
+            <.link href={~p"/browse"}>
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke-width="1.5"
                 stroke="currentColor"
-                class="h-5 w-5 mr-2"
+                class="h-5 w-5"
               >
                 <path
                   stroke-linecap="round"
@@ -93,12 +89,18 @@ defmodule SecantServiceWeb.Layouts do
           </li>
         </ul>
       </div>
-      <div class="flex">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <.theme_toggle />
-          </li>
-        </ul>
+
+      <div class="navbar-end gap-2">
+        <span :if={@current_user} class="text-sm text-base-content/70 hidden sm:inline">
+          {@current_user.email}
+        </span>
+        <.link :if={@current_user} href="/sign-out" class="btn btn-ghost btn-sm">
+          Sign out
+        </.link>
+        <.link :if={!@current_user} href="/sign-in" class="btn btn-ghost btn-sm">
+          Sign in
+        </.link>
+        <.theme_toggle />
       </div>
     </header>
 

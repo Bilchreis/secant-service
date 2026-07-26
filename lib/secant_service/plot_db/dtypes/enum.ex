@@ -6,10 +6,26 @@ defmodule SecantService.PlotDB.DTypes.Enum do
   # Mirrors the color_lut in ParameterValueDisplay, same order, Tailwind-500 hex equivalents.
   # Index via rem(integer_value, length(@enum_colors)) — identical to the display component.
   @enum_colors [
-    "#ef4444", "#22c55e", "#3b82f6", "#eab308", "#a855f7",
-    "#ec4899", "#6366f1", "#f97316", "#14b8a6", "#06b6d4",
-    "#10b981", "#84cc16", "#f59e0b", "#f43f5e", "#8b5cf6",
-    "#d946ef", "#0ea5e9", "#64748b", "#71717a", "#78716c"
+    "#ef4444",
+    "#22c55e",
+    "#3b82f6",
+    "#eab308",
+    "#a855f7",
+    "#ec4899",
+    "#6366f1",
+    "#f97316",
+    "#14b8a6",
+    "#06b6d4",
+    "#10b981",
+    "#84cc16",
+    "#f59e0b",
+    "#f43f5e",
+    "#8b5cf6",
+    "#d946ef",
+    "#0ea5e9",
+    "#64748b",
+    "#71717a",
+    "#78716c"
   ]
 
   @impl true
@@ -18,7 +34,10 @@ defmodule SecantService.PlotDB.DTypes.Enum do
 
   def enum_int_to_info(members) do
     n = length(@enum_colors)
-    Map.new(members, fn {k, v} -> {to_string(v), %{name: k, color: Enum.at(@enum_colors, rem(v, n))}} end)
+
+    Map.new(members, fn {k, v} ->
+      {to_string(v), %{name: k, color: Enum.at(@enum_colors, rem(v, n))}}
+    end)
   end
 
   def enum_series(name, ts_list, val_list, members, y_val \\ 0) do
@@ -28,7 +47,12 @@ defmodule SecantService.PlotDB.DTypes.Enum do
     data =
       Enum.zip_with(ts_list, val_list, fn ts, v ->
         mn = Map.get(int_to_name, v, to_string(v))
-        %{value: [ts, y_val], name: "#{mn} (#{v})", itemStyle: %{color: Enum.at(@enum_colors, rem(v, n))}}
+
+        %{
+          value: [ts, y_val],
+          name: "#{mn} (#{v})",
+          itemStyle: %{color: Enum.at(@enum_colors, rem(v, n))}
+        }
       end)
 
     %{
@@ -51,6 +75,7 @@ defmodule SecantService.PlotDB.DTypes.Enum do
     legend_series =
       Enum.map(sorted_members, fn {name, val} ->
         color = Enum.at(@enum_colors, rem(val, n))
+
         %{
           name: "#{name} (#{val})",
           type: "line",
@@ -65,7 +90,10 @@ defmodule SecantService.PlotDB.DTypes.Enum do
     legend_names = Enum.map(sorted_members, fn {name, val} -> "#{name} (#{val})" end)
 
     # int → {name, color} for live-update conversion
-    int_to_info = Map.new(members, fn {k, v} -> {to_string(v), %{name: k, color: Enum.at(@enum_colors, rem(v, n))}} end)
+    int_to_info =
+      Map.new(members, fn {k, v} ->
+        {to_string(v), %{name: k, color: Enum.at(@enum_colors, rem(v, n))}}
+      end)
 
     y_axis =
       case y_categories do
@@ -88,7 +116,9 @@ defmodule SecantService.PlotDB.DTypes.Enum do
 
     base =
       case y_categories do
-        nil -> base
+        nil ->
+          base
+
         cats ->
           series_y = Map.new(cats, fn c -> {c, c} end)
           Map.put(base, :_enumSeriesY, series_y)

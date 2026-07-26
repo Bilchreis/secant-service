@@ -41,6 +41,10 @@ defmodule SecantServiceWeb.Router do
       #
       # If an authenticated user must *not* be present:
       # on_mount {SecantServiceWeb.LiveUserAuth, :live_no_user}
+
+      live "/dashboard", DashboardLive.Index
+      live "/browse", DataBrowserLive.Index, :index
+      live "/browse/node/:uuid", NodeBrowserLive.Index, :index
     end
   end
 
@@ -58,11 +62,12 @@ defmodule SecantServiceWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
-    live "/dashboard", DashboardLive.Index
-    live "/browse", DataBrowserLive.Index, :index
-    live "/browse/node/:uuid", NodeBrowserLive.Index, :index
-    auth_routes AuthController, SecantService.Accounts.User, path: "/auth"
+
+    sign_in_route auth_routes_prefix: "/auth"
     sign_out_route AuthController
+    auth_routes AuthController, SecantService.Accounts.User, path: "/auth"
+    reset_route auth_routes_prefix: "/auth"
+    confirm_route SecantService.Accounts.User, :confirm_new_user, auth_routes_prefix: "/auth"
   end
 
   # Other scopes may use custom stacks.

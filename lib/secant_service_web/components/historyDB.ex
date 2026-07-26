@@ -180,7 +180,6 @@ defmodule SecantServiceWeb.Components.HistoryDB do
              "_forward_calib_coeff",
              "_inverse_calib_coeff"
            ] do
-
         secop_obj = socket.assigns.secop_obj
 
         start_async(socket, :reload_calibration_plot, fn ->

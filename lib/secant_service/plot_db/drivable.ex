@@ -32,7 +32,13 @@ defmodule SecantService.PlotDB.Drivable do
           if array_len > @max_array_len do
             :not_plottable
           else
-            option = ArrayHeatmap.heatmap_option([ArrayHeatmap.heatmap_series(v_ts, v_val)], array_len, unit, mode)
+            option =
+              ArrayHeatmap.heatmap_option(
+                [ArrayHeatmap.heatmap_series(v_ts, v_val)],
+                array_len,
+                unit,
+                mode
+              )
 
             {:ok,
              %{
@@ -50,7 +56,15 @@ defmodule SecantService.PlotDB.Drivable do
           {t_val, t_ts} = fetch_param_data(target_param, mode)
           target_opt = if length(t_val) > 0, do: [target: {t_ts, t_val}], else: []
 
-          option = StructDType.build_struct_option("value", v_ts, v_val, value_param.datainfo, mode, target_opt)
+          option =
+            StructDType.build_struct_option(
+              "value",
+              v_ts,
+              v_val,
+              value_param.datainfo,
+              mode,
+              target_opt
+            )
 
           param_mods =
             if length(t_val) > 0,
@@ -83,7 +97,13 @@ defmodule SecantService.PlotDB.Drivable do
             end
 
           option =
-            dtype_mod.build_option(v_series ++ t_series, value_param.datainfo, unit, mode, extra_opts)
+            dtype_mod.build_option(
+              v_series ++ t_series,
+              value_param.datainfo,
+              unit,
+              mode,
+              extra_opts
+            )
 
           {:ok,
            %{
@@ -100,14 +120,22 @@ defmodule SecantService.PlotDB.Drivable do
   end
 
   @impl true
-  def trace_updates(%{_param_dtype_modules: mods, option: opt} = _plot_map, datapoints, param_name) do
+  def trace_updates(
+        %{_param_dtype_modules: mods, option: opt} = _plot_map,
+        datapoints,
+        param_name
+      ) do
     case Map.get(mods, param_name) do
       nil ->
         %{seriesUpdates: []}
 
       ArrayHeatmap = dtype_mod ->
         series_upds = dtype_mod.series_updates(opt, datapoints, param_name)
-        %{seriesUpdates: series_upds, arrayLen: ArrayHeatmap.array_len_from_datapoints(datapoints)}
+
+        %{
+          seriesUpdates: series_upds,
+          arrayLen: ArrayHeatmap.array_len_from_datapoints(datapoints)
+        }
 
       dtype_mod ->
         %{seriesUpdates: dtype_mod.series_updates(opt, datapoints, param_name)}

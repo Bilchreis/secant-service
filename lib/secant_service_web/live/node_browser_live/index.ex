@@ -1,5 +1,8 @@
 defmodule SecantServiceWeb.NodeBrowserLive.Index do
   use SecantServiceWeb, :live_view
+
+  on_mount {SecantServiceWeb.LiveUserAuth, :live_user_optional}
+
   alias SecantService.SecNodes.SecNode
   alias SecantServiceWeb.Components.HistoryDB
 

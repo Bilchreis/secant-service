@@ -120,7 +120,12 @@ defmodule SecantService.PlotDB do
           members = parameter.datainfo["members"]
           series = [EnumDType.enum_series("value", ts, val, members)]
           option = EnumDType.enum_timeseries_option(series, members, "value", mode)
-          %{plottable: true, plot_available: Builders.plot_available?(val, parameter, mode), option: option}
+
+          %{
+            plottable: true,
+            plot_available: Builders.plot_available?(val, parameter, mode),
+            option: option
+          }
 
         "struct" ->
           option = StructDType.build_struct_option("value", ts, val, parameter.datainfo, mode)
@@ -136,7 +141,12 @@ defmodule SecantService.PlotDB do
         _ ->
           series = [Scalar.scalar_line_series("value", ts, val)]
           option = Scalar.timeseries_option(series, unit, mode)
-          %{plottable: true, plot_available: Builders.plot_available?(val, parameter, mode), option: option}
+
+          %{
+            plottable: true,
+            plot_available: Builders.plot_available?(val, parameter, mode),
+            option: option
+          }
       end
     else
       not_plottable()
@@ -208,7 +218,11 @@ defmodule SecantService.PlotDB do
     %{seriesUpdates: [%{seriesIndex: 0, data: data}], arrayLen: array_len}
   end
 
-  def get_trace_updates_batch(%{_param_dtype_modules: mods, option: opt} = _plot_map, datapoints, parameter) do
+  def get_trace_updates_batch(
+        %{_param_dtype_modules: mods, option: opt} = _plot_map,
+        datapoints,
+        parameter
+      ) do
     dtype_mod = Map.get(mods, parameter)
     series_upds = dtype_mod.series_updates(opt, datapoints, parameter)
     result = %{seriesUpdates: series_upds}
@@ -370,16 +384,68 @@ defmodule SecantService.PlotDB do
             %{left: "55%", top: "58%", width: "42%", height: "34%", containLabel: true}
           ],
           xAxis: [
-            %{gridIndex: 0, type: "value", name: "Setpoint#{unit_label}", nameLocation: "middle", nameGap: 25},
-            %{gridIndex: 1, type: "value", name: "Raw hardware value#{unit_label}", nameLocation: "middle", nameGap: 25},
-            %{gridIndex: 2, type: "value", name: "Setpoint#{unit_label}", nameLocation: "middle", nameGap: 25},
-            %{gridIndex: 3, type: "value", name: "Setpoint#{unit_label}", nameLocation: "middle", nameGap: 25}
+            %{
+              gridIndex: 0,
+              type: "value",
+              name: "Setpoint#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            },
+            %{
+              gridIndex: 1,
+              type: "value",
+              name: "Raw hardware value#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            },
+            %{
+              gridIndex: 2,
+              type: "value",
+              name: "Setpoint#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            },
+            %{
+              gridIndex: 3,
+              type: "value",
+              name: "Setpoint#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            }
           ],
           yAxis: [
-            %{gridIndex: 0, type: "value", name: "Hardware value#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50},
-            %{gridIndex: 1, type: "value", name: "Calibrated readback#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50},
-            %{gridIndex: 2, type: "value", name: "Calibrated readback#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50},
-            %{gridIndex: 3, type: "value", name: "Error#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50}
+            %{
+              gridIndex: 0,
+              type: "value",
+              name: "Hardware value#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            },
+            %{
+              gridIndex: 1,
+              type: "value",
+              name: "Calibrated readback#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            },
+            %{
+              gridIndex: 2,
+              type: "value",
+              name: "Calibrated readback#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            },
+            %{
+              gridIndex: 3,
+              type: "value",
+              name: "Error#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            }
           ],
           title: [
             %{
@@ -442,7 +508,10 @@ defmodule SecantService.PlotDB do
   defp lookup_calib_coeff(node_id, module_atom, names) do
     Enum.find_value(names, fn name ->
       try do
-        case NodeTable.lookup({:service, node_id}, {:data_report, module_atom, String.to_existing_atom(name)}) do
+        case NodeTable.lookup(
+               {:service, node_id},
+               {:data_report, module_atom, String.to_existing_atom(name)}
+             ) do
           {:ok, %{data_report: [value, _]}} -> value
           {:error, _} -> nil
         end

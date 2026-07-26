@@ -1,6 +1,8 @@
 defmodule SecantServiceWeb.DashboardLive.Index do
   use SecantServiceWeb, :live_view
 
+  on_mount {SecantServiceWeb.LiveUserAuth, :live_user_optional}
+
   alias SecantService.Model
   alias SecantClient
   alias NodeDiscover

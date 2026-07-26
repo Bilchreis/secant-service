@@ -44,8 +44,11 @@ defmodule SecantService.PlotDB.DTypes.Struct do
           v =
             if is_map(struct_val) do
               case Map.fetch(struct_val, field) do
-                {:ok, val} -> val
-                :error -> Enum.find_value(struct_val, fn {k, fv} -> if to_string(k) == field, do: fv end)
+                {:ok, val} ->
+                  val
+
+                :error ->
+                  Enum.find_value(struct_val, fn {k, fv} -> if to_string(k) == field, do: fv end)
               end
             end
 
@@ -69,7 +72,17 @@ defmodule SecantService.PlotDB.DTypes.Struct do
 
   # Standard ECharts palette — used to assign explicit colors to scalar series so
   # that heatmap series (which use visualMap) don't steal palette slots.
-  @echarts_palette ["#5470c6", "#91cc75", "#fac858", "#ee6666", "#73c0de", "#3ba272", "#fc8452", "#9a60b4", "#ea7ccc"]
+  @echarts_palette [
+    "#5470c6",
+    "#91cc75",
+    "#fac858",
+    "#ee6666",
+    "#73c0de",
+    "#3ba272",
+    "#fc8452",
+    "#9a60b4",
+    "#ea7ccc"
+  ]
 
   @doc """
   Build a complete multi-grid ECharts option for a struct-typed parameter.
@@ -99,6 +112,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
         title_top = max(0.6, top_pct - gap * 0.7)
         unit = Map.get(sub_datainfo, "unit")
         text = if unit && unit != "", do: "#{field} (#{unit})", else: field
+
         %{
           text: text,
           top: "#{Float.round(title_top, 1)}%",
@@ -119,11 +133,12 @@ defmodule SecantService.PlotDB.DTypes.Struct do
     #   sr                        — scalar region {min_top_pct, max_bottom_pct} for legend position
     init = {[], [], [], [], [], %{}, %{}, 0, [], [], %{}, 0, {100.0, 0.0}}
 
-    {grids, x_axes, y_axes, all_series, field_dtype_pairs, enum_series_y, enum_members,
-     _sc, visual_maps, legend_names, field_series_indices, _sci, scalar_region} =
+    {grids, x_axes, y_axes, all_series, field_dtype_pairs, enum_series_y, enum_members, _sc,
+     visual_maps, legend_names, field_series_indices, _sci, scalar_region} =
       fields
       |> Enum.with_index()
-      |> Enum.reduce(init, fn {{field, sub_datainfo}, idx}, {gs, xs, ys, ss, fdps, esy, em, sc, vms, ln, fsi, sci, sr} ->
+      |> Enum.reduce(init, fn {{field, sub_datainfo}, idx},
+                              {gs, xs, ys, ss, fdps, esy, em, sc, vms, ln, fsi, sci, sr} ->
         dtype_mod = DTypePlot.for_datainfo(sub_datainfo)
         field_vals = Enum.map(vals, fn v -> if is_map(v), do: Map.get(v, field), else: nil end)
         val_series_name = "#{param_name}.#{field}"
@@ -131,25 +146,45 @@ defmodule SecantService.PlotDB.DTypes.Struct do
         top_pct = top_offset + idx * row_h
         top = "#{Float.round(top_pct, 1)}%"
         unit = Map.get(sub_datainfo, "unit")
+
         {field_series, y_type_opts, new_esy, new_em} =
           case {is_enum, target} do
             {true, {t_ts, t_vals}} ->
               members = sub_datainfo["members"] || %{}
-              t_field_vals = Enum.map(t_vals, fn v -> if is_map(v), do: Map.get(v, field), else: nil end)
+
+              t_field_vals =
+                Enum.map(t_vals, fn v -> if is_map(v), do: Map.get(v, field), else: nil end)
+
               v_s = EnumDType.enum_series(val_series_name, ts, field_vals, members, "value")
-              t_s = EnumDType.enum_series("target.#{field}", t_ts, t_field_vals, members, "target")
-              y_opts = %{type: "category", data: ["target", "value"], axisTick: %{show: false}, axisLine: %{show: false}}
-              {[v_s, t_s], y_opts, %{val_series_name => "value", "target.#{field}" => "target"}, EnumDType.enum_int_to_info(members)}
+
+              t_s =
+                EnumDType.enum_series("target.#{field}", t_ts, t_field_vals, members, "target")
+
+              y_opts = %{
+                type: "category",
+                data: ["target", "value"],
+                axisTick: %{show: false},
+                axisLine: %{show: false}
+              }
+
+              {[v_s, t_s], y_opts, %{val_series_name => "value", "target.#{field}" => "target"},
+               EnumDType.enum_int_to_info(members)}
 
             _ ->
               raw = dtype_mod.build_series(val_series_name, ts, field_vals, sub_datainfo)
+
               extra =
                 case target do
                   {t_ts, t_vals} ->
-                    t_field_vals = Enum.map(t_vals, fn v -> if is_map(v), do: Map.get(v, field), else: nil end)
+                    t_field_vals =
+                      Enum.map(t_vals, fn v -> if is_map(v), do: Map.get(v, field), else: nil end)
+
                     dtype_mod.build_series("target.#{field}", t_ts, t_field_vals, sub_datainfo)
-                  nil -> []
+
+                  nil ->
+                    []
                 end
+
               y_opts =
                 if dtype_mod == ArrayHeatmap do
                   array_len = sub_datainfo["minlen"] || sub_datainfo["maxlen"] || 0
@@ -157,10 +192,13 @@ defmodule SecantService.PlotDB.DTypes.Struct do
                 else
                   %{type: "value"}
                 end
+
               {raw ++ extra, y_opts, %{}, %{}}
           end
 
-        indexed_series = Enum.map(field_series, &Map.merge(&1, %{xAxisIndex: idx, yAxisIndex: idx}))
+        indexed_series =
+          Enum.map(field_series, &Map.merge(&1, %{xAxisIndex: idx, yAxisIndex: idx}))
+
         series_count = length(indexed_series)
 
         x_axis =
@@ -172,15 +210,26 @@ defmodule SecantService.PlotDB.DTypes.Struct do
 
         y_axis =
           if !is_enum && dtype_mod != ArrayHeatmap && unit && unit != "" do
-            Map.merge(y_type_opts, %{gridIndex: idx, name: unit, nameLocation: "middle", nameRotate: 90, nameGap: 35})
+            Map.merge(y_type_opts, %{
+              gridIndex: idx,
+              name: unit,
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 35
+            })
           else
             Map.merge(y_type_opts, %{gridIndex: idx})
           end
 
         new_vms =
           if dtype_mod == ArrayHeatmap do
-            vm_indices = if series_count == 1, do: sc, else: Enum.to_list(sc..(sc + series_count - 1))
-            [ArrayHeatmap.heatmap_visual_map(vm_indices, top, "#{Float.round(row_height, 1)}%") | vms]
+            vm_indices =
+              if series_count == 1, do: sc, else: Enum.to_list(sc..(sc + series_count - 1))
+
+            [
+              ArrayHeatmap.heatmap_visual_map(vm_indices, top, "#{Float.round(row_height, 1)}%")
+              | vms
+            ]
           else
             vms
           end
@@ -198,8 +247,11 @@ defmodule SecantService.PlotDB.DTypes.Struct do
                 indexed_series
                 |> Enum.with_index(sci)
                 |> Enum.map(fn {s, ci} ->
-                  Map.put(s, :itemStyle, %{color: Enum.at(@echarts_palette, rem(ci, length(@echarts_palette)))})
+                  Map.put(s, :itemStyle, %{
+                    color: Enum.at(@echarts_palette, rem(ci, length(@echarts_palette)))
+                  })
                 end)
+
               new_names = ln ++ Enum.map(indexed_series, & &1.name)
               {sr_top, sr_bottom} = sr
               new_sr = {min(sr_top, top_pct), max(sr_bottom, top_pct + row_height)}
@@ -207,8 +259,20 @@ defmodule SecantService.PlotDB.DTypes.Struct do
           end
 
         grid_height = if(idx == last_idx, do: row_height + x_axis_reserve, else: row_height)
+
         {
-          [%{show: true, left: 60, right: 90, top: top, height: "#{Float.round(grid_height, 1)}%", containLabel: true, backgroundColor: "rgba(255,255,255,0.04)"} | gs],
+          [
+            %{
+              show: true,
+              left: 60,
+              right: 90,
+              top: top,
+              height: "#{Float.round(grid_height, 1)}%",
+              containLabel: true,
+              backgroundColor: "rgba(255,255,255,0.04)"
+            }
+            | gs
+          ],
           [x_axis | xs],
           [y_axis | ys],
           ss ++ indexed_series_final,
@@ -228,9 +292,11 @@ defmodule SecantService.PlotDB.DTypes.Struct do
       case {legend_names, scalar_region} do
         {[], _} ->
           nil
+
         {names, {top_pct, bottom_pct}} when top_pct <= bottom_pct ->
           center = Float.round((top_pct + bottom_pct) / 2.0, 1)
           %{data: names, orient: "vertical", right: 0, top: "#{center}%", itemGap: 8}
+
         {names, _} ->
           %{data: names, orient: "vertical", right: 0, top: "center", itemGap: 8}
       end
@@ -249,9 +315,21 @@ defmodule SecantService.PlotDB.DTypes.Struct do
     }
 
     option = if legend, do: Map.put(option, :legend, legend), else: option
-    option = if visual_maps != [], do: Map.put(option, :visualMap, Enum.reverse(visual_maps)), else: option
-    option = if map_size(enum_series_y) > 0, do: Map.put(option, :_enumSeriesY, enum_series_y), else: option
-    option = if map_size(enum_members) > 0, do: Map.put(option, :_enumMembers, enum_members), else: option
+
+    option =
+      if visual_maps != [],
+        do: Map.put(option, :visualMap, Enum.reverse(visual_maps)),
+        else: option
+
+    option =
+      if map_size(enum_series_y) > 0,
+        do: Map.put(option, :_enumSeriesY, enum_series_y),
+        else: option
+
+    option =
+      if map_size(enum_members) > 0,
+        do: Map.put(option, :_enumMembers, enum_members),
+        else: option
 
     if mode == :live do
       {x_min, x_max, buttons, active} = Builders.default_live_range_ms()

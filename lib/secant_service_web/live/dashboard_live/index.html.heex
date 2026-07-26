@@ -1,4 +1,4 @@
-<Layouts.app flash={@flash}>
+<Layouts.app flash={@flash} current_user={@current_user}>
   <%= if @active_nodes != %{} and @current_node != nil do %>
     <div class="flex">
       <div class="sticky   top-0 self-start ">
