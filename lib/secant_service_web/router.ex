@@ -63,11 +63,20 @@ defmodule SecantServiceWeb.Router do
 
     get "/", PageController, :home
 
-    sign_in_route auth_routes_prefix: "/auth"
-    sign_out_route AuthController
+    sign_in_route auth_routes_prefix: "/auth",
+                  overrides: [SecantServiceWeb.AuthOverrides, AshAuthentication.Phoenix.Overrides.Default]
+
+    sign_out_route AuthController, "/sign-out",
+      overrides: [SecantServiceWeb.AuthOverrides, AshAuthentication.Phoenix.Overrides.Default]
+
     auth_routes AuthController, SecantService.Accounts.User, path: "/auth"
-    reset_route auth_routes_prefix: "/auth"
-    confirm_route SecantService.Accounts.User, :confirm_new_user, auth_routes_prefix: "/auth"
+
+    reset_route auth_routes_prefix: "/auth",
+                overrides: [SecantServiceWeb.AuthOverrides, AshAuthentication.Phoenix.Overrides.Default]
+
+    confirm_route SecantService.Accounts.User, :confirm_new_user,
+      auth_routes_prefix: "/auth",
+      overrides: [SecantServiceWeb.AuthOverrides, AshAuthentication.Phoenix.Overrides.Default]
   end
 
   # Other scopes may use custom stacks.
