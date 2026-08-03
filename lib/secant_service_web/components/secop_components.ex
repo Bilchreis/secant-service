@@ -191,6 +191,30 @@ defmodule SecantServiceWeb.SECoPComponents do
     col
   end
 
+  defp severity_rank(severity) do
+    case severity do
+      "FATAL" -> 5
+      "CATASTROPHIC" -> 4
+      "ERROR" -> 3
+      "WARNING" -> 2
+      "HINT" -> 1
+      "PASS" -> 0
+      _ -> 5
+    end
+  end
+
+  defp severity_badge_class(severity) do
+    case severity do
+      "FATAL" -> "badge-error"
+      "CATASTROPHIC" -> "badge-error"
+      "ERROR" -> "badge-error"
+      "WARNING" -> "badge-warning"
+      "HINT" -> "badge-info"
+      "PASS" -> "badge-success"
+      _ -> "badge-neutral"
+    end
+  end
+
   attr :check_result, :map, required: true
   attr :equipment_id, :string, required: true
 
@@ -203,24 +227,20 @@ defmodule SecantServiceWeb.SECoPComponents do
 
     assigns =
       if result_list == [] do
-        assign(assigns, :highest_error_class, "PASS")
+        assigns
+        |> assign(:highest_error_class, "PASS")
+        |> assign(:result_list, [])
+        |> assign(:severity_counts, [])
       else
         highest_error_class =
           result_list
           |> Enum.map(fn x -> x["severity"] end)
-          |> Enum.max_by(fn severity ->
-            case severity do
-              "FATAL" -> 5
-              "CATASTROPHIC" -> 4
-              "ERROR" -> 3
-              "WARNING" -> 2
-              "HINT" -> 1
-              "PASS" -> 0
-              _ -> 5
-            end
-          end)
+          |> Enum.max_by(&severity_rank/1)
 
-        assigns = assign(assigns, :highest_error_class, highest_error_class)
+        severity_counts =
+          result_list
+          |> Enum.frequencies_by(& &1["severity"])
+          |> Enum.sort_by(fn {severity, _count} -> severity_rank(severity) end, :desc)
 
         new_result_list =
           Enum.map(result_list, fn diag ->
@@ -238,42 +258,58 @@ defmodule SecantServiceWeb.SECoPComponents do
             Map.put(diag, :color, col)
           end)
 
-        assign(assigns, :check_result, Map.put(check_result, "result", new_result_list))
+        assigns
+        |> assign(:highest_error_class, highest_error_class)
+        |> assign(:result_list, new_result_list)
+        |> assign(:severity_counts, severity_counts)
       end
 
     ~H"""
-    <div class="flex items-center mb-2 gap-2">
-      <div>
-        <%= case @highest_error_class do %>
-          <% "PASS" -> %>
-            <.icon name="hero-check-badge-solid" class="bg-success h-10 w-10" />
-          <% "HINT" -> %>
-            <.icon name="hero-check-badge-solid" class="bg-info h-10 w-10" />
-          <% "WARNING" -> %>
-            <.icon name="hero-exclamation-triangle-solid" class="bg-warning h-10 w-10" />
-          <% "ERROR" -> %>
-            <.icon name="hero-exclamation-circle-solid" class="bg-error h-10 w-10" />
-          <% "CATASTROPHIC" -> %>
-            <.icon name="hero-exclamation-circle-solid" class="bg-error h-10 w-10" />
-          <% "FATAL" -> %>
-            <.icon name="hero-exclamation-circle-solid" class="bg-error h-10 w-10" />
-          <% _ -> %>
-            <.icon name="hero-question-mark-circle-solid" class="bg-base-200 h-10 w-10" />
-        <% end %>
-      </div>
+    <div class="dropdown mb-2">
+      <div tabindex="0" role="button" class="flex flex-wrap items-center gap-2 cursor-pointer">
+        <div class="shrink-0">
+          <%= case @highest_error_class do %>
+            <% "PASS" -> %>
+              <.icon name="hero-check-badge-solid" class="bg-success h-10 w-10" />
+            <% "HINT" -> %>
+              <.icon name="hero-check-badge-solid" class="bg-info h-10 w-10" />
+            <% "WARNING" -> %>
+              <.icon name="hero-exclamation-triangle-solid" class="bg-warning h-10 w-10" />
+            <% "ERROR" -> %>
+              <.icon name="hero-exclamation-circle-solid" class="bg-error h-10 w-10" />
+            <% "CATASTROPHIC" -> %>
+              <.icon name="hero-exclamation-circle-solid" class="bg-error h-10 w-10" />
+            <% "FATAL" -> %>
+              <.icon name="hero-exclamation-circle-solid" class="bg-error h-10 w-10" />
+            <% _ -> %>
+              <.icon name="hero-question-mark-circle-solid" class="bg-base-200 h-10 w-10" />
+          <% end %>
+        </div>
 
-      <div class="text-primary text-4xl font-bold">
-        {Util.display_name(@equipment_id)}
+        <div class="text-primary text-4xl font-bold">
+          {Util.display_name(@equipment_id)}
+        </div>
+
+        <span
+          :for={{severity, count} <- @severity_counts}
+          class={["badge shrink-0 whitespace-nowrap", severity_badge_class(severity)]}
+        >
+          {count} {severity}
+        </span>
+      </div>
+      <div
+        tabindex="0"
+        class="dropdown-content z-10 bg-base-100 border border-base-300 rounded-box shadow-lg p-3 w-[48rem] max-w-[85vw] max-h-96 overflow-y-auto"
+      >
+        <div class="mb-2 text-sm">checked against SECoP v{@check_result["version"]}</div>
+        <ul :if={@result_list != []} class="text-sm font-medium">
+          <li :for={diag <- @result_list} class={["p-1 mb-1 border-4 rounded-lg", diag.color]}>
+            {diag["text"]}
+          </li>
+        </ul>
+        <div :if={@result_list == []} class="text-sm">No issues found.</div>
       </div>
     </div>
-    <div class="mb-2">checked against SECoP v{@check_result["version"]}</div>
-    <ul class="text-sm font-medium">
-      <%= for diag <- Map.get(@check_result,"result") do %>
-        <li class={["p-1 mb-1 border-4 rounded-lg", diag.color]}>
-          {diag["text"]}
-        </li>
-      <% end %>
-    </ul>
     """
   end
 
