@@ -97,8 +97,18 @@
 @custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
 @custom-variant phx-change-loading (.phx-change-loading&, .phx-change-loading &);
 
-/* Use the data attribute for dark mode  */
-@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+/* Use the data attribute for dark mode; with no data-theme set
+   ("system" mode), follow the OS preference like daisyUI does */
+@custom-variant dark {
+  &:where([data-theme=dark], [data-theme=dark] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:not([data-theme=light], [data-theme=light] *)) {
+      @slot;
+    }
+  }
+}
 
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }
@@ -147,8 +157,14 @@
   background-color:  rgb(212, 212, 216);
 }
 
-[data-theme="dark"] .command_item { 
+[data-theme="dark"] .command_item {
   background-color:  rgb(39, 39, 42);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .command_item {
+    background-color: rgb(39, 39, 42);
+  }
 }
 
 .command_item[mod-highlight="error"] {
