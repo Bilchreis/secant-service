@@ -535,6 +535,12 @@ defmodule SecantServiceWeb.SECoPComponents do
                 |> DateTime.shift_zone!("Europe/Berlin")
                 |> Calendar.strftime("%d.%m.%Y %H:%M")}
               </.property>
+              <.property prop_key="SECoP Version">
+                    {@node.secop_version || "v1.0"}
+              </.property>
+
+
+
             </ul>
 
             <fieldset

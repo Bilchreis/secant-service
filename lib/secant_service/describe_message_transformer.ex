@@ -29,7 +29,16 @@ defmodule SecantService.DescribeMessageTransformer do
 
     describe_str = Jason.encode!(statem_state[:raw_description])
 
-    check_result = check_description(describe_str)
+    str_version = get_in(statem_state, [:idn, Access.key(:version)]) || "v1.0"
+
+    version =
+      str_version
+      |> String.replace_prefix("v", "")
+      |> String.replace_prefix("V", "")
+
+
+
+    check_result = check_description(describe_str, version)
 
     ophyd_class =
       case ophyd_class(describe_str) do
@@ -43,6 +52,7 @@ defmodule SecantService.DescribeMessageTransformer do
       host: to_string(statem_state[:host]),
       port: statem_state[:port],
       description: properties[:description],
+      secop_version: str_version,
       firmware: properties[:firmware],
       implementor: properties[:implementor],
       timeout: properties[:timeout],
@@ -197,6 +207,7 @@ defmodule SecantService.DescribeMessageTransformer do
             """
             from secop_check.checker import Checker
 
+            descr_str = descr.decode('utf-8') if isinstance(descr, bytes) else str(descr)
             version_str = version.decode('utf-8') if isinstance(version, bytes) else str(version)
             output_str = output.decode('utf-8') if isinstance(output, bytes) else str(output)
 
@@ -204,22 +215,21 @@ defmodule SecantService.DescribeMessageTransformer do
 
             checker = Checker(version_str, [], output_str)
 
-            checker.check(descr)
+            checker.check(descr_str)
 
 
             diag_list = []
 
             for diag in checker.get_diags():
                 step = f' [{diag.step}]' if diag.step else ''
-                ctx = ' / '.join(f'{ty} {name}'.strip()
-                                for ty, name in diag.ctx.path).strip()
+                ctx = ' / '.join(str(item) for item in diag.ctx.path).strip()
                 if ctx:
                     ctx += ': '
 
                 diag_list.append({"severity": diag.severity.name,
                 "step": diag.step,
                 "message": diag.msg,
-                "ctx": [ list(node) for node in diag.ctx.path],
+                "ctx": [[type(item).__name__, item.name] for item in diag.ctx.path],
                 "text":f'{diag.severity.name}{step}: {ctx}{diag.msg}'
                 })
 
