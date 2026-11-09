@@ -57,6 +57,9 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   defp resolve_param(%SecantService.SecNodes.Module{} = module, name),
     do: Builders.find_param(module, name)
 
+  defp async_result_value(%AsyncResult{ok?: true, result: result}), do: result
+  defp async_result_value(_), do: nil
+
   # Combines the per-parameter trace-update maps produced for each series of a
   # multi-parameter plot (e.g. drivable's "value"/"target") into the single
   # payload the EChartsChart hook expects for one prepend-chart-data event.
@@ -217,18 +220,18 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   @impl true
   def handle_event("request-chart-data", %{"id" => chart_id}, %{assigns: assigns} = socket) do
-    if String.ends_with?(chart_id, "-calib") do
-      calib = assigns.calibration_plot.result
+    # Only push when a chart option actually exists — a plot result may be a
+    # not_plottable/no_plot_available map without an :option key.
+    {event, plot_result} =
+      if String.ends_with?(chart_id, "-calib") do
+        {"echarts-data-#{chart_id}", async_result_value(assigns[:calibration_plot])}
+      else
+        {"echarts-data-#{socket.assigns.id}", async_result_value(assigns[:plot])}
+      end
 
-      {:noreply,
-       push_event(socket, "echarts-data-#{chart_id}", %{
-         option: calib.option
-       })}
-    else
-      {:noreply,
-       push_event(socket, "echarts-data-#{socket.assigns.id}", %{
-         option: assigns.plot.result.option
-       })}
+    case plot_result do
+      %{option: option} -> {:noreply, push_event(socket, event, %{option: option})}
+      _ -> {:noreply, socket}
     end
   end
 
@@ -299,7 +302,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           # applied (hook mounted, handleEvent registered), avoiding the round-
           # trip race between pushEventTo → request-plotly-data → push_event.
           case socket.assigns[:plot] do
-            %{ok?: true, result: plot} ->
+            %{ok?: true, result: %{option: _} = plot} ->
               push_event(socket, "echarts-data-#{socket.assigns.id}", %{
                 option: plot.option
               })
