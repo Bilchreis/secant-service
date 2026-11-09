@@ -41,7 +41,7 @@ defmodule SecantService.MixProject do
       {:sourceror, "~> 1.8", only: [:dev, :test]},
       {:open_api_spex, "~> 3.0"},
       {:ash_state_machine, "~> 0.2"},
-      {:ash_admin, "~> 0.13"},
+      {:ash_admin, "~> 1.4"},
       {:ash_authentication_phoenix, "~> 2.0"},
       {:ash_authentication, "~> 4.0"},
       {:ash_postgres, "~> 2.0"},
@@ -73,7 +73,7 @@ defmodule SecantService.MixProject do
       {:finch, "~> 0.13"},
       {:telemetry_metrics, "~> 1.1"},
       {:telemetry_poller, "~> 1.0"},
-      {:gettext, "~> 0.20"},
+      {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.1.1"},
       {:bandit, "~> 1.5"},
@@ -87,7 +87,7 @@ defmodule SecantService.MixProject do
       {:meck, "~> 1.0", override: true},
       {:benchee, "~> 1.5", only: :dev},
       {:igniter, "~> 0.6", only: :dev},
-      {:usage_rules, "~> 0.1.26", only: :dev}
+      {:usage_rules, "~> 1.3", only: :dev}
     ]
   end
 

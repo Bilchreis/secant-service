@@ -22,7 +22,9 @@ defmodule SecantService.PlotDB do
     readable: SecantService.PlotDB.Readable,
     drivable: SecantService.PlotDB.Drivable,
     calibratable: SecantService.PlotDB.Calibratable,
-    acquisition: SecantService.PlotDB.Acquisition
+    acquisition: SecantService.PlotDB.Acquisition,
+    acquisition_channel: SecantService.PlotDB.Acquisition,
+    acquisition_controller: SecantService.PlotDB.Acquisition
   }
 
   # ---------------------------------------------------------------------------
