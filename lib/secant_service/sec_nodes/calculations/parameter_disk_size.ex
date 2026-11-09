@@ -62,9 +62,6 @@ defmodule SecantService.SecNodes.Calculations.ParameterDiskSize do
     rescue
       e ->
         {:error, Exception.message(e)}
-    catch
-      :error, reason ->
-        {:error, inspect(reason)}
     end
   end
 
