@@ -22,7 +22,7 @@ defmodule SecantService.MixProject do
   def application do
     [
       mod: {SecantService.Application, []},
-      extra_applications: [:logger, :wx, :runtime_tools, :observer, :os_mon]
+      extra_applications: [:logger, :runtime_tools, :os_mon]
     ]
   end
 
