@@ -48,7 +48,7 @@
         <div class="flex gap-2">
           <button
             id="cleanup-old-nodes-btn"
-            class="btn btn-warning btn-sm"
+            class="btn btn-ghost btn-sm border-line"
             phx-click="trigger_cleanup"
             data-confirm="Are you sure you want to move old nodes to trash?"
           >
@@ -142,7 +142,7 @@
           <:col :let={sec_node} label="Datapoints" field={:datapoint_count} class="w-24">
             <div class="flex justify-center">
               <span class="font-mono text-sm">
-                {SecantService.Util.format_scientific(sec_node.datapoint_count)}
+                {format_count(sec_node.datapoint_count)}
               </span>
             </div>
           </:col>
@@ -166,54 +166,45 @@
             </div>
           </:col>
           <:col :let={sec_node} label="Actions">
-            <div class="flex flex-col space-y-2 w-full">
+            <div class="flex items-center justify-start gap-1">
               <.link
                 navigate={~p"/browse/node/#{sec_node.uuid}"}
-                class="btn btn-primary btn-sm"
+                class="btn btn-primary btn-xs"
+                id={"view-node-#{sec_node.uuid}"}
               >
-                View Node
+                View data
               </.link>
               <button
-                onclick="json-modal.showModal()"
-                class="btn btn-sm"
+                id={"json-btn-#{sec_node.uuid}"}
+                onclick="json_modal.showModal()"
+                class="btn btn-ghost btn-xs"
                 phx-click="open_json_modal"
                 phx-value-uuid={sec_node.uuid}
+                title="Show the node's SECoP description (JSON)"
               >
-                View JSON
+                JSON
               </button>
-              <%= if sec_node.state == :active do %>
-                <button
-                  id={"trash-btn-#{sec_node.uuid}"}
-                  class="btn btn-disabled btn-sm"
-                  phx-click="trash_node"
-                  phx-value-uuid={sec_node.uuid}
-                  data-confirm="Move this node to trash?"
-                >
-                  <.icon name="hero-trash" class="w-4 h-4" /> Trash
-                </button>
-              <% end %>
-
-              <%= if sec_node.state == :archived do %>
-                <button
-                  id={"trash-btn-#{sec_node.uuid}"}
-                  class="btn btn-warning btn-sm"
-                  phx-click="trash_node"
-                  phx-value-uuid={sec_node.uuid}
-                  data-confirm="Move this node to trash?"
-                >
-                  <.icon name="hero-trash" class="w-4 h-4" /> Trash
-                </button>
-              <% end %>
-              <%= if sec_node.state == :trashed do %>
-                <button
-                  id={"restore-btn-#{sec_node.uuid}"}
-                  class="btn btn-success btn-sm"
-                  phx-click="restore_node"
-                  phx-value-uuid={sec_node.uuid}
-                >
-                  <.icon name="hero-arrow-uturn-left" class="w-4 h-4" /> Restore
-                </button>
-              <% end %>
+              <button
+                :if={sec_node.state == :archived}
+                id={"trash-btn-#{sec_node.uuid}"}
+                class="btn btn-ghost btn-xs btn-square text-muted hover:text-st-error"
+                phx-click="trash_node"
+                phx-value-uuid={sec_node.uuid}
+                data-confirm="Move this recording to trash?"
+                title="Move to trash"
+                aria-label={"Move #{sec_node.equipment_id} recording to trash"}
+              >
+                <.icon name="hero-trash" class="size-4" />
+              </button>
+              <button
+                :if={sec_node.state == :trashed}
+                id={"restore-btn-#{sec_node.uuid}"}
+                class="btn btn-ghost btn-xs"
+                phx-click="restore_node"
+                phx-value-uuid={sec_node.uuid}
+              >
+                <.icon name="hero-arrow-uturn-left" class="size-4" /> Restore
+              </button>
             </div>
           </:col>
         </AshPagify.Components.table>
@@ -226,7 +217,7 @@
       />
     </div>
     <.modal
-      id="json-modal"
+      id="json_modal"
       title={@json_title}
       show={@show_json_modal}
     >

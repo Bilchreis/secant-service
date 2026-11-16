@@ -73,6 +73,11 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
     {:ok, assign(socket, :status_value, processed_value_update)}
   end
 
+  # Live values are only trustworthy while the node is connected and sending
+  # updates; otherwise every status shows how stale it is instead.
+  defp offline_parts(:paused), do: {"bg-st-off", "text-muted", "paused"}
+  defp offline_parts(_), do: {"bg-st-off", "text-muted", "offline"}
+
   defp status_parts(nil), do: {"bg-st-off", "text-muted", nil, nil}
 
   defp status_parts(%{data_report: nil}), do: {"bg-st-off", "text-muted", nil, nil}
@@ -95,7 +100,7 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
     {dot, text, code} =
       cond do
         not assigns.has_status -> {"bg-st-off/50", "text-muted", ""}
-        assigns.node_state != :initialized -> {"bg-st-off", "text-muted", "offline"}
+        assigns.node_state != :initialized -> offline_parts(assigns.node_state)
         true -> {dot, text, code}
       end
 
@@ -113,11 +118,21 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
   end
 
   attr :status_value, :map, default: nil
+  attr :node_state, :atom, default: :initialized
   attr :layout, :atom, default: :stacked
 
   # Status chip for cards and the inspector: dot + code, then the status text.
   defp status_chip(assigns) do
     {dot, text, code, string} = status_parts(assigns.status_value)
+
+    {dot, text, code, string} =
+      if assigns.node_state == :initialized do
+        {dot, text, code, string}
+      else
+        {dot, text, code} = offline_parts(assigns.node_state)
+        {dot, text, code, string && "last known: " <> string}
+      end
+
     assigns = assign(assigns, dot: dot, text: text, code: code, string: string)
 
     ~H"""
@@ -150,9 +165,9 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
             has_status={@status_param != nil}
           />
         <% :inner -> %>
-          <.status_chip status_value={@status_value} layout={:stacked} />
+          <.status_chip status_value={@status_value} node_state={@node_state} layout={:stacked} />
         <% :compact -> %>
-          <.status_chip status_value={@status_value} layout={:inline} />
+          <.status_chip status_value={@status_value} node_state={@node_state} layout={:inline} />
       <% end %>
     </div>
     """

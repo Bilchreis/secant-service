@@ -268,13 +268,17 @@ Hooks.EChartsChart = {
     this._toggleRangeslider = (e) => {
       if (e.target.dataset.chartId !== this.el.id || !this._chart) return;
       const currentOption = this._chart.getOption();
-      const hasSlider = (currentOption.dataZoom || []).some(
-        (dz) => dz.type === "slider",
-      );
-      this._chart.setOption(
-        { dataZoom: hasSlider ? [] : [{ type: "slider", xAxisIndex: 0 }] },
-        { replaceMerge: ["dataZoom"] },
-      );
+      const zooms = (currentOption.dataZoom || [])
+        .filter(Boolean)
+        .map((dz) => ({ type: dz.type, xAxisIndex: 0 }));
+      const hasSlider = zooms.some((dz) => dz.type === "slider");
+      const nextZooms = hasSlider
+        ? zooms.filter((dz) => dz.type !== "slider")
+        : [...zooms, { type: "slider", xAxisIndex: 0, bottom: 8 }];
+      const update = { dataZoom: nextZooms };
+      // make room below the time axis so the slider doesn't cover its labels
+      if (this._xAxisCount === 1) update.grid = { bottom: hasSlider ? 40 : 80 };
+      this._chart.setOption(update, { replaceMerge: ["dataZoom"] });
     };
     document.addEventListener("toggle-rangeslider", this._toggleRangeslider);
 

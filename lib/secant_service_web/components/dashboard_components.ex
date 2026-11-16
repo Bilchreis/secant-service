@@ -265,6 +265,11 @@ defmodule SecantServiceWeb.DashboardComponents do
           :if={@state_map}
           id="live-updates-toggle"
           phx-click="toggle-conn-state"
+          disabled={@state_map.state != :initialized}
+          data-confirm={
+            @state_map.active &&
+              "Pause live updates for this node? This stops updates for every viewer and pauses recording until resumed."
+          }
           aria-pressed={to_string(@state_map.active)}
           class="btn btn-sm gap-2 border-line bg-transparent font-normal"
           title="Asynchronous update messages from the node"
@@ -290,6 +295,49 @@ defmodule SecantServiceWeb.DashboardComponents do
         </a>
       </div>
     </section>
+    """
+  end
+
+  @doc "Combined connection state: :initialized (live), :paused or the raw disconnected state."
+  def conn_state(%{state: :initialized, active: false}), do: :paused
+  def conn_state(%{state: state}), do: state
+  def conn_state(_), do: :disconnected
+
+  attr :conn_state, :atom, required: true
+
+  @doc "Warns that the values on screen are not live."
+  def stale_banner(assigns) do
+    ~H"""
+    <div
+      :if={@conn_state != :initialized}
+      id="stale-banner"
+      role="alert"
+      class={[
+        "flex items-center gap-2.5 rounded-box border px-4 py-2.5 text-sm",
+        if(@conn_state == :paused,
+          do: "border-st-busy/50 bg-st-busy/10",
+          else: "border-st-error/50 bg-st-error/10"
+        )
+      ]}
+    >
+      <.icon
+        name={if(@conn_state == :paused, do: "hero-pause-circle", else: "hero-signal-slash")}
+        class={"size-5 shrink-0 " <> if(@conn_state == :paused, do: "text-st-busy", else: "text-st-error")}
+      />
+      <%= if @conn_state == :paused do %>
+        <span>
+          <strong>Live updates paused.</strong>
+          Values below are the last received and are not updating; nothing is recorded while paused.
+        </span>
+      <% else %>
+        <span>
+          <strong>{if @conn_state == :connected,
+            do: "Reconnecting to the node.",
+            else: "Node disconnected."}</strong>
+          Values below are the last received before the connection was lost and may be stale.
+        </span>
+      <% end %>
+    </div>
     """
   end
 
@@ -364,6 +412,10 @@ defmodule SecantServiceWeb.DashboardComponents do
   attr :node, :map, required: true
   attr :selected, :string, default: nil
 
+  attr :node_state, :atom,
+    default: :initialized,
+    doc: ":initialized, :paused or a disconnected state"
+
   def module_grid(assigns) do
     assigns = assign(assigns, :groups, group_modules(assigns.node.modules))
 
@@ -379,6 +431,7 @@ defmodule SecantServiceWeb.DashboardComponents do
             module={module}
             node={@node}
             selected={module.name == @selected}
+            node_state={@node_state}
           />
         </div>
       </section>
@@ -389,6 +442,7 @@ defmodule SecantServiceWeb.DashboardComponents do
   attr :module, :map, required: true
   attr :node, :map, required: true
   attr :selected, :boolean, default: false
+  attr :node_state, :atom, default: :initialized
 
   def module_card(assigns) do
     module = assigns.module
@@ -415,9 +469,11 @@ defmodule SecantServiceWeb.DashboardComponents do
     <article
       id={"card-" <> @module.name}
       class={[
-        "flex min-w-0 flex-col gap-2 rounded-box border bg-base-100 p-3 transition-colors",
-        if(@selected, do: "border-primary", else: "border-line")
+        "flex min-w-0 flex-col gap-2 rounded-box border bg-base-100 p-3 transition-[color,background-color,border-color,opacity]",
+        if(@selected, do: "border-primary", else: "border-line"),
+        @node_state != :initialized && "border-dashed opacity-60"
       ]}
+      data-stale={to_string(@node_state != :initialized)}
     >
       <header class="flex items-start gap-2">
         <button
@@ -444,7 +500,7 @@ defmodule SecantServiceWeb.DashboardComponents do
         module_name={@module.name}
         highest_if_class={@module.highest_interface_class}
         status_param={Module.get_parameter(@module, "status")}
-        node_state={:initialized}
+        node_state={@node_state}
         indicator_select={:inner}
       />
 
@@ -522,6 +578,7 @@ defmodule SecantServiceWeb.DashboardComponents do
   attr :plot_param, :string, default: nil
   attr :plot_id, :string, required: true
   attr :chart_height, :integer, default: 260
+  attr :node_state, :atom, default: :initialized
 
   def module_detail(assigns) do
     module = assigns.module
@@ -561,7 +618,7 @@ defmodule SecantServiceWeb.DashboardComponents do
             module_name={@module.name}
             highest_if_class={@module.highest_interface_class}
             status_param={Module.get_parameter(@module, "status")}
-            node_state={:initialized}
+            node_state={@node_state}
             indicator_select={:compact}
           />
         </div>

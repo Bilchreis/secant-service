@@ -4,6 +4,7 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
   require Logger
 
   alias SecantService.NodeControl
+  alias SecantServiceWeb.InFlight
   alias NodeTable
   import SecantServiceWeb.CoreComponents
 
@@ -25,46 +26,14 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
         } = assigns,
         socket
       ) do
-    has_arg = Map.has_key?(command.datainfo, "argument") and command.datainfo["argument"] != nil
-
-    arg_dtype =
-      cond do
-        has_arg -> Jason.encode!(command.datainfo["argument"], pretty: true)
-        true -> nil
-      end
-
-    node_id = {String.to_charlist(host), port}
-
-    arg_form =
-      to_form(%{
-        "location" => "#{location}",
-        "host" => to_string(host),
-        "port" => Integer.to_string(port),
-        "command" => command.name,
-        "module" => module_name,
-        "value" => nil
-      })
-
-    socket =
-      socket
-      |> assign(:command, command)
-      |> assign(:module_name, module_name)
-      |> assign(:node_id, node_id)
-      |> assign(:host, host)
-      |> assign(:port, port)
-      |> assign(:class, class)
-      |> assign(:location, location)
-      |> assign(:show_arg_modal, false)
-      |> assign(:arg_form, arg_form)
-      |> assign(:return, nil)
-      |> assign(:arg_dtype, arg_dtype)
-      |> assign(:has_arg, has_arg)
-      |> assign(:command_success, nil)
-      |> assign(:id_str, id_str)
-      |> assign(:variant, Map.get(assigns, :variant, :button))
-      |> assign_new(:last_result, fn -> nil end)
-
-    {:ok, socket}
+    if socket.assigns[:command] && socket.assigns.command.id == command.id do
+      {:ok,
+       socket
+       |> assign(:class, class)
+       |> assign(:variant, Map.get(assigns, :variant, :button))}
+    else
+      {:ok, init(socket, assigns, host, port, module_name, command, location, id_str, class)}
+    end
   end
 
   def update(%{action: :clear_highlight} = _assigns, socket) do
@@ -74,8 +43,11 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
     {:ok, socket}
   end
 
-  def update(%{return_value: return_val} = _assigns, socket) do
+  def update(%{return_value: return_val} = assigns, socket) do
+    if params = assigns[:params], do: InFlight.release(command_key(params))
     Logger.info("indicate command success")
+
+    socket = assign(socket, :running, false)
 
     socket =
       case return_val do
@@ -100,9 +72,26 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
           |> assign(:command_success, "error")
           |> assign(:last_result, {:error, "#{error_class}: #{error_text}"})
 
+        {:error, reason} when reason in [:disconnected, :uninitialized] ->
+          send(
+            self(),
+            {:put_flash,
+             [
+               :error,
+               "#{socket.assigns.module_name}:#{socket.assigns.command.name}: not sent, node not connected"
+             ]}
+          )
+
+          socket
+          |> assign(:command_success, "error")
+          |> assign(:last_result, {:error, "Not sent: node not connected"})
+
         other ->
           send(self(), {:put_flash, [:error, inspect(other)]})
-          assign(socket, :command_success, "error")
+
+          socket
+          |> assign(:command_success, "error")
+          |> assign(:last_result, {:error, "No answer from node"})
       end
 
     send_update_after(__MODULE__, %{id: socket.assigns.id_str, action: :clear_highlight}, 1000)
@@ -123,21 +112,31 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
     {:noreply, assign(socket, :arg_form, updated_arg_form)}
   end
 
+  # one run at a time per command: a second click while the node is still
+  # working on the first must not send the command again (stop is exempt)
+  def handle_event("set_arg", %{"command" => command}, %{assigns: %{running: true}} = socket)
+      when command != "stop" do
+    {:noreply, socket}
+  end
+
   def handle_event("set_arg", params, socket) do
-    Logger.info("Sending command #{params["command"]} with arg #{params["value"]}")
+    with {:ok, params} <- normalise_argument(params, socket),
+         true <- claim_command(params) do
+      run_command(params, socket)
+    else
+      {:invalid, arg_form} ->
+        {:noreply, assign(socket, :arg_form, arg_form)}
 
-    # TODO: handle return_val properly
-    # set command_success based on return_val
-    pid = self()
+      false ->
+        # e.g. the same command is still running from the card or the inspector
+        send(
+          self(),
+          {:put_flash,
+           [:error, "#{socket.assigns.module_name}:#{params["command"]} is still running"]}
+        )
 
-    Task.start(fn ->
-      return_val = NodeControl.execute_command(params)
-      Logger.info("NodeControl.execute_command returned: #{inspect(return_val)}")
-
-      send_update(pid, __MODULE__, %{id: socket.assigns.id_str, return_value: return_val})
-    end)
-
-    {:noreply, assign(socket, :command_success, "running")}
+        {:noreply, assign(socket, :last_result, {:error, "Already running"})}
+    end
   end
 
   @impl true
@@ -159,10 +158,10 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
   defp result_text(_), do: nil
 
   # stop and go are the routine commands; everything else asks first.
-  defp confirm_text(%{name: name}) when name in ["stop", "go"], do: nil
+  defp confirm_text(%{name: name}, _module_name) when name in ["stop", "go"], do: nil
 
-  defp confirm_text(command),
-    do: "Run command '#{command.name}' on the node?"
+  defp confirm_text(command, module_name),
+    do: "Run '#{command.name}' on module '#{module_name}'?"
 
   defp tone(%{name: "stop"}),
     do: "border-st-error text-st-error hover:bg-st-error hover:text-base-100"
@@ -175,7 +174,7 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
     assigns =
       assigns
       |> assign(:tone, tone(assigns.command))
-      |> assign(:confirm, confirm_text(assigns.command))
+      |> assign(:confirm, confirm_text(assigns.command, assigns.module_name))
 
     ~H"""
     <div class={[@variant == :row && "border-t border-line py-2 first:border-t-0", @class]}>
@@ -237,7 +236,10 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
               class={["cmd-btn btn btn-sm border bg-transparent font-mono", @tone]}
               mod-highlight={@command_success}
               data-confirm={@confirm}
+              disabled={@running and @command.name != "stop"}
+              aria-label={"#{@command.name} on #{@module_name}"}
             >
+              <span :if={@running} class="loading loading-spinner loading-xs"></span>
               {if @variant == :row, do: "Run", else: @command.name}
             </button>
           </.form>
@@ -279,12 +281,16 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
             type="text"
             field={@arg_form[:value]}
             placeholder="argument as JSON"
+            aria-label={"Argument for #{@command.name}"}
             phx-debounce="400"
             autocomplete="off"
             id={"form:" <> to_string(@command.id) <> @location}
             class="input input-sm w-full font-mono text-xs"
           />
-          <button type="submit" class="btn btn-sm btn-primary shrink-0">Run</button>
+          <button type="submit" class="btn btn-sm btn-primary shrink-0" disabled={@running}>
+            <span :if={@running} class="loading loading-spinner loading-xs"></span>
+            {if @running, do: "Running…", else: "Run"}
+          </button>
         </.form>
         <div
           :if={@last_result}
@@ -298,5 +304,109 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
       </.modal>
     </div>
     """
+  end
+
+  defp init(socket, assigns, host, port, module_name, command, location, id_str, class) do
+    has_arg = Map.has_key?(command.datainfo, "argument") and command.datainfo["argument"] != nil
+
+    arg_dtype =
+      cond do
+        has_arg -> Jason.encode!(command.datainfo["argument"], pretty: true)
+        true -> nil
+      end
+
+    node_id = {String.to_charlist(host), port}
+
+    arg_form =
+      to_form(%{
+        "location" => "#{location}",
+        "host" => to_string(host),
+        "port" => Integer.to_string(port),
+        "command" => command.name,
+        "module" => module_name,
+        "value" => nil
+      })
+
+    socket =
+      socket
+      |> assign(:command, command)
+      |> assign(:module_name, module_name)
+      |> assign(:node_id, node_id)
+      |> assign(:host, host)
+      |> assign(:port, port)
+      |> assign(:class, class)
+      |> assign(:location, location)
+      |> assign(:show_arg_modal, false)
+      |> assign(:arg_form, arg_form)
+      |> assign(:return, nil)
+      |> assign(:arg_dtype, arg_dtype)
+      |> assign(:has_arg, has_arg)
+      |> assign_new(:command_success, fn -> nil end)
+      |> assign_new(:running, fn -> false end)
+      |> assign(:id_str, id_str)
+      |> assign(:variant, Map.get(assigns, :variant, :button))
+      |> assign_new(:last_result, fn -> nil end)
+
+    socket
+  end
+
+  # stop must always go through, even while another stop is pending
+  defp command_key(params),
+    do: {:cmd, params["host"], params["port"], params["module"], params["command"]}
+
+  defp claim_command(%{"command" => "stop"}), do: true
+  defp claim_command(params), do: InFlight.claim(command_key(params))
+
+  # Commands without an argument are sent unchanged. With an argument, the
+  # typed value must pass validation and is sent as normalised JSON (so plain
+  # text typed for a string argument is quoted).
+  defp normalise_argument(params, %{assigns: %{has_arg: false}}), do: {:ok, params}
+
+  defp normalise_argument(params, socket) do
+    arg_form =
+      NodeControl.validate(
+        params,
+        socket.assigns.command.datainfo["argument"],
+        socket.assigns.arg_form
+      )
+
+    cond do
+      params["value"] in [nil, ""] ->
+        {:invalid, %{arg_form | errors: [value: {"Enter an argument", []}]}}
+
+      arg_form.errors != [] ->
+        {:invalid, arg_form}
+
+      true ->
+        value = arg_form.params["value"] |> Jason.decode!() |> Jason.encode!()
+        {:ok, Map.put(params, "value", value)}
+    end
+  end
+
+  defp run_command(params, socket) do
+    Logger.info("Sending command #{params["command"]} with arg #{params["value"]}")
+
+    pid = self()
+    id = socket.assigns.id_str
+
+    Task.start(fn ->
+      return_val =
+        try do
+          NodeControl.execute_command(params)
+        catch
+          kind, reason -> {:exception, Exception.format_banner(kind, reason)}
+        end
+
+      Logger.info("NodeControl.execute_command returned: #{inspect(return_val)}")
+
+      send(pid, {:in_flight_done, command_key(params)})
+      send_update(pid, __MODULE__, %{id: id, return_value: return_val, params: params})
+    end)
+
+    {:noreply,
+     socket
+     |> assign(:command_success, "running")
+     |> assign(:running, true)
+     |> assign(:last_result, nil)}
   end
 end

@@ -433,12 +433,23 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           class="flex gap-0.5"
         >
         </div>
+        <a
+          :if={@parameter}
+          id={"csv-export-#{@id}"}
+          href={"/export/parameter/#{@parameter.id}"}
+          download
+          class="inline-flex items-center gap-1 rounded border border-line px-1.5 py-0.5 text-[11px] text-muted hover:bg-base-200 hover:text-base-content"
+          title={"Download all recorded values of #{@parameter.name} as CSV"}
+        >
+          <.icon name="hero-arrow-down-tray-micro" class="size-3.5" /> CSV
+        </a>
         <button
           :if={@display_mode == :graph}
           id={"rangeslider-btn-#{@id}"}
           class="rounded border border-line px-1.5 py-0.5 text-[11px] text-muted hover:bg-base-200"
           data-chart-id={@id}
-          title="Toggle range slider"
+          title="Show or hide the time range slider"
+          aria-label="Toggle time range slider"
           phx-click={JS.toggle_class("text-ink") |> JS.dispatch("toggle-rangeslider")}
         >
           <.icon name="hero-arrows-right-left-micro" class="size-3.5" />
