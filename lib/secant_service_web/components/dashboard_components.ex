@@ -219,11 +219,9 @@ defmodule SecantServiceWeb.DashboardComponents do
         </div>
         <p
           :if={@node.description}
-          class="mt-0.5 line-clamp-2 whitespace-pre-line text-muted"
-          title={@node.description}
-        >
-          {compact_text(@node.description)}
-        </p>
+          class="mt-0.5 whitespace-pre-line break-words text-muted"
+          phx-no-format
+        >{compact_text(@node.description)}</p>
         <div
           :if={@status_counts != []}
           class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs"
