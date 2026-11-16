@@ -1,9 +1,41 @@
 defmodule SecantService.Util do
+  @doc """
+  Human-readable name from a SECoP identifier: underscores become spaces and
+  each word starts upper case. Existing capitals are kept, so `MFC_group_1`
+  becomes "MFC Group 1" rather than "Mfc Group 1".
+  """
+  def display_name(nil), do: ""
+
   def display_name(name) do
     name
-    |> String.split("_")
-    |> Enum.map(fn x -> String.capitalize(x) end)
+    |> String.split("_", trim: true)
+    |> Enum.map(&upcase_first/1)
     |> Enum.join(" ")
+  end
+
+  defp upcase_first(<<first::utf8, rest::binary>>), do: String.upcase(<<first::utf8>>) <> rest
+  defp upcase_first(word), do: word
+
+  @doc """
+  Compact one-line rendering of an arbitrary (JSON-like) value for property
+  lists, cut to `max` characters.
+  """
+  def short_inspect(value, max \\ 140)
+
+  def short_inspect(value, max) when is_binary(value), do: truncate(value, max)
+
+  def short_inspect(value, max) do
+    text =
+      case Jason.encode(value) do
+        {:ok, json} -> json
+        {:error, _} -> inspect(value)
+      end
+
+    truncate(text, max)
+  end
+
+  defp truncate(text, max) do
+    if String.length(text) > max, do: String.slice(text, 0, max - 1) <> "…", else: text
   end
 
   def get_highest_if_class(iflist) do

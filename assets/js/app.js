@@ -71,7 +71,105 @@ const ChartVisibilityObserver = new IntersectionObserver((entries) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Theme helpers: charts follow the light/dark theme of the page
+// ---------------------------------------------------------------------------
+
+const prefersDark = window.matchMedia("(prefers-color-scheme: dark)");
+
+function isDarkTheme() {
+  const theme = document.documentElement.getAttribute("data-theme");
+  if (theme === "dark") return true;
+  if (theme === "light") return false;
+  return prefersDark.matches;
+}
+
+// Series palette: violet accent first, then colours that stay apart in both
+// themes (and differ in lightness, not only hue).
+const CHART_PALETTE = ["#8b5cf6", "#38bdf8", "#f59e0b", "#10b981", "#f43f5e", "#a3a3a8", "#ec4899", "#84cc16"];
+
+// Notify mounted charts when the theme changes (theme toggle or OS setting).
+const ThemeWatch = {
+  _listeners: new Set(),
+  add(fn) { this._listeners.add(fn); },
+  remove(fn) { this._listeners.delete(fn); },
+  _fire() { this._listeners.forEach((fn) => fn()); },
+};
+new MutationObserver(() => ThemeWatch._fire()).observe(document.documentElement, {
+  attributes: true,
+  attributeFilter: ["data-theme"],
+});
+prefersDark.addEventListener("change", () => ThemeWatch._fire());
+
+// Width of the module inspector, remembered per browser.
+const INSPECTOR_KEY = "secant:inspector-width";
+const INSPECTOR_MIN = 320;
+const INSPECTOR_MAX = 960;
+try {
+  const saved = parseInt(localStorage.getItem(INSPECTOR_KEY), 10);
+  if (saved >= INSPECTOR_MIN && saved <= INSPECTOR_MAX) {
+    document.documentElement.style.setProperty("--inspector-w", `${saved}px`);
+  }
+} catch (_e) {
+  // storage unavailable (private mode): keep the CSS default
+}
+
 let Hooks = {};
+
+// Drag handle on the left edge of the inspector panel. The width is kept in a
+// CSS variable on <html>, outside the LiveView DOM, so patches never reset it.
+Hooks.ResizablePanel = {
+  mounted() {
+    const panel = this.el.parentElement;
+    const setWidth = (w) => {
+      const width = Math.round(Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, w)));
+      document.documentElement.style.setProperty("--inspector-w", `${width}px`);
+      return width;
+    };
+    const save = (w) => {
+      try { localStorage.setItem(INSPECTOR_KEY, String(w)); } catch (_e) {}
+    };
+
+    this._onDown = (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = panel.getBoundingClientRect().width;
+      let last = startW;
+      this.el.setPointerCapture(e.pointerId);
+      document.body.style.userSelect = "none";
+      const move = (ev) => { last = setWidth(startW + (startX - ev.clientX)); };
+      const up = () => {
+        this.el.removeEventListener("pointermove", move);
+        this.el.removeEventListener("pointerup", up);
+        this.el.removeEventListener("pointercancel", up);
+        document.body.style.userSelect = "";
+        save(last);
+      };
+      this.el.addEventListener("pointermove", move);
+      this.el.addEventListener("pointerup", up);
+      this.el.addEventListener("pointercancel", up);
+    };
+    this._onDblClick = () => {
+      document.documentElement.style.removeProperty("--inspector-w");
+      try { localStorage.removeItem(INSPECTOR_KEY); } catch (_e) {}
+    };
+    this._onKey = (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      const step = e.shiftKey ? 80 : 20;
+      const w = panel.getBoundingClientRect().width + (e.key === "ArrowLeft" ? step : -step);
+      save(setWidth(w));
+    };
+    this.el.addEventListener("pointerdown", this._onDown);
+    this.el.addEventListener("dblclick", this._onDblClick);
+    this.el.addEventListener("keydown", this._onKey);
+  },
+  destroyed() {
+    this.el.removeEventListener("pointerdown", this._onDown);
+    this.el.removeEventListener("dblclick", this._onDblClick);
+    this.el.removeEventListener("keydown", this._onKey);
+  },
+};
 
 Hooks.EChartsChart = {
   mounted() {
@@ -133,7 +231,8 @@ Hooks.EChartsChart = {
 
     this.handleEvent("chart-update", ({ option }) => {
       const { _rangeButtons, _activeButton, ...echartsOption } = option;
-      this._chart && this._chart.setOption(echartsOption, { notMerge: true });
+      this._lastOption = echartsOption;
+      this._chart && this._chart.setOption(this._themed(echartsOption), { notMerge: true });
     });
 
     this.handleEvent(`prepend-chart-data-${this.el.id}`, ({ seriesUpdates }) => {
@@ -188,9 +287,12 @@ Hooks.EChartsChart = {
     window.addEventListener("myapp:close-modal", this._onCloseModal);
 
     // Defer echarts.init until after paint so clientWidth/clientHeight are non-zero
+    this._onThemeChange = () => this._reinitForTheme();
+    ThemeWatch.add(this._onThemeChange);
+
     requestAnimationFrame(() => {
       if (!this.el) return;
-      this._chart = echarts.init(this.el, null, { renderer: "canvas" });
+      this._chart = this._initChart();
 
       this._resizeObserver = new ResizeObserver(() => {
         this._chart && this._chart.resize();
@@ -208,8 +310,40 @@ Hooks.EChartsChart = {
     });
   },
 
+  _initChart() {
+    return echarts.init(this.el, isDarkTheme() ? "dark" : null, { renderer: "canvas" });
+  },
+
+  // Page colours on top of the server-built option: transparent background,
+  // theme text colour and the accent palette.
+  _themed(option) {
+    // time axes: drop labels that would overlap in narrow panels
+    const fixAxis = (ax) =>
+      ax && ax.type === "time"
+        ? { ...ax, axisLabel: { hideOverlap: true, ...(ax.axisLabel || {}) } }
+        : ax;
+    const xAxis = Array.isArray(option.xAxis) ? option.xAxis.map(fixAxis) : fixAxis(option.xAxis);
+    return {
+      color: CHART_PALETTE,
+      ...option,
+      ...(xAxis ? { xAxis } : {}),
+      backgroundColor: "transparent",
+      textStyle: { fontFamily: "JetBrains Mono, ui-monospace, monospace", ...(option.textStyle || {}) },
+    };
+  },
+
+  _reinitForTheme() {
+    if (!this._chart || !this._lastOption) return;
+    this._chart.dispose();
+    this._chart = this._initChart();
+    this._chart.setOption(this._themed(this._lastOption), { notMerge: true });
+    this._dataDirty = true;
+    this._flushBuffer();
+  },
+
   _applyInitialOption(echartsOption) {
-    this._chart.setOption(echartsOption, { notMerge: true });
+    this._lastOption = echartsOption;
+    this._chart.setOption(this._themed(echartsOption), { notMerge: true });
     const loadingEl = document.getElementById(this.el.dataset.loadingId);
     if (loadingEl) loadingEl.style.display = "none";
     this._renderRangeButtons();
@@ -230,22 +364,15 @@ Hooks.EChartsChart = {
     this._rangeButtons.forEach((btn, index) => {
       const el = document.createElement("button");
       el.textContent = btn.label;
-      el.className =
-        "btn btn-xs " +
-        (index === this._activeButton ? "btn-primary" : "btn-neutral");
+      el.type = "button";
+      el.className = "rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors";
+      this._styleRangeButton(el, index === this._activeButton);
       el.addEventListener("click", () => {
         const prevBtn = this._activeButton != null ? this._rangeButtons[this._activeButton] : null;
         this._activeButton = index;
         buttonsEl
           .querySelectorAll("button")
-          .forEach((b, i) =>
-            b.classList.toggle("btn-primary", i === index),
-          );
-        buttonsEl
-          .querySelectorAll("button")
-          .forEach((b, i) =>
-            b.classList.toggle("btn-neutral", i !== index),
-          );
+          .forEach((b, i) => this._styleRangeButton(b, i === index));
 
         const now = Date.now();
         const { xMin: newXMin, xMax: newXMax } = this._computeRange(btn, now);
@@ -283,6 +410,11 @@ Hooks.EChartsChart = {
       });
       buttonsEl.appendChild(el);
     });
+  },
+
+  _styleRangeButton(el, active) {
+    ["bg-base-300", "text-base-content", "font-semibold"].forEach((c) => el.classList.toggle(c, active));
+    ["text-muted", "hover:bg-base-200"].forEach((c) => el.classList.toggle(c, !active));
   },
 
   // Timestamp of a buffered point, regardless of series data shape:
@@ -378,6 +510,7 @@ Hooks.EChartsChart = {
   },
 
   destroyed() {
+    ThemeWatch.remove(this._onThemeChange);
     ChartFlushDriver.unregister(this);
     ChartVisibilityObserver.unobserve(this.el);
     this._resizeObserver && this._resizeObserver.disconnect();

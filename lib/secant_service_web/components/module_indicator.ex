@@ -73,179 +73,65 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
     {:ok, assign(socket, :status_value, processed_value_update)}
   end
 
-  attr :status_value, :map, required: true
+  defp status_parts(nil), do: {"bg-st-off", "text-muted", nil, nil}
 
-  def inner_status_indicator(assigns) do
-    assigns =
-      if assigns.status_value.data_report == nil do
-        assign(assigns, :stat_col, "bg-neutral")
-      else
-        assign(
-          assigns,
-          :stat_col,
-          SECoPComponents.status_to_color(assigns.status_value.stat_color)
-        )
-      end
+  defp status_parts(%{data_report: nil}), do: {"bg-st-off", "text-muted", nil, nil}
 
-    ~H"""
-    <div class="flex items-center">
-      <div class={[@stat_col, "w-6 h-6 mr-2 rounded-full border-3 border-gray-500/70"]}></div>
-      <div class="mb-1">
-        <%= if @status_value.data_report != nil do %>
-          <div class="text-lg font-semibold text-neutral-content truncate">
-            {@status_value.stat_code}
-          </div>
-        <% end %>
-      </div>
-    </div>
-    <%= if @status_value.data_report != nil do %>
-      <div class="text-neutral-content">
-        {@status_value.stat_string}
-      </div>
-    <% else %>
-      <div class="text-sm text-neutral-content opacity-60">
-        waiting for data...
-      </div>
-    <% end %>
-    """
+  defp status_parts(status_value) do
+    {SECoPComponents.status_to_color(status_value.stat_color),
+     SECoPComponents.status_to_text(status_value.stat_color), to_string(status_value.stat_code),
+     status_value.stat_string}
   end
 
+  attr :status_value, :map, default: nil
+  attr :node_state, :atom, default: :initialized
   attr :module_name, :string, required: true
-  attr :node_state, :atom, required: true
-  attr :status_value, :map, required: true
+  attr :has_status, :boolean, default: true
 
-  def module_indicator_status(assigns) do
-    display_name = Util.display_name(assigns.module_name)
-    # Adjust this threshold based on your needs (characters that fit in w-48)
-    text_too_long = String.length(display_name) > 20
+  # Row in the module rail: dot, name, status code.
+  defp rail_row(assigns) do
+    {dot, text, code, string} = status_parts(assigns.status_value)
 
-    color =
-      case assigns.node_state do
-        :connected -> "bg-warning text-warning-content"
-        :disconnected -> "bg-error text-error-content"
-        :initialized -> "bg-neutral text-neutral-content"
-        # default fallback
-        _ -> "bg-error text-error-content"
-      end
-
-    stat_col =
-      if assigns.status_value.data_report != nil do
-        SECoPComponents.status_to_color(assigns.status_value.stat_color)
-      else
-        "bg-warning text-warning-content"
-      end
-
-    show =
-      if text_too_long do
-        "overflow-hidden"
-      else
-        "truncate"
-      end
-
-    animate_marquee =
-      if text_too_long do
-        "animate-marquee hover:pause-animation"
-      else
-        ""
+    {dot, text, code} =
+      cond do
+        not assigns.has_status -> {"bg-st-off/50", "text-muted", ""}
+        assigns.node_state != :initialized -> {"bg-st-off", "text-muted", "offline"}
+        true -> {dot, text, code}
       end
 
     assigns =
       assigns
-      |> assign(:display_name, display_name)
-      |> assign(:color, color)
-      |> assign(:stat_col, stat_col)
-      |> assign(:show, show)
-      |> assign(:animate_marquee, animate_marquee)
+      |> assign(dot: dot, text: text, code: code, string: string)
 
     ~H"""
-    <div class={[
-      "card",
-      "w-[300px]",
-      "text-left font-bold py-2 px-4",
-      @color
-    ]}>
-      <div class="flex items-center">
-        <div class={[@stat_col, "w-6 h-6 mr-2 rounded-full border-3 border-gray-500/70"]}></div>
-
-        <div class="flex-1 min-w-0">
-          <div class={[
-            "text-xl",
-            @show
-          ]}>
-            <div
-              class={[
-                "whitespace-nowrap",
-                @animate_marquee
-              ]}
-              title={@display_name}
-            >
-              {@display_name}
-            </div>
-          </div>
-          <%= if @status_value.data_report != nil do %>
-            <div class="text-sm opacity-60 truncate">
-              {@status_value.stat_code} : {@status_value.stat_string}
-            </div>
-          <% else %>
-            <div class="text-sm opacity-60">
-              waiting for data...
-            </div>
-          <% end %>
-        </div>
-      </div>
-    </div>
+    <span class="flex min-w-0 flex-1 items-center gap-2" title={@string}>
+      <span class={["size-2 shrink-0 rounded-full", @dot]}></span>
+      <span class="min-w-0 flex-1 truncate">{Util.display_name(@module_name)}</span>
+      <span :if={@code} class={["shrink-0 font-mono text-[10.5px] font-semibold", @text]}>{@code}</span>
+    </span>
     """
   end
 
-  attr :module_name, :string, required: true
-  attr :node_state, :atom, required: true
+  attr :status_value, :map, default: nil
+  attr :layout, :atom, default: :stacked
 
-  def module_indicator(assigns) do
-    display_name = Util.display_name(assigns.module_name)
-    # Adjust this threshold based on your needs (characters that fit in w-48)
-    text_too_long = String.length(display_name) > 20
-
-    color =
-      case assigns.node_state do
-        :connected -> "bg-warning text-warning-content"
-        :disconnected -> "bg-error text-error-content"
-        :initialized -> "bg-neutral text-neutral-content"
-        # default fallback
-        _ -> "bg-error text-error-content"
-      end
-
-    assigns = assign(assigns, :display_name, display_name)
-    assigns = assign(assigns, :text_too_long, text_too_long)
-    assigns = assign(assigns, :color, color)
+  # Status chip for cards and the inspector: dot + code, then the status text.
+  defp status_chip(assigns) do
+    {dot, text, code, string} = status_parts(assigns.status_value)
+    assigns = assign(assigns, dot: dot, text: text, code: code, string: string)
 
     ~H"""
-    <div class={[
-      "card",
-      "w-[300px]",
-      "text-left font-bold py-2 px-4",
-      @color
-    ]}>
-      <div class="flex items-center">
-        <div class="bg-base-100/10 w-6 h-6 mr-2 rounded-full border-3 border-gray-500/20"></div>
-        <div class="flex-1 min-w-0">
-          <div class={[
-            "text-xl",
-            if(@text_too_long, do: "overflow-hidden", else: "truncate")
-          ]}>
-            <div
-              class={[
-                "whitespace-nowrap",
-                if(@text_too_long, do: "animate-marquee hover:pause-animation", else: "")
-              ]}
-              title={@display_name}
-            >
-              {@display_name}
-            </div>
-          </div>
-          <div class="text-sm text-white-400 opacity-0">
-            placeholder
-          </div>
-        </div>
+    <div class="min-w-0">
+      <span class={["inline-flex items-center gap-1.5 font-mono text-[11px] font-semibold", @text]}>
+        <span class={["size-2 rounded-full", @dot]}></span>
+        {@code || "no data"}
+      </span>
+      <div
+        :if={@layout == :stacked}
+        class="mt-0.5 min-h-4 truncate text-[11.5px] text-muted"
+        title={@string}
+      >
+        {@string}
       </div>
     </div>
     """
@@ -254,20 +140,19 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
   @impl true
   def render(assigns) do
     ~H"""
-    <div>
+    <div class="contents">
       <%= case @indicator_select do %>
         <% :outer -> %>
-          <%= if @status_param do %>
-            <.module_indicator_status
-              module_name={@module_name}
-              node_state={@node_state}
-              status_value={@status_value}
-            />
-          <% else %>
-            <.module_indicator module_name={@module_name} node_state={@node_state} />
-          <% end %>
+          <.rail_row
+            status_value={@status_value}
+            node_state={@node_state}
+            module_name={@module_name}
+            has_status={@status_param != nil}
+          />
         <% :inner -> %>
-          <.inner_status_indicator status_value={@status_value} />
+          <.status_chip status_value={@status_value} layout={:stacked} />
+        <% :compact -> %>
+          <.status_chip status_value={@status_value} layout={:inline} />
       <% end %>
     </div>
     """

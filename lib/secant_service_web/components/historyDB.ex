@@ -33,11 +33,11 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     {:ok, assign(socket, :chart_height, 340)}
   end
 
-  defp chart_height(%{option: %{_structFields: fields}}) when is_map(fields) do
-    max(map_size(fields) * 80, 340)
+  defp chart_height(%{option: %{_structFields: fields}}, base) when is_map(fields) do
+    max(map_size(fields) * 80, base)
   end
 
-  defp chart_height(_), do: 340
+  defp chart_height(_, base), do: base
 
   defp get_parameter(secop_obj) do
     case secop_obj do
@@ -130,6 +130,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
         socket
         |> assign(:initialised, true)
+        |> assign(:base_height, assigns[:height] || 340)
+        |> assign(:chart_height, assigns[:height] || 340)
         |> assign(:id, assigns.id)
         |> assign(:class, assigns.class)
         |> assign(:parameter, get_parameter(secop_obj))
@@ -183,7 +185,6 @@ defmodule SecantServiceWeb.Components.HistoryDB do
              "_forward_calib_coeff",
              "_inverse_calib_coeff"
            ] do
-
         secop_obj = socket.assigns.secop_obj
 
         start_async(socket, :reload_calibration_plot, fn ->
@@ -342,7 +343,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     socket =
       socket
       |> assign(:plot, AsyncResult.ok(socket.assigns.plot, plot))
-      |> assign(:chart_height, chart_height(plot))
+      |> assign(:chart_height, chart_height(plot, socket.assigns.base_height))
 
     socket =
       if socket.assigns.display_mode == :graph and Map.get(plot, :plottable) and
@@ -393,137 +394,98 @@ defmodule SecantServiceWeb.Components.HistoryDB do
      )}
   end
 
+  defp tab_class(true), do: "bg-base-300 text-base-content font-semibold"
+  defp tab_class(false), do: "text-muted hover:text-base-content hover:bg-base-200"
+
   @impl true
   def render(assigns) do
     ~H"""
-    <div class={["flex flex-col flex-1", assigns[:class]]}>
-      <%= if @display_mode != :empty  do %>
-        <div class="flex space-x-2 mb-2">
-          <button
-            class={[
-              "btn btn-neutral",
-              @display_mode == :graph &&
-                "btn-active btn-primary",
-              @plottable == false &&
-                "btn-disabled"
-            ]}
-            phx-click={JS.push("set-display-mode", value: %{mode: "graph"}, target: @myself)}
-          >
-            <div class="flex items-center">
-              <.icon name="hero-chart-bar-solid" class="h-5 w-5 flex-none mr-1" /> Graph
-            </div>
-          </button>
-
-          <button
-            class={[
-              "btn btn-neutral",
-              @display_mode == :table &&
-                "btn-active btn-primary"
-            ]}
-            phx-click={JS.push("set-display-mode", value: %{mode: "table"}, target: @myself)}
-          >
-            <div class="flex items-center">
-              <.icon name="hero-table-cells-solid" class="h-5 w-5 flex-none mr-1" /> Table
-            </div>
-          </button>
-          <%= if @interface_class == "calibratable" do %>
-            <button
-              class={[
-                "btn btn-neutral",
-                @display_mode == :calibration &&
-                  "btn-active btn-primary",
-                @plottable == false &&
-                  "btn-disabled"
-              ]}
-              phx-click={JS.push("set-display-mode", value: %{mode: "calibration"}, target: @myself)}
-            >
-              <div class="flex items-center">
-                <.icon name="hero-calculator-solid" class="h-5 w-5 flex-none mr-1" />
-                Calibration Coefficients
-              </div>
-            </button>
-          <% end %>
-
-          <%= if @display_mode == :graph do %>
-            <button
-              id={"rangeslider-btn-#{@id}"}
-              class="btn btn-outline btn-primary"
-              data-chart-id={@id}
-              phx-click={
-                JS.toggle_class("btn-active")
-                |> JS.dispatch("toggle-rangeslider")
-              }
-            >
-              <div class="flex items-center">
-                <.icon name="hero-arrows-right-left-solid" class="h-5 w-5 flex-none mr-1" />
-                Range Slider
-              </div>
-            </button>
-          <% end %>
+    <div class={["flex min-w-0 flex-1 flex-col", assigns[:class]]}>
+      <div :if={@display_mode != :empty} class="mb-1.5 flex flex-wrap items-center gap-1">
+        <button
+          :if={@plottable}
+          class={["rounded px-2 py-1 text-xs transition-colors", tab_class(@display_mode == :graph)]}
+          phx-click={JS.push("set-display-mode", value: %{mode: "graph"}, target: @myself)}
+        >
+          Graph
+        </button>
+        <button
+          class={["rounded px-2 py-1 text-xs transition-colors", tab_class(@display_mode == :table)]}
+          phx-click={JS.push("set-display-mode", value: %{mode: "table"}, target: @myself)}
+        >
+          Table
+        </button>
+        <button
+          :if={@interface_class == "calibratable"}
+          class={[
+            "rounded px-2 py-1 text-xs transition-colors",
+            tab_class(@display_mode == :calibration)
+          ]}
+          phx-click={JS.push("set-display-mode", value: %{mode: "calibration"}, target: @myself)}
+        >
+          Calibration
+        </button>
+        <span class="flex-1"></span>
+        <div
+          :if={@display_mode == :graph}
+          id={"range-buttons-#{@id}"}
+          phx-update="ignore"
+          class="flex gap-0.5"
+        >
         </div>
-      <% end %>
+        <button
+          :if={@display_mode == :graph}
+          id={"rangeslider-btn-#{@id}"}
+          class="rounded border border-line px-1.5 py-0.5 text-[11px] text-muted hover:bg-base-200"
+          data-chart-id={@id}
+          title="Toggle range slider"
+          phx-click={JS.toggle_class("text-ink") |> JS.dispatch("toggle-rangeslider")}
+        >
+          <.icon name="hero-arrows-right-left-micro" class="size-3.5" />
+        </button>
+      </div>
 
       <%= case @display_mode do %>
         <% :graph -> %>
           <%= if @plottable do %>
             <.async_result :let={_plot} assign={@plot}>
               <:loading>
-                <div class="flex flex-1 h-[340px] animate-pulse items-center justify-center text-center bg-gray-300 p-4 rounded-lg">
-                  <span class="text-gray-700">Waiting for valid Plot Data...</span>
+                <div
+                  class="flex animate-pulse items-center justify-center rounded-box bg-base-200 text-muted"
+                  style={"height: #{@chart_height}px"}
+                >
+                  Waiting for valid Plot Data...
                 </div>
               </:loading>
               <:failed>
-                ERROR
+                <div class="rounded-box border border-st-error/50 p-3 text-st-error">
+                  Could not load the plot.
+                </div>
               </:failed>
 
-              <div class="flex-1 bg-gray-300 p-1 rounded-lg">
-                <div id={"range-buttons-#{@id}"} class="flex space-x-1 mb-1"></div>
-                <div style={"height: #{@chart_height}px"}>
-                  <div
-                    id={@id}
-                    class="h-full"
-                    phx-hook="EChartsChart"
-                    phx-update="ignore"
-                  >
-                  </div>
-                </div>
+              <div
+                class="rounded-box border border-line bg-base-100 p-1"
+                style={"height: #{@chart_height}px"}
+              >
+                <div id={@id} class="h-full" phx-hook="EChartsChart" phx-update="ignore"></div>
               </div>
             </.async_result>
           <% else %>
-            <div class="flex items-center justify-center h-[340px] text-center bg-gray-300 p-4 rounded-lg">
-              <span class="text-gray-800">Data not plottable</span>
+            <div class="flex h-24 items-center justify-center rounded-box border border-dashed border-line text-muted">
+              Data not plottable
             </div>
           <% end %>
         <% :table -> %>
           <.async_result :let={table_data} assign={@table_data}>
             <:loading>
-              <div class="animate-pulse w-full border-collapse border border-slate-300 dark:border-slate-600 text-gray-700 dark:text-gray-200">
-                <table class="w-full">
-                  <thead class="p-2 bg-gray-50 dark:bg-gray-800 border border-slate-300 dark:border-slate-600">
-                    <tr>
-                      <th class="p-2">Time</th>
-                      <th class="p-2">Value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <%= for _i <- 1..10 do %>
-                      <tr class="border-b border-gray-200">
-                        <td class="p-2">
-                          <div class="h-6 bg-gray-400 rounded w-28"></div>
-                        </td>
-                        <td class="p-2">
-                          <div class="h-6 bg-gray-400 rounded w-20"></div>
-                        </td>
-                      </tr>
-                    <% end %>
-                  </tbody>
-                </table>
-              </div>
+              <div class="h-40 animate-pulse rounded-box bg-base-200"></div>
             </:loading>
             <:failed>
-              ERROR
+              <div class="rounded-box border border-st-error/50 p-3 text-st-error">
+                Could not load the values.
+              </div>
             </:failed>
-            <div class="card bg-neutral rounded-lg  p-2">
+            <div class="overflow-x-auto rounded-box border border-line text-xs">
               <AshPagify.Components.table
                 items={table_data.parameter_values}
                 meta={table_data.meta}
@@ -532,13 +494,15 @@ defmodule SecantServiceWeb.Components.HistoryDB do
                 id={"#{@id}-table"}
               >
                 <:col :let={parameter_value} label="Time" field={:timestamp}>
-                  {parameter_value.timestamp
-                  |> DateTime.from_naive!("Etc/UTC")
-                  |> DateTime.shift_zone!("Europe/Berlin")
-                  |> Calendar.strftime("%d.%m.%Y %H:%M:%S.%f")}
+                  <span class="font-mono">
+                    {parameter_value.timestamp
+                    |> DateTime.from_naive!("Etc/UTC")
+                    |> DateTime.shift_zone!("Europe/Berlin")
+                    |> Calendar.strftime("%d.%m.%Y %H:%M:%S.%f")}
+                  </span>
                 </:col>
                 <:col :let={parameter_value} label="Value" field={:value}>
-                  <div class="w-full max-w-1/2 font-mono truncate">
+                  <div class="max-w-[24rem] truncate font-mono">
                     {ParameterValue.get_display_value(parameter_value, @parameter)}
                   </div>
                 </:col>
@@ -554,29 +518,25 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         <% :calibration -> %>
           <.async_result :let={_calib} assign={@calibration_plot}>
             <:loading>
-              <div class="flex flex-1 h-[520px] animate-pulse items-center justify-center text-center bg-gray-300 p-4 rounded-lg">
-                <span class="text-gray-700">Computing calibration curves...</span>
+              <div class="flex h-[520px] animate-pulse items-center justify-center rounded-box bg-base-200 text-muted">
+                Computing calibration curves...
               </div>
             </:loading>
             <:failed>
-              ERROR
+              <div class="rounded-box border border-st-error/50 p-3 text-st-error">
+                Could not compute the calibration curves.
+              </div>
             </:failed>
-            <div class="flex-1 bg-gray-300 p-1 rounded-lg">
-              <div
-                id={"#{@id}-calib"}
-                class="h-[700px]"
-                phx-hook="EChartsChart"
-                phx-update="ignore"
-              >
+            <div class="rounded-box border border-line bg-base-100 p-1">
+              <div id={"#{@id}-calib"} class="h-[640px]" phx-hook="EChartsChart" phx-update="ignore">
               </div>
             </div>
           </.async_result>
         <% :empty -> %>
-          <!-- Nothing is rendered here, for example communicator modules
-            that do not have a main param like value -->
+          <%!-- nothing to show, e.g. communicator modules without a value --%>
         <% _ -> %>
-          <div class="flex items-center justify-center h-full text-center bg-gray-300 p-4 rounded-lg">
-            <span class="text-gray-800">Unknown display mode</span>
+          <div class="rounded-box border border-dashed border-line p-4 text-muted">
+            Unknown display mode
           </div>
       <% end %>
     </div>

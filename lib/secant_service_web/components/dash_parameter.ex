@@ -1,89 +1,59 @@
 defmodule SecantServiceWeb.Components.DashParameter do
+  @moduledoc """
+  One parameter row in the module inspector of the live dashboard: name,
+  type, access, description, live value and (when writable) a Set form.
+  """
   use Phoenix.LiveComponent
 
-  alias SecantService.Util
   alias SecantServiceWeb.Components.ParameterValueDisplay
-  import SecantServiceWeb.SECoPComponents
-  import SecantServiceWeb.Components.ParameterFormFieldComponents
+  alias SecantServiceWeb.ValueFormat
   import SecantServiceWeb.CoreComponents
   alias Phoenix.LiveView.JS
 
+  @impl true
   def handle_event("show_graph", _params, socket) do
     send(self(), {:show_parameter_graph, socket.assigns.parameter})
     {:noreply, socket}
   end
 
+  @impl true
   def render(assigns) do
+    assigns =
+      assigns
+      |> assign(:type_label, ValueFormat.type_label(assigns.parameter.datainfo))
+      |> assign(:limits, ValueFormat.limits(assigns.parameter.datainfo))
+      |> assign_new(:plotted, fn -> false end)
+
     ~H"""
-    <div>
-      <div class="card mb-4 bg-neutral p-4 shadow-md">
-        <div class="flex justify-between">
-          <div class="flex ">
-            <div>
-              <.datainfo_tooltip datainfo={@parameter.datainfo} position="tooltip-right" />
-            </div>
-
-            <div class="text-lg font-bold text-neutral-content">
-              {Util.display_name(@parameter.name)}:
-            </div>
-          </div>
-
-          <div class="flex text-sm text-base-content pt-1 gap-2">
-            <div class=" px-2 py-0.5 rounded-full bg-base-100 font-mono">
-              {@parameter.datainfo["type"]}
-            </div>
-            <%= if @parameter.readonly do %>
-              <div class=" px-2 py-0.5 rounded-full bg-base-100 font-mono">
-                r
-              </div>
-            <% else %>
-              <div class="px-2 py-0.5 rounded-full bg-base-100 font-mono">
-                r/w
-              </div>
-            <% end %>
-
-            <button
-              class="btn btn-warning btn-sm"
-              phx-click={JS.push("show_graph", target: @myself)}
-            >
-              <div class="flex items-center">
-                <.icon name="hero-chart-bar-solid" class="h-5 w-5 flex-none mr-1" /> Graph
-              </div>
-            </button>
-          </div>
-        </div>
-
-        <ul class="mt-2 text-sm text-neutral-content/80">
-          <.property
-            prop_key="Description"
-            class=""
-            key_class="text-neutral-content/80 text-sm font-bold"
-          >
-            {@parameter.description}
-          </.property>
-
-          <%= if @parameter.meaning do %>
-            <.property prop_key="Meaning" key_class="text-neutral-content/80 font-semibold">
-              {inspect(@parameter.meaning)}
-            </.property>
-          <% end %>
-
-          <%= if @parameter.checkable do %>
-            <.property prop_key="Checkable" key_class="text-neutral-content/80 font-semibold">
-              {@parameter.checkable}
-            </.property>
-          <% end %>
-
-          <%= for {property_name, property_value} <- @parameter.custom_properties do %>
-            <.property
-              prop_key={String.replace_prefix(property_name, "_", "")}
-              key_class="text-neutral-content/80 font-semibold"
-            >
-              > {inspect(property_value)}
-            </.property>
-          <% end %>
-        </ul>
-
+    <div class="border-t border-line py-2.5 first:border-t-0" id={"param-row:" <> @id}>
+      <div class="flex items-baseline gap-2">
+        <span class="min-w-0 flex-1 font-mono text-[12.5px] font-semibold break-all">
+          {@parameter.name}
+        </span>
+        <span class="font-mono text-[10.5px] text-muted" title={Jason.encode!(@parameter.datainfo)}>
+          {@type_label}
+        </span>
+        <span class="rounded border border-line px-1 font-mono text-[10px] text-muted">
+          {if @parameter.readonly, do: "r", else: "r/w"}
+        </span>
+        <button
+          type="button"
+          class={[
+            "rounded p-0.5 transition-colors hover:bg-base-300",
+            if(@plotted, do: "text-ink", else: "text-muted")
+          ]}
+          phx-click={JS.push("show_graph", target: @myself)}
+          aria-label={"Plot history of #{@parameter.name}"}
+          title="Plot history"
+        >
+          <.icon name="hero-chart-bar-micro" class="size-4" />
+        </button>
+      </div>
+      <div :if={@parameter.description} class="mt-0.5 text-[11.5px] text-muted">
+        {@parameter.description}
+      </div>
+      <div :if={@limits} class="font-mono text-[10.5px] text-muted">range {@limits}</div>
+      <div class="mt-1.5">
         <.live_component
           module={ParameterValueDisplay}
           id={"parameter_value:" <> @node_id_str <> ":" <> @module_name <> ":" <> @parameter.name}
@@ -93,6 +63,7 @@ defmodule SecantServiceWeb.Components.DashParameter do
           location="parameter_value"
           module_name={@module_name}
           parameter={@parameter}
+          variant={:row}
           id_str={"parameter_value:" <> @node_id_str <> ":" <> @module_name <> ":" <> @parameter.name}
         />
       </div>

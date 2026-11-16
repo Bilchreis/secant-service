@@ -6,7 +6,6 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
   alias SecantService.NodeControl
   alias NodeTable
   import SecantServiceWeb.CoreComponents
-  alias SecantService.Util
 
   @impl true
   def mount(socket) do
@@ -23,7 +22,7 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
           command: command,
           location: location,
           id_str: id_str
-        } = _assigns,
+        } = assigns,
         socket
       ) do
     has_arg = Map.has_key?(command.datainfo, "argument") and command.datainfo["argument"] != nil
@@ -62,6 +61,8 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
       |> assign(:has_arg, has_arg)
       |> assign(:command_success, nil)
       |> assign(:id_str, id_str)
+      |> assign(:variant, Map.get(assigns, :variant, :button))
+      |> assign_new(:last_result, fn -> nil end)
 
     {:ok, socket}
   end
@@ -78,12 +79,29 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
 
     socket =
       case return_val do
-        {:done, _module, _command, _data_report} ->
-          send(self(), {:put_flash, [:info, "#{inspect(return_val)}"]})
-          assign(socket, :command_success, "done")
+        {:done, _module, command, data_report} ->
+          send(self(), {:put_flash, [:info, "#{socket.assigns.module_name}:#{command} done"]})
 
-        {:error, :do, _specifier, _error_class, _error_text, _error_dict} ->
-          send(self(), {:put_flash, [:error, "#{inspect(return_val)}"]})
+          socket
+          |> assign(:command_success, "done")
+          |> assign(:last_result, {:ok, result_text(data_report)})
+
+        {:error, :do, _specifier, error_class, error_text, _error_dict} ->
+          send(
+            self(),
+            {:put_flash,
+             [
+               :error,
+               "#{socket.assigns.module_name}:#{socket.assigns.command.name}: #{error_class} #{error_text}"
+             ]}
+          )
+
+          socket
+          |> assign(:command_success, "error")
+          |> assign(:last_result, {:error, "#{error_class}: #{error_text}"})
+
+        other ->
+          send(self(), {:put_flash, [:error, inspect(other)]})
           assign(socket, :command_success, "error")
       end
 
@@ -135,90 +153,113 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
     {:noreply, assign(socket, show_arg_modal: false)}
   end
 
+  defp result_text([value | _]) when not is_nil(value),
+    do: SecantService.Util.short_inspect(value, 160)
+
+  defp result_text(_), do: nil
+
+  # stop and go are the routine commands; everything else asks first.
+  defp confirm_text(%{name: name}) when name in ["stop", "go"], do: nil
+
+  defp confirm_text(command),
+    do: "Run command '#{command.name}' on the node?"
+
+  defp tone(%{name: "stop"}),
+    do: "border-st-error text-st-error hover:bg-st-error hover:text-base-100"
+
+  defp tone(%{name: "go"}), do: "border-st-idle text-st-idle hover:bg-st-idle hover:text-base-100"
+  defp tone(_), do: "border-line text-base-content hover:bg-base-300"
+
   @impl true
   def render(assigns) do
-    btn_color =
-      cond do
-        assigns.command.name == "stop" -> "btn-error"
-        assigns.command.name == "go" -> "btn-success"
-        assigns.has_arg -> "btn-base-200"
-        true -> "btn-neutral"
-      end
-
-    assigns = assign(assigns, :button_color, btn_color)
+    assigns =
+      assigns
+      |> assign(:tone, tone(assigns.command))
+      |> assign(:confirm, confirm_text(assigns.command))
 
     ~H"""
-    <div>
-      <%= if @has_arg  do %>
-        <button
-          onclick={"arg_modal_" <> to_string(@command.id)<> ".showModal()"}
-          phx-click="open_arg_modal"
-          phx-target={@myself}
-          class={["btn border border-base-300", @button_color]}
-        >
-          {Util.display_name(@command.name)}
-        </button>
-
-        <.modal
-          id={"arg_modal_" <> to_string(@command.id)}
-          title={Util.display_name(@command.name)}
-          show={@show_arg_modal}
-        >
-          <div class="card bg-base-200 shadow-xl  p-4">
-            <pre class="card bg-base-100 border border-base-content/50 break-words max-h-[60vh] border p-4 m-2 overflow-y-auto font-mono text-xs p-2 ">{@arg_dtype}</pre>
-            <.form
-              for={@arg_form}
-              phx-submit="set_arg"
-              phx-change="validate_arg"
-              phx-target={@myself}
-              class="flex space-x-2"
-            >
-              <input
-                type="hidden"
-                name="port"
-                value={Phoenix.HTML.Form.input_value(@arg_form, :port)}
-              />
-              <input
-                type="hidden"
-                name="host"
-                value={Phoenix.HTML.Form.input_value(@arg_form, :host)}
-              />
-              <input
-                type="hidden"
-                name="location"
-                value={Phoenix.HTML.Form.input_value(@arg_form, :location)}
-              />
-              <input
-                type="hidden"
-                name="module"
-                value={Phoenix.HTML.Form.input_value(@arg_form, :module)}
-              />
-              <input type="hidden" name="command" value={@command.name} />
-              <.input
-                name="value"
-                type="text"
-                field={@arg_form[:value]}
-                placeholder="arg value"
-                phx-debounce="500"
-                id={"form:" <> to_string(@command.id)}
-                class="ml-2 input flex-1 max-h-80 overflow-scroll font-mono opacity-100"
-              />
-              <button
-                type="submit"
-                class="ml-2 btn btn-primary border border-base-300 mt-1"
-              >
-                Send
-              </button>
-            </.form>
+    <div class={[@variant == :row && "border-t border-line py-2 first:border-t-0", @class]}>
+      <div class={[@variant == :row && "flex items-start gap-3"]}>
+        <div :if={@variant == :row} class="min-w-0 flex-1">
+          <div class="font-mono text-[12.5px] font-semibold">{@command.name}</div>
+          <div :if={@command.description} class="text-[11.5px] text-muted">
+            {@command.description}
           </div>
-        </.modal>
-      <% else %>
+          <div :if={@has_arg} class="mt-0.5 font-mono text-[10.5px] text-muted">
+            argument: {SecantServiceWeb.ValueFormat.type_label(@command.datainfo["argument"])}
+          </div>
+          <div
+            :if={@last_result}
+            class={[
+              "mt-1 font-mono text-[11px] break-words",
+              if(elem(@last_result, 0) == :ok, do: "text-muted", else: "text-st-error")
+            ]}
+          >
+            → {elem(@last_result, 1) || "done"}
+          </div>
+        </div>
+
+        <%= if @has_arg do %>
+          <button
+            type="button"
+            onclick={"arg_modal_" <> to_string(@command.id) <> @location <> ".showModal()"}
+            phx-click="open_arg_modal"
+            phx-target={@myself}
+            class={["cmd-btn btn btn-sm shrink-0 border bg-transparent font-mono", @tone]}
+            mod-highlight={@command_success}
+          >
+            {if @variant == :row, do: "Run…", else: @command.name <> "…"}
+          </button>
+        <% else %>
+          <.form
+            for={@arg_form}
+            id={"cmd-form:" <> @id_str}
+            phx-submit="set_arg"
+            phx-target={@myself}
+            class="shrink-0"
+          >
+            <input type="hidden" name="port" value={Phoenix.HTML.Form.input_value(@arg_form, :port)} />
+            <input type="hidden" name="host" value={Phoenix.HTML.Form.input_value(@arg_form, :host)} />
+            <input
+              type="hidden"
+              name="location"
+              value={Phoenix.HTML.Form.input_value(@arg_form, :location)}
+            />
+            <input
+              type="hidden"
+              name="module"
+              value={Phoenix.HTML.Form.input_value(@arg_form, :module)}
+            />
+            <input type="hidden" name="command" value={@command.name} />
+            <input type="hidden" name="value" value={nil} />
+            <button
+              type="submit"
+              class={["cmd-btn btn btn-sm border bg-transparent font-mono", @tone]}
+              mod-highlight={@command_success}
+              data-confirm={@confirm}
+            >
+              {if @variant == :row, do: "Run", else: @command.name}
+            </button>
+          </.form>
+        <% end %>
+      </div>
+
+      <.modal
+        :if={@has_arg}
+        id={"arg_modal_" <> to_string(@command.id) <> @location}
+        title={"#{@module_name}:#{@command.name}"}
+        show={@show_arg_modal}
+      >
+        <div class="mb-2 text-sm text-muted">{@command.description}</div>
+        <div class="mb-1 text-xs text-muted">Argument datatype</div>
+        <pre class="max-h-[40vh] overflow-y-auto rounded border border-line bg-base-200 p-2 font-mono text-xs">{@arg_dtype}</pre>
         <.form
           for={@arg_form}
+          id={"cmd-arg-form:" <> @id_str}
           phx-submit="set_arg"
           phx-change="validate_arg"
           phx-target={@myself}
-          class="flex space-x-2"
+          class="form-row mt-3 flex items-start gap-2"
         >
           <input type="hidden" name="port" value={Phoenix.HTML.Form.input_value(@arg_form, :port)} />
           <input type="hidden" name="host" value={Phoenix.HTML.Form.input_value(@arg_form, :host)} />
@@ -233,16 +274,28 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
             value={Phoenix.HTML.Form.input_value(@arg_form, :module)}
           />
           <input type="hidden" name="command" value={@command.name} />
-          <input type="hidden" name="value" value={nil} />
-          <button
-            type="submit"
-            class={["btn border border-base-300", @button_color]}
-            mod-highlight={@command_success}
-          >
-            {Util.display_name(@command.name)}
-          </button>
+          <.input
+            name="value"
+            type="text"
+            field={@arg_form[:value]}
+            placeholder="argument as JSON"
+            phx-debounce="400"
+            autocomplete="off"
+            id={"form:" <> to_string(@command.id) <> @location}
+            class="input input-sm w-full font-mono text-xs"
+          />
+          <button type="submit" class="btn btn-sm btn-primary shrink-0">Run</button>
         </.form>
-      <% end %>
+        <div
+          :if={@last_result}
+          class={[
+            "mt-2 font-mono text-xs break-words",
+            if(elem(@last_result, 0) == :ok, do: "text-muted", else: "text-st-error")
+          ]}
+        >
+          → {elem(@last_result, 1) || "done"}
+        </div>
+      </.modal>
     </div>
     """
   end
