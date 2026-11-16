@@ -31,81 +31,60 @@ defmodule SecantServiceWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://hexdocs.pm/phoenix/scopes.html)"
 
+  attr :active, :atom, default: nil, doc: "highlights a nav entry (:dashboard or :browse)"
+
   slot :inner_block, required: true
+  slot :actions, doc: "extra buttons shown on the right of the top bar"
 
   def app(assigns) do
     ~H"""
-    <header class="flex items-center justify-between container mx-auto">
-      <div class="flex">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img id="logo" src={~p"/images/logo.svg"} width="70" />
-          <p class="bg-brand/5 text-brand rounded-full px-2 font-medium leading-6">
+    <header class="sticky top-0 z-30 border-b border-line bg-base-100/95 backdrop-blur">
+      <div class="mx-auto flex max-w-[2560px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2">
+        <a href="/" class="flex items-center gap-2" id="home-link">
+          <img src={~p"/images/logo.svg"} width="26" height="26" alt="" />
+          <span class="text-[15px] font-bold tracking-wide">secant</span>
+          <span class="font-mono text-[11px] text-muted">
             v{Application.spec(:secant_service, :vsn)}
-          </p>
+          </span>
         </a>
-      </div>
-      <div class="flex">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <!-- Main navigation -->
-          <li>
-            <.link
-              href={~p"/dashboard"}
-              class="inline-flex items-center px-4 py-2 text-zinc-800 dark:text-zinc-100 text-lg font-semibold border-b-2 border-transparent hover:border-purple-500 transition-all"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke-width="1.5"
-                stroke="currentColor"
-                class="h-5 w-5 mr-2"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6"
-                />
-              </svg>
-              Dashboard
-            </.link>
-          </li>
-          <li>
-            <.link
-              href={~p"/browse"}
-              class="inline-flex items-center px-4 py-2 text-zinc-800 dark:text-zinc-100 text-lg font-semibold border-b-2 border-transparent hover:border-purple-500 transition-all"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke-width="1.5"
-                stroke="currentColor"
-                class="h-5 w-5 mr-2"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 1.5v-1.5m0 0c0-.621.504-1.125 1.125-1.125m0 0h7.5"
-                />
-              </svg>
-              Data-Browser
-            </.link>
-          </li>
-        </ul>
-      </div>
-      <div class="flex">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
-          <li>
-            <.theme_toggle />
-          </li>
-        </ul>
+        <nav class="flex items-center gap-1" aria-label="Main">
+          <.link
+            id="nav-dashboard"
+            navigate={~p"/dashboard"}
+            class={[
+              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              if(@active == :dashboard,
+                do: "bg-base-300 text-base-content",
+                else: "text-muted hover:text-base-content hover:bg-base-300/60"
+              )
+            ]}
+          >
+            Dashboard
+          </.link>
+          <.link
+            id="nav-browse"
+            navigate={~p"/browse"}
+            class={[
+              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              if(@active == :browse,
+                do: "bg-base-300 text-base-content",
+                else: "text-muted hover:text-base-content hover:bg-base-300/60"
+              )
+            ]}
+          >
+            Data browser
+          </.link>
+        </nav>
+        <div class="flex-1"></div>
+        <div class="flex items-center gap-2">
+          {render_slot(@actions)}
+          <.theme_toggle />
+        </div>
       </div>
     </header>
 
-    <main class="max-w-[2560px] mx-auto px-4 py-5 sm:px-6 lg:px-8">
-      <div class="mx-auto  space-y-4">
-        {render_slot(@inner_block)}
-      </div>
+    <main class="mx-auto max-w-[2560px] px-4 py-4">
+      {render_slot(@inner_block)}
     </main>
 
     <.flash_group flash={@flash} />
@@ -162,29 +141,39 @@ defmodule SecantServiceWeb.Layouts do
   """
   def theme_toggle(assigns) do
     ~H"""
-    <div class="card relative flex flex-row items-center border-2 border-base-300 bg-base-300 rounded-full">
-      <div class="absolute w-1/3 h-full rounded-full border-1 border-base-200 bg-base-100 brightness-200 left-0 [[data-theme=light]_&]:left-1/3 [[data-theme=dark]_&]:left-2/3 transition-[left]" />
+    <div
+      class="relative flex flex-row items-center rounded-md border border-line bg-base-200"
+      role="group"
+      aria-label="Colour theme"
+    >
+      <div class="absolute left-0 h-full w-1/3 rounded-md border border-line bg-base-100 transition-[left] [[data-theme=light]_&]:left-1/3 [[data-theme=dark]_&]:left-2/3" />
 
       <button
-        class="flex p-2 cursor-pointer w-1/3"
+        class="relative flex w-1/3 cursor-pointer p-2"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="system"
+        aria-label="System theme"
+        title="System theme"
       >
         <.icon name="hero-computer-desktop-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>
 
       <button
-        class="flex p-2 cursor-pointer w-1/3"
+        class="relative flex w-1/3 cursor-pointer p-2"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="light"
+        aria-label="Light theme"
+        title="Light theme"
       >
         <.icon name="hero-sun-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>
 
       <button
-        class="flex p-2 cursor-pointer w-1/3"
+        class="relative flex w-1/3 cursor-pointer p-2"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="dark"
+        aria-label="Dark theme"
+        title="Dark theme"
       >
         <.icon name="hero-moon-micro" class="size-4 opacity-75 hover:opacity-100" />
       </button>

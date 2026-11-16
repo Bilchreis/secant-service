@@ -1,28 +1,47 @@
-<Layouts.app flash={@flash}>
-  <div class="max-w-[2560px] mx-auto">
-    <%= if @node do %>
-      <div>
-        <.browse_sec_node node={@node} />
-      </div>
-    <% else %>
-      <div>
-        Node not found
-      </div>
-    <% end %>
-  </div>
+<Layouts.app flash={@flash} active={:browse}>
+  <:actions>
+    <.link
+      navigate={~p"/browse"}
+      class="btn btn-sm border-line bg-transparent font-normal"
+      id="back-to-list"
+    >
+      <.icon name="hero-arrow-left-micro" class="size-4" /> All nodes
+    </.link>
+  </:actions>
 
-  <.modal
-    :if={@selected_parameter != nil}
-    id="parameter-history-modal"
-    on_cancel={JS.push("close_parameter_graph")}
-    show={true}
-  >
-    <.live_component
-      module={HistoryDB}
-      id={"parameter-plot:" <> to_string(@selected_parameter.id)}
-      secop_obj={@selected_parameter}
-      plot_mode={:historical}
-      class=""
-    />
-  </.modal>
+  <%= if @node do %>
+    <div class="flex flex-col gap-3">
+      <.node_header node={@node}>
+        <:extra>
+          <span class="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted">
+            {@node.state} · recorded data
+          </span>
+        </:extra>
+      </.node_header>
+
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-start">
+        <.module_rail node={@node} selected={@selected_module} mode={:historical} />
+
+        <section
+          :if={@selected_module}
+          id="history-panel"
+          class="min-w-0 flex-1 rounded-box border border-line bg-base-100 p-4"
+        >
+          <.module_detail
+            module={selected_module(@node, @selected_module)}
+            node={@node}
+            mode={:historical}
+            plot_param={@plot_param}
+            plot_id={plot_id(@node, @selected_module, @plot_param)}
+            chart_height={420}
+          />
+        </section>
+      </div>
+    </div>
+  <% else %>
+    <div class="mx-auto mt-16 max-w-xl rounded-box border border-line bg-base-100 p-6 text-center">
+      <p class="font-semibold">Node not found</p>
+      <p class="mt-1 text-muted">It may have been purged from the database.</p>
+    </div>
+  <% end %>
 </Layouts.app>

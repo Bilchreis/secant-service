@@ -1,38 +1,80 @@
 defmodule SecantServiceWeb.NodeBrowserLive.Index do
+  @moduledoc """
+  Historical view of one recorded SEC node: the same header and module rail
+  as the live dashboard, with the selected module's history as the main
+  panel (no live values, no controls).
+  """
   use SecantServiceWeb, :live_view
-  alias SecantService.SecNodes.SecNode
-  alias SecantServiceWeb.Components.HistoryDB
 
-  import SecantServiceWeb.BrowseComponents
+  alias SecantService.SecNodes.SecNode
+  alias SecantServiceWeb.DashboardComponents
+
+  import SecantServiceWeb.DashboardComponents
 
   @impl true
   def mount(params, _session, socket) do
-    case Ash.get(SecNode, params["uuid"]) do
-      {:ok, node} ->
-        socket =
-          socket
-          |> assign(:node, node)
-          |> assign(:selected_parameter, nil)
+    node =
+      case Ash.get(SecNode, params["uuid"]) do
+        {:ok, node} -> node
+        {:error, _reason} -> nil
+      end
 
-        {:ok, socket}
+    socket =
+      socket
+      |> assign(:node, node)
+      |> assign(:selected_module, nil)
+      |> assign(:plot_param, nil)
+      |> assign(:page_title, if(node, do: node.equipment_id, else: "Node not found"))
 
-      {:error, _reason} ->
-        {:ok, assign(socket, node: nil, selected_parameter: nil)}
-    end
+    {:ok, socket}
   end
 
   @impl true
-  def handle_event("show_parameter_graph", %{"parameter_id" => id}, socket) do
-    parameter =
-      Enum.find_value(socket.assigns.node.modules, fn module ->
-        Enum.find(module.parameters, fn p -> to_string(p.id) == id end)
-      end)
+  def handle_params(params, _uri, %{assigns: %{node: nil}} = socket) do
+    _ = params
+    {:noreply, socket}
+  end
 
-    {:noreply, assign(socket, :selected_parameter, parameter)}
+  def handle_params(params, _uri, socket) do
+    modules = socket.assigns.node.modules
+
+    selected =
+      case Enum.find(modules, &(&1.name == params["module"])) do
+        nil ->
+          case DashboardComponents.group_modules(modules) do
+            [{_label, [first | _]} | _] -> first.name
+            _ -> nil
+          end
+
+        module ->
+          module.name
+      end
+
+    socket =
+      if selected == socket.assigns.selected_module do
+        socket
+      else
+        socket |> assign(:selected_module, selected) |> assign(:plot_param, nil)
+      end
+
+    {:noreply, socket}
   end
 
   @impl true
-  def handle_event("close_parameter_graph", _params, socket) do
-    {:noreply, assign(socket, :selected_parameter, nil)}
+  def handle_event("select_module", %{"module" => module}, socket) do
+    {:noreply,
+     push_patch(socket, to: ~p"/browse/node/#{socket.assigns.node.uuid}?module=#{module}")}
+  end
+
+  @impl true
+  def handle_event("plot_parameter", %{"param" => param}, socket) do
+    plot_param = if param in ["", socket.assigns.plot_param], do: nil, else: param
+    {:noreply, assign(socket, :plot_param, plot_param)}
+  end
+
+  def selected_module(%{modules: modules}, name), do: Enum.find(modules, &(&1.name == name))
+
+  def plot_id(node, module_name, plot_param) do
+    "hplot:#{node.uuid}:#{module_name}:#{plot_param || "module"}"
   end
 end

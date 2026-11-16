@@ -8,7 +8,8 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
   alias SecantService.NodeValues
   alias SecantService.NodeSupervisor
-  alias SecantServiceWeb.Components.HistoryDB
+  alias SecantServiceWeb.DashboardComponents
+  alias SecantServiceWeb.SECoPComponents
   require Logger
 
   alias SEC_Node_Statem
@@ -56,8 +57,11 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       socket
       |> Model.to_socket(model)
       |> assign(:show_connect_modal, false)
-      |> assign(:selected_parameter, nil)
       |> assign(:hidden_node_ids, MapSet.new())
+      |> assign(:selected_module, nil)
+      |> assign(:plot_param, nil)
+      |> assign(:status_map, %{})
+      |> assign(:page_title, "Dashboard")
 
     {:ok, socket}
   end
@@ -73,38 +77,97 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   end
 
   @impl true
-  def handle_params(unsigned_params, _uri, socket) do
+  def handle_params(params, _uri, socket) do
     model = Model.from_socket(socket)
 
-    model =
-      case unsigned_params do
-        %{"node" => node_param} ->
-          # Parse node from URL like "?node=192.168.1.1:5000"
-          case parse_node_param(node_param) do
-            {:ok, node_id} when is_map_key(model.active_nodes, node_id) ->
-              Model.set_current_node(model, node_id)
-
-            _ ->
-              # Invalid node, use default
-              default_node_id = Model.get_default_node_id(model)
-              Model.set_current_node(model, default_node_id)
-          end
-
-        _ ->
-          # No node in URL, use default
-          default_node_id = Model.get_default_node_id(model)
-          Model.set_current_node(model, default_node_id)
+    requested =
+      with node_param when is_binary(node_param) <- params["node"],
+           {:ok, node_id} when is_map_key(model.active_nodes, node_id) <-
+             parse_node_param(node_param) do
+        node_id
+      else
+        _ -> Model.get_default_node_id(model)
       end
 
-    if model.current_node do
-      subscribe_to_node(model.current_node.node_id)
-    end
+    current_id = model.current_node && model.current_node.node_id
 
     socket =
-      socket
-      |> Model.to_socket(model)
+      if requested != nil and requested != current_id do
+        if current_id, do: unsubscribe_from_node(current_id)
 
-    {:noreply, socket}
+        model = Model.set_current_node(model, requested)
+
+        if model.current_node do
+          subscribe_to_node(model.current_node.node_id)
+        end
+
+        socket
+        |> Model.to_socket(model)
+        |> assign(:status_map, status_map(model.values))
+      else
+        socket
+      end
+
+    {:noreply, assign_selected_module(socket, params["module"])}
+  end
+
+  defp assign_selected_module(%{assigns: %{current_node: nil}} = socket, _name), do: socket
+
+  defp assign_selected_module(socket, name) do
+    modules = socket.assigns.current_node.modules
+
+    selected =
+      case Enum.find(modules, &(&1.name == name)) do
+        nil ->
+          case DashboardComponents.group_modules(modules) do
+            [{_label, [first | _]} | _] -> first.name
+            _ -> nil
+          end
+
+        module ->
+          module.name
+      end
+
+    if selected == socket.assigns.selected_module do
+      socket
+    else
+      socket
+      |> assign(:selected_module, selected)
+      |> assign(:plot_param, nil)
+    end
+  end
+
+  # module name => status range atom (:idle, :busy, ...)
+  defp status_map(nil), do: %{}
+
+  defp status_map(values) do
+    Map.new(values, fn {module, params} ->
+      {module, get_in(params, ["status", :stat_color])}
+    end)
+  end
+
+  @status_order [
+    error: "error",
+    warning: "warn",
+    busy: "busy",
+    idle: "idle",
+    disabled: "disabled"
+  ]
+
+  @doc "Summary line for the node header, e.g. 12 idle · 1 busy."
+  def status_counts(status_map) do
+    freq = status_map |> Map.values() |> Enum.reject(&is_nil/1) |> Enum.frequencies()
+
+    for {key, label} <- @status_order, n = Map.get(freq, key), n do
+      {"#{n} #{label}", SECoPComponents.status_to_color(key)}
+    end
+  end
+
+  def selected_module(%{modules: modules}, name), do: Enum.find(modules, &(&1.name == name))
+  def selected_module(_, _), do: nil
+
+  def plot_id(node, module_name, plot_param) do
+    "plot:#{node.host}:#{node.port}:#{module_name}:#{plot_param || "module"}"
   end
 
   ### New Values Map Update
@@ -149,7 +212,10 @@ defmodule SecantServiceWeb.DashboardLive.Index do
               {values, current_node}
             end
 
-          assign(socket, current_node: current_node) |> assign(values: values)
+          socket
+          |> assign(current_node: current_node)
+          |> assign(values: values)
+          |> assign(:status_map, status_map(values))
 
         state.node_id == current_node.node_id ->
           {values, current_node} =
@@ -174,14 +240,22 @@ defmodule SecantServiceWeb.DashboardLive.Index do
               {values, current_node}
             end
 
-          assign(socket, current_node: current_node) |> assign(values: values)
+          socket
+          |> assign(current_node: current_node)
+          |> assign(values: values)
+          |> assign(:status_map, status_map(values))
 
         true ->
           Logger.info("Current node not updated #{inspect(node_id)}")
           socket
       end
 
-    {:noreply, assign(socket, active_nodes: active_nodes)}
+    socket =
+      socket
+      |> assign(active_nodes: active_nodes)
+      |> assign_selected_module(socket.assigns.selected_module)
+
+    {:noreply, socket}
   end
 
   def handle_info({:conn_state, pubsub_topic, active}, socket) do
@@ -240,7 +314,10 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
   @impl true
   def handle_info({:show_parameter_graph, parameter}, socket) do
-    {:noreply, assign(socket, :selected_parameter, parameter)}
+    plot_param =
+      if socket.assigns.plot_param == parameter.name, do: nil, else: parameter.name
+
+    {:noreply, assign(socket, :plot_param, plot_param)}
   end
 
   @impl true
@@ -258,8 +335,6 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     values = socket.assigns.values
 
     if Map.has_key?(values, module) do
-      put_in(values, [module, accessible], data_report)
-
       node_id_str =
         "#{to_string(socket.assigns.current_node.host)}:#{socket.assigns.current_node.port}"
 
@@ -270,7 +345,16 @@ defmodule SecantServiceWeb.DashboardLive.Index do
         data_report
       )
 
-      {:noreply, assign(socket, :values, values)}
+      socket =
+        case {accessible, data_report} do
+          {"status", %{stat_color: color}} ->
+            assign(socket, :status_map, Map.put(socket.assigns.status_map, module, color))
+
+          _ ->
+            socket
+        end
+
+      {:noreply, socket}
     else
       {:noreply, socket}
     end
@@ -283,11 +367,23 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
   @impl true
   def handle_info({:plot_data, module, accessible, data_report}, socket) do
-    send_update(SecantServiceWeb.Components.HistoryDB,
-      id: "module-plot:#{module}",
-      value_update: data_report,
-      parameter: accessible
-    )
+    %{current_node: node, selected_module: selected, plot_param: plot_param} = socket.assigns
+
+    if node && accessible in ["value", "target"] do
+      send_update(SecantServiceWeb.Components.Sparkline,
+        id: DashboardComponents.sparkline_id(node, module),
+        append: data_report,
+        series: accessible
+      )
+    end
+
+    if node && module == selected do
+      send_update(SecantServiceWeb.Components.HistoryDB,
+        id: plot_id(node, module, plot_param),
+        value_update: data_report,
+        parameter: accessible
+      )
+    end
 
     {:noreply, socket}
   end
@@ -369,8 +465,17 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   end
 
   @impl true
-  def handle_event("close_parameter_graph", _params, socket) do
-    {:noreply, assign(socket, :selected_parameter, nil)}
+  def handle_event("select_module", %{"module" => module}, socket) do
+    node = socket.assigns.current_node
+
+    {:noreply,
+     push_patch(socket, to: ~p"/dashboard?node=#{"#{node.host}:#{node.port}"}&module=#{module}")}
+  end
+
+  @impl true
+  def handle_event("plot_parameter", %{"param" => param}, socket) do
+    plot_param = if param in ["", socket.assigns.plot_param], do: nil, else: param
+    {:noreply, assign(socket, :plot_param, plot_param)}
   end
 
   @impl true
@@ -417,6 +522,11 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
     send_update(SecantServiceWeb.Components.ModuleIndicator,
       id: "module_indicator_mod:" <> node_id_str <> ":" <> module,
+      value_update: data_report
+    )
+
+    send_update(SecantServiceWeb.Components.ModuleIndicator,
+      id: "module_indicator_insp:" <> node_id_str <> ":" <> module,
       value_update: data_report
     )
 

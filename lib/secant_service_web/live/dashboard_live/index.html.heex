@@ -1,116 +1,78 @@
-<Layouts.app flash={@flash}>
+<Layouts.app flash={@flash} active={:dashboard}>
+  <:actions>
+    <button
+      id="scan-btn"
+      phx-click="trigger-node-scan"
+      class="btn btn-sm border-line bg-transparent font-normal"
+      title="Send a SECoP discovery broadcast"
+    >
+      <.icon name="hero-signal-micro" class="size-4" /> Scan
+    </button>
+    <button
+      id="connect-btn"
+      onclick="connect_modal.showModal()"
+      phx-click="open_connect_modal"
+      class="btn btn-sm btn-primary"
+    >
+      <.icon name="hero-link-micro" class="size-4" /> Connect node
+    </button>
+  </:actions>
+
   <%= if @active_nodes != %{} and @current_node != nil do %>
-    <div class="flex">
-      <div class="sticky   top-0 self-start ">
-        <.module_indicators
-          node={@current_node}
-          node_state={@active_nodes[@current_node.node_id].state}
-          values={@values}
-          node_id_str={@current_node.node_id_str}
-        />
-      </div>
+    <div class="flex flex-col gap-3">
+      <.node_tabs
+        active_nodes={@active_nodes}
+        hidden_node_ids={@hidden_node_ids}
+        current_uuid={@current_node.uuid}
+      />
 
-      <div class="flex-1">
-        <ul class="flex flex-wrap text-sm font-medium text-center text-neutral-content items-cente ml-4">
-          <%= for {node_id, node} <- @active_nodes, not MapSet.member?(@hidden_node_ids, node_id) do %>
-            <li class="me-2 mb-2">
-              <.node_button
-                equipment_id={node.equipment_id}
-                pubsub_topic={node.pubsub_topic}
-                uuid={node.uuid}
-                current={node.uuid == @current_node.uuid}
-                state={node.state}
-                connstate={node.active}
-              />
-            </li>
-          <% end %>
-          <%= if MapSet.size(@hidden_node_ids) > 0 do %>
-            <li class="me-2 mb-2">
-              <div class="dropdown">
-                <div
-                  tabindex="0"
-                  role="button"
-                  class="min-w-[240px] border-4 border-gray-500 bg-neutral hover:bg-neutral/80 text-neutral-content text-left font-bold py-2 px-4 rounded font-mono cursor-pointer"
-                >
-                  <div class="text-xl font-sans flex items-center gap-2">
-                    <.icon name="hero-eye-slash" class="w-5 h-5" /> Hidden
-                  </div>
-                  <div class="text-sm text-neutral-content/80 opacity-60">
-                    {MapSet.size(@hidden_node_ids)} node(s)
-                  </div>
-                  <div class="flex gap-2">
-                    <div class="px-2 py-0.5 rounded-full text-base-content bg-base-200/80 font-mono">
-                      click to view
-                    </div>
-                  </div>
-                </div>
-                <div
-                  tabindex="0"
-                  class="dropdown-content z-20 mt-2 w-64 rounded-box bg-base-100 border border-base-300 shadow-lg p-2 flex flex-col gap-1"
-                >
-                  <%= for {node_id, node} <- @active_nodes, MapSet.member?(@hidden_node_ids, node_id) do %>
-                    <.hidden_node_row
-                      equipment_id={node.equipment_id}
-                      pubsub_topic={node.pubsub_topic}
-                      uuid={node.uuid}
-                    />
-                  <% end %>
-                </div>
-              </div>
-            </li>
-          <% end %>
-          <li class="flex flex-col me-2 mb-2 justify-center">
-            <button
-              onclick="connect_modal.showModal()"
-              phx-click="open_connect_modal"
-              class="btn btn-primary justify-between"
-            >
-              <.icon name="hero-link" class="" />
-              <div class="text-lg">Connect Node</div>
-            </button>
+      <%!-- header, rail and cards on the left; the module panel takes the
+           full height on the right, level with the header --%>
+      <div class="flex flex-col gap-3 xl:flex-row xl:items-start">
+        <div class="flex min-w-0 flex-1 flex-col gap-3">
+          <.node_header
+            node={@current_node}
+            state_map={@active_nodes[@current_node.node_id]}
+            status_counts={status_counts(@status_map)}
+          />
 
-            <button
-              phx-click="trigger-node-scan"
-              class="mt-2 btn btn-primary justify-between"
-            >
-              <.icon name="hero-globe-alt" class="" />
-              <div class="text-lg">Trigger Scan</div>
-            </button>
-          </li>
-        </ul>
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-start">
+            <.module_rail
+              node={@current_node}
+              selected={@selected_module}
+              mode={:live}
+              node_state={@active_nodes[@current_node.node_id].state}
+            />
 
-        <.dash_sec_node
-          node={@current_node}
-          state_map={@active_nodes[@current_node.node_id]}
-        />
+            <div class="min-w-0 flex-1">
+              <.module_grid node={@current_node} selected={@selected_module} />
+            </div>
+          </div>
+        </div>
+
+        <.inspector_panel :if={@selected_module} id="inspector">
+          <.module_detail
+            module={selected_module(@current_node, @selected_module)}
+            node={@current_node}
+            mode={:live}
+            plot_param={@plot_param}
+            plot_id={plot_id(@current_node, @selected_module, @plot_param)}
+            chart_height={240}
+          />
+        </.inspector_panel>
       </div>
     </div>
   <% else %>
-    <div class="max-w-5xl align-middle mx-auto mt-20">
+    <div class="mx-auto mt-16 flex max-w-2xl flex-col gap-4">
+      <div class="flex items-center gap-3 text-muted">
+        <span class="loading loading-ring loading-sm"></span>
+        Waiting for SEC nodes. Nodes on the local network are discovered automatically.
+      </div>
       <.connect_node />
     </div>
   <% end %>
 
-  <.modal
-    id="connect_modal"
-    title=""
-    show={@show_connect_modal}
-  >
+  <.modal id="connect_modal" title="" show={@show_connect_modal}>
     <.connect_node />
-  </.modal>
-
-  <.modal
-    :if={@selected_parameter != nil}
-    id="parameter-history-modal"
-    on_cancel={JS.push("close_parameter_graph")}
-    show={true}
-  >
-    <.live_component
-      module={HistoryDB}
-      id={"parameter-plot:" <> to_string(@selected_parameter.id)}
-      secop_obj={@selected_parameter}
-      plot_mode={:historical}
-      class=""
-    />
   </.modal>
 </Layouts.app>

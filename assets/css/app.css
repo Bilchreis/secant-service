@@ -18,42 +18,88 @@
   themes: false;
 }
 
-/* daisyUI theme plugin. You can update this file by fetching the latest version with:
-  curl -sLO https://github.com/saadeghi/daisyui/releases/latest/download/daisyui-theme.js
-  We ship with two themes, a light one inspired on Phoenix colors and a dark one inspired
-  on Elixir colors. Build your own at: https://daisyui.com/theme-generator/ */
+/* ---------------------------------------------------------------------------
+   Secant "A6b" look: neutral greys, one violet accent, status colours kept
+   separate. Fonts are vendored in priv/static/fonts (SIL OFL 1.1) so the UI
+   works on beamline networks without internet access.
+   --------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: "Inter Tight";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/InterTight-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Inter Tight";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/InterTight-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4,
+    U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4,
+    U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 @plugin "../vendor/daisyui-theme" {
   name: "dark";
   default: false;
   prefersdark: true;
   color-scheme: "dark";
-  --color-base-100: oklch(30.33% 0.016 252.42);
-  --color-base-200: oklch(25.26% 0.014 253.1);
-  --color-base-300: oklch(20.15% 0.012 254.09);
-  --color-base-content: oklch(97.807% 0.029 256.847);
-  --color-primary: oklch(58% 0.233 277.117);
-  --color-primary-content: oklch(96% 0.018 272.314);
+  --color-base-100: #161617;
+  --color-base-200: #0e0e0f;
+  --color-base-300: #1f1f21;
+  --color-base-content: #ededed;
+  --color-primary: oklch(60% 0.25 292.717);
+  --color-primary-content: oklch(96% 0.016 293.756);
   --color-secondary: oklch(58% 0.233 277.117);
   --color-secondary-content: oklch(96% 0.018 272.314);
   --color-accent: oklch(60% 0.25 292.717);
   --color-accent-content: oklch(96% 0.016 293.756);
-  --color-neutral: oklch(37% 0.044 257.287);
-  --color-neutral-content: oklch(98% 0.003 247.858);
-  --color-info: oklch(79% 0.184 86.047);
-  --color-info-content: oklch(29% 0.066 243.157);
-  --color-success: oklch(72% 0.219 149.579);
-  --color-success-content: oklch(26% 0.051 172.552);
-  --color-warning: oklch(70% 0.213 47.604);
-  --color-warning-content: oklch(28% 0.066 53.813);
-  --color-error: oklch(64% 0.246 16.439);
-  --color-error-content: oklch(100% 0.105 12.094);
+  --color-neutral: #2a2a2d;
+  --color-neutral-content: #ededed;
+  --color-info: oklch(72% 0.11 240);
+  --color-info-content: #0b1320;
+  --color-success: #4cc38a;
+  --color-success-content: #04170d;
+  --color-warning: #e8b545;
+  --color-warning-content: #231800;
+  --color-error: #f26d7d;
+  --color-error-content: #2a0509;
   --radius-selector: 1rem;
-  --radius-field: 0.25rem;
+  --radius-field: 0.375rem;
   --radius-box: 0.5rem;
-  --size-selector: 0.21875rem;
-  --size-field: 0.21875rem;
-  --border: 1.5px;
-  --depth: 1;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
   --noise: 0;
 }
 
@@ -62,34 +108,86 @@
   default: true;
   prefersdark: false;
   color-scheme: "light";
-  --color-base-100: oklch(98% 0.001 106.423);
-  --color-base-200: oklch(97% 0.001 106.424);
-  --color-base-300: oklch(82% 0.003 48.717);
-  --color-base-content: oklch(21% 0.006 56.043);
-  --color-primary: oklch(88% 0.233 277.117);
-  --color-primary-content: oklch(27% 0.072 132.109);
-  --color-secondary: oklch(87% 0.169 91.605);
-  --color-secondary-content: oklch(27% 0.077 45.635);
-  --color-accent: oklch(92% 0.12 95.746);
-  --color-accent-content: oklch(28% 0.0 3.907);
-  --color-neutral: oklch(88% 0.004 49.25);
-  --color-neutral-content: oklch(38% 0.001 106.423);
-  --color-info: oklch(70% 0.165 254.624);
-  --color-info-content: oklch(28% 0.091 267.935);
-  --color-success: oklch(76% 0.177 163.223);
-  --color-success-content: oklch(26% 0.051 172.552);
-  --color-warning: oklch(75% 0.183 55.934);
-  --color-warning-content: oklch(26% 0.079 36.259);
-  --color-error: oklch(71% 0.194 13.428);
-  --color-error-content: oklch(27% 0.105 12.094);
+  --color-base-100: #ffffff;
+  --color-base-200: #f4f4f5;
+  --color-base-300: #ececee;
+  --color-base-content: #111113;
+  --color-primary: oklch(60% 0.25 292.717);
+  --color-primary-content: oklch(96% 0.016 293.756);
+  --color-secondary: oklch(58% 0.233 277.117);
+  --color-secondary-content: oklch(96% 0.018 272.314);
+  --color-accent: oklch(60% 0.25 292.717);
+  --color-accent-content: oklch(96% 0.016 293.756);
+  --color-neutral: #e4e4e7;
+  --color-neutral-content: #111113;
+  --color-info: oklch(52% 0.13 240);
+  --color-info-content: #ffffff;
+  --color-success: #17794a;
+  --color-success-content: #ffffff;
+  --color-warning: #8a5f00;
+  --color-warning-content: #ffffff;
+  --color-error: #c22537;
+  --color-error-content: #ffffff;
   --radius-selector: 1rem;
-  --radius-field: 0.25rem;
+  --radius-field: 0.375rem;
   --radius-box: 0.5rem;
   --size-selector: 0.25rem;
   --size-field: 0.25rem;
   --border: 1px;
   --depth: 0;
-  --noise: 1;
+  --noise: 0;
+}
+
+/* Extra semantic colours on top of daisyUI's set:
+   line  – hairline borders           muted – secondary text
+   ink   – accent colour for text     st-*  – SECoP status ranges */
+@theme inline {
+  --font-sans: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --color-line: var(--sc-line);
+  --color-muted: var(--sc-muted);
+  --color-ink: var(--sc-ink);
+  --color-st-idle: var(--sc-st-idle);
+  --color-st-warn: var(--sc-st-warn);
+  --color-st-busy: var(--sc-st-busy);
+  --color-st-error: var(--sc-st-error);
+  --color-st-off: var(--sc-st-off);
+}
+
+:root,
+[data-theme="light"] {
+  --sc-line: #d4d4d8;
+  --sc-muted: #56565c;
+  --sc-ink: oklch(52% 0.25 292.717);
+  --sc-st-idle: #17794a;
+  --sc-st-warn: #b04a0b;
+  --sc-st-busy: #8a5f00;
+  --sc-st-error: #c22537;
+  --sc-st-off: #71717a;
+}
+
+[data-theme="dark"] {
+  --sc-line: #333336;
+  --sc-muted: #a3a3a8;
+  --sc-ink: oklch(77% 0.15 292.717);
+  --sc-st-idle: #4cc38a;
+  --sc-st-warn: #f28f55;
+  --sc-st-busy: #e8b545;
+  --sc-st-error: #f26d7d;
+  --sc-st-off: #8a8a90;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --sc-line: #333336;
+    --sc-muted: #a3a3a8;
+    --sc-ink: oklch(77% 0.15 292.717);
+    --sc-st-idle: #4cc38a;
+    --sc-st-warn: #f28f55;
+    --sc-st-busy: #e8b545;
+    --sc-st-error: #f26d7d;
+    --sc-st-off: #8a8a90;
+  }
 }
 
 /* Add variants based on LiveView classes */
@@ -115,69 +213,43 @@
 
 /* This file is for your main application CSS */
 
-
+html {
+  font-feature-settings: "cv11", "ss01";
+}
 
 .modal-box {
   width: 100%;
 }
-@media (min-width: 640px){
+@media (min-width: 640px) {
   .modal-box {
-      max-width: 50rem;
+    max-width: 50rem;
   }
 }
 
-
-/* div {
-  border: 1px solid red !important;
-}
-*/
- 
-
-/* Invert color for dark mode */
-  
-
-
-
-
-
-@keyframes marquee {
-  0% { transform: translateX(100%); }
-  100% { transform: translateX(-200%); }
+/* Width of the module inspector on the live dashboard. Set by the
+   ResizablePanel hook on <html> (outside the LiveView DOM, so patches keep it). */
+:root {
+  --inspector-w: 440px;
 }
 
-.animate-marquee {
-  animation: marquee 8s linear infinite;
+/* Command buttons flash briefly after the node answers. */
+.cmd-btn[mod-highlight="running"] {
+  opacity: 0.6;
+}
+.cmd-btn[mod-highlight="done"] {
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+.cmd-btn[mod-highlight="error"] {
+  border-color: var(--color-error);
+  color: var(--color-error);
 }
 
-.hover\:animation-pause:hover {
-  animation-play-state: paused;
-}
-
-.command_item { 
-  background-color:  rgb(212, 212, 216);
-}
-
-[data-theme="dark"] .command_item {
-  background-color:  rgb(39, 39, 42);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .command_item {
-    background-color: rgb(39, 39, 42);
-  }
-}
-
-.command_item[mod-highlight="error"] {
-  background-color:  rgb(153,27,27);
-  transition: background-color 0.2s;
-}
-
-.command_item[mod-highlight="done"] {
-  background-color:  rgb(22,101,52);
-  transition: background-color 0.2s;
-}
-
-.command_item[mod-highlight="running"] {
-  background-color:  white;
-  transition: background-color 0.2s;
+/* Compact form fields: <.input> wraps its control in a .fieldset with a
+   bottom margin, which breaks single-line rows. */
+.form-row .fieldset {
+  margin: 0;
+  padding: 0;
+  flex: 1 1 0%;
+  min-width: 0;
 }
