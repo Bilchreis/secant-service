@@ -369,6 +369,13 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   def handle_info({:plot_data, module, accessible, data_report}, socket) do
     %{current_node: node, selected_module: selected, plot_param: plot_param} = socket.assigns
 
+    if node && accessible == "value" do
+      send_update(SecantServiceWeb.Components.Sparkline,
+        id: DashboardComponents.sparkline_id(node, module),
+        append: data_report
+      )
+    end
+
     if node && module == selected do
       send_update(SecantServiceWeb.Components.HistoryDB,
         id: plot_id(node, module, plot_param),

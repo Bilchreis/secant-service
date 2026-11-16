@@ -18,6 +18,7 @@ defmodule SecantServiceWeb.DashboardComponents do
   alias SecantServiceWeb.Components.CommandDisplay
   alias SecantServiceWeb.Components.HistoryDB
   alias SecantServiceWeb.Components.DashParameter
+  alias SecantServiceWeb.Components.Sparkline
 
   import SecantServiceWeb.CoreComponents
   import SecantServiceWeb.SECoPComponents
@@ -87,6 +88,9 @@ defmodule SecantServiceWeb.DashboardComponents do
   defp class_label(class), do: class
 
   def node_id_str(node), do: "#{node.host}:#{node.port}"
+
+  @doc "DOM/component id of a card's sparkline; the dashboard routes plot data to it."
+  def sparkline_id(node, module_name), do: "spark:#{node.host}:#{node.port}:#{module_name}"
 
   # descriptions often contain blank lines; keep line breaks, drop the gaps
   defp compact_text(text) do
@@ -472,6 +476,13 @@ defmodule SecantServiceWeb.DashboardComponents do
         parameter={@target_param}
         variant={:target}
         id_str={"module_dash:" <> @node_id_str <> ":" <> @module.name <> ":target"}
+      />
+
+      <.live_component
+        :if={@value_param && ValueFormat.numeric?(@value_param.datainfo)}
+        module={Sparkline}
+        id={sparkline_id(@node, @module.name)}
+        parameter={@value_param}
       />
 
       <footer class="mt-auto flex flex-wrap items-center gap-1.5 border-t border-line pt-2">
