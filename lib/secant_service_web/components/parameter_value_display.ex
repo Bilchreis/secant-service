@@ -430,17 +430,20 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   @doc "Enum value as a coloured badge: member name and code."
   def enum_badge(assigns) do
     ~H"""
-    <span class={[
-      "inline-flex w-fit items-center gap-1.5 rounded-md border font-mono",
-      ValueFormat.enum_class(@value),
-      case @size do
-        :lg -> "px-2.5 py-1 text-base font-semibold"
-        :md -> "px-2 py-0.5 text-sm"
-        _ -> "px-1.5 text-[11px]"
-      end
-    ]}>
-      {ValueFormat.enum_name(@value, @datainfo)}
-      <span class="rounded-full bg-white/70 px-1.5 text-[10px] font-normal dark:bg-black/30">
+    <span
+      class={[
+        "inline-flex w-fit max-w-full min-w-0 items-center gap-1.5 rounded-md border font-mono",
+        ValueFormat.enum_class(@value),
+        case @size do
+          :lg -> "px-2.5 py-1 text-base font-semibold"
+          :md -> "px-2 py-0.5 text-sm"
+          _ -> "px-1.5 py-px text-[11px]"
+        end
+      ]}
+      title={ValueFormat.enum_name(@value, @datainfo)}
+    >
+      <span class="truncate">{ValueFormat.enum_name(@value, @datainfo)}</span>
+      <span class="shrink-0 rounded-full bg-white/70 px-1.5 text-[10px] font-normal dark:bg-black/30">
         {@value}
       </span>
     </span>
@@ -454,41 +457,29 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   defp struct_value(assigns) do
     assigns = assign(assigns, :members, assigns.datainfo["members"] || %{})
 
+    # field names right-aligned in one column, values (enums as coloured
+    # badges) in the other; long names and values are clipped
     ~H"""
-    <%= if @size == :lg do %>
-      <div class="flex max-h-40 flex-wrap gap-1 overflow-y-auto">
-        <span
-          :for={{name, info} <- @members}
-          class={[
-            "rounded border px-1.5 py-0.5 font-mono text-[11px]",
-            if(ValueFormat.enum?(info),
-              do: ValueFormat.enum_class(ValueFormat.member(@value, name)),
-              else: "border-line bg-base-200"
-            )
-          ]}
-          title={name}
-        >
-          <span class="opacity-70">{name}</span>
-          <span class="ml-1">{ValueFormat.short(ValueFormat.member(@value, name), info)}</span>
-        </span>
-      </div>
-    <% else %>
-      <dl class="font-mono text-xs">
-        <div
-          :for={{name, info} <- @members}
-          class="flex justify-between gap-3 border-t border-line/60 py-1 first:border-t-0"
-        >
-          <dt class="shrink-0 text-muted">{name}</dt>
-          <dd class="min-w-0 text-right break-words">
-            <%= if ValueFormat.enum?(info) do %>
-              <.enum_badge value={ValueFormat.member(@value, name)} datainfo={info} size={:sm} />
-            <% else %>
+    <dl class={[
+      "grid grid-cols-[minmax(0,max-content)_minmax(7rem,1fr)] items-center gap-x-2 font-mono",
+      if(@size == :lg, do: "max-h-48 gap-y-1 overflow-y-auto text-[11px]", else: "gap-y-1.5 text-xs")
+    ]}>
+      <%= for {name, info} <- @members do %>
+        <dt class="truncate text-right text-muted" title={name}>{name}</dt>
+        <dd class="min-w-0">
+          <%= if ValueFormat.enum?(info) do %>
+            <.enum_badge value={ValueFormat.member(@value, name)} datainfo={info} size={:sm} />
+          <% else %>
+            <span
+              class="block truncate"
+              title={ValueFormat.short(ValueFormat.member(@value, name), info)}
+            >
               {ValueFormat.short(ValueFormat.member(@value, name), info)}
-            <% end %>
-          </dd>
-        </div>
-      </dl>
-    <% end %>
+            </span>
+          <% end %>
+        </dd>
+      <% end %>
+    </dl>
     """
   end
 
