@@ -26,22 +26,28 @@
         current_uuid={@current_node.uuid}
       />
 
-      <.node_header
-        node={@current_node}
-        state_map={@active_nodes[@current_node.node_id]}
-        status_counts={status_counts(@status_map)}
-      />
+      <%!-- header, rail and cards on the left; the module panel takes the
+           full height on the right, level with the header --%>
+      <div class="flex flex-col gap-3 xl:flex-row xl:items-start">
+        <div class="flex min-w-0 flex-1 flex-col gap-3">
+          <.node_header
+            node={@current_node}
+            state_map={@active_nodes[@current_node.node_id]}
+            status_counts={status_counts(@status_map)}
+          />
 
-      <div class="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-start xl:flex-nowrap">
-        <.module_rail
-          node={@current_node}
-          selected={@selected_module}
-          mode={:live}
-          node_state={@active_nodes[@current_node.node_id].state}
-        />
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-start">
+            <.module_rail
+              node={@current_node}
+              selected={@selected_module}
+              mode={:live}
+              node_state={@active_nodes[@current_node.node_id].state}
+            />
 
-        <div class="min-w-0 flex-1">
-          <.module_grid node={@current_node} selected={@selected_module} />
+            <div class="min-w-0 flex-1">
+              <.module_grid node={@current_node} selected={@selected_module} />
+            </div>
+          </div>
         </div>
 
         <.inspector_panel :if={@selected_module} id="inspector">
