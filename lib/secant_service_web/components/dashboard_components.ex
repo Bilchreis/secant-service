@@ -482,7 +482,8 @@ defmodule SecantServiceWeb.DashboardComponents do
         :if={@value_param && ValueFormat.numeric?(@value_param.datainfo)}
         module={Sparkline}
         id={sparkline_id(@node, @module.name)}
-        parameter={@value_param}
+        value_param={@value_param}
+        target_param={Module.get_parameter(@module, "target")}
       />
 
       <footer class="mt-auto flex flex-wrap items-center gap-1.5 border-t border-line pt-2">

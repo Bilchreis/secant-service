@@ -523,6 +523,140 @@ Hooks.EChartsChart = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Sparkline: 10-minute trend of a module's value (and target) on the cards.
+// The server sends the history once and then only new readings; the lines are
+// drawn here so the server keeps no per-card buffer and re-sends no SVG.
+// ---------------------------------------------------------------------------
+
+const SPARK_WINDOW_MS = 10 * 60 * 1000;
+const SPARK_MAX_POINTS = 2000;
+const SPARK_W = 200;
+const SPARK_H = 32;
+
+// one timer for all sparklines: keeps the time axis moving between batches
+const SparkDriver = {
+  _hooks: new Set(),
+  _timer: null,
+  add(hook) {
+    this._hooks.add(hook);
+    if (!this._timer) this._timer = setInterval(() => this._hooks.forEach((h) => h._visible && h.draw()), 3000);
+  },
+  remove(hook) {
+    this._hooks.delete(hook);
+    if (this._hooks.size === 0 && this._timer) {
+      clearInterval(this._timer);
+      this._timer = null;
+    }
+  },
+};
+
+const SparkVisibility = new IntersectionObserver((entries) => {
+  entries.forEach((e) => {
+    const hook = e.target._sparkHook;
+    if (!hook) return;
+    hook._visible = e.isIntersecting;
+    if (hook._visible) hook.draw();
+  });
+});
+
+Hooks.Sparkline = {
+  mounted() {
+    this.series = { value: [], target: [] };
+    this.skew = 0; // node clock minus browser clock, from the newest readings
+    this._visible = true;
+    const q = (role) => this.el.querySelector(`[data-role=${role}]`);
+    this.lines = { value: q("value"), target: q("target"), empty: q("empty") };
+
+    this.handleEvent(`spark-init-${this.el.id}`, (history) => {
+      ["value", "target"].forEach((s) => {
+        const hist = history[s] || [];
+        const lastT = hist.length ? hist[hist.length - 1][0] : -Infinity;
+        // keep live readings that arrived while the history was loading
+        this.series[s] = hist.concat(this.series[s].filter((p) => p[0] > lastT));
+      });
+      this.draw();
+    });
+
+    this.handleEvent(`spark-add-${this.el.id}`, ({ s, p }) => {
+      if (!this.series[s] || p.length === 0) return;
+      this.series[s].push(...p);
+      if (this.series[s].length > SPARK_MAX_POINTS) this.series[s] = this.series[s].slice(-SPARK_MAX_POINTS);
+      this.skew = p[p.length - 1][0] - Date.now();
+      if (this._visible) this.draw();
+    });
+
+    this.el._sparkHook = this;
+    SparkVisibility.observe(this.el);
+    SparkDriver.add(this);
+    this.pushEventTo(this.el, "spark-ready", {});
+  },
+
+  reconnected() {
+    // the server side starts over after a reconnect and waits for this
+    this.pushEventTo(this.el, "spark-ready", {});
+  },
+
+  destroyed() {
+    SparkDriver.remove(this);
+    SparkVisibility.unobserve(this.el);
+  },
+
+  // drop readings that left the window, but keep the last one before it so
+  // the line still starts at the left edge
+  _trim(points, cutoff) {
+    let i = 0;
+    while (i < points.length - 1 && points[i + 1][0] < cutoff) i++;
+    return i > 0 ? points.slice(i) : points;
+  },
+
+  draw() {
+    const now = Date.now() + this.skew;
+    const cutoff = now - SPARK_WINDOW_MS;
+    this.series.value = this._trim(this.series.value, cutoff);
+    this.series.target = this._trim(this.series.target, cutoff);
+    const { value, target } = this.series;
+
+    if (value.length === 0) {
+      this.lines.empty.style.display = "";
+      this.lines.value.setAttribute("points", "");
+      this.lines.target.setAttribute("points", "");
+      return;
+    }
+    this.lines.empty.style.display = "none";
+
+    // x spans 10 minutes, or less while there is less data (fresh node); the
+    // value line sets the start, older target readings are clamped to it
+    const start = Math.max(cutoff, Math.min(value[0][0], now - 60_000));
+    const span = Math.max(now - start, 1);
+
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const p of value.concat(target)) {
+      if (p[1] < lo) lo = p[1];
+      if (p[1] > hi) hi = p[1];
+    }
+    const range = hi - lo;
+    const x = (t) => Math.max(0, ((t - start) / span) * SPARK_W).toFixed(1);
+    const y = (v) => (range === 0 ? SPARK_H / 2 : SPARK_H - 3 - ((v - lo) / range) * (SPARK_H - 6)).toFixed(1);
+
+    // step line: each reading holds until the next one, then until now
+    const steps = (points) => {
+      if (points.length === 0) return "";
+      const out = [];
+      points.forEach((p, i) => {
+        if (i > 0) out.push(`${x(p[0])},${y(points[i - 1][1])}`);
+        out.push(`${x(p[0])},${y(p[1])}`);
+      });
+      out.push(`${SPARK_W},${y(points[points.length - 1][1])}`);
+      return out.join(" ");
+    };
+
+    this.lines.value.setAttribute("points", steps(value));
+    this.lines.target.setAttribute("points", steps(target));
+  },
+};
+
 // CopyToClipboard hook for copying text with visual feedback
 Hooks.CopyToClipboard = {
   mounted() {

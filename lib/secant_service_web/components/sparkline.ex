@@ -1,168 +1,189 @@
 defmodule SecantServiceWeb.Components.Sparkline do
   @moduledoc """
-  Small trend line of a numeric parameter over the last 10 minutes, shown on
-  the dashboard cards. History comes from the database on mount; live points
-  arrive through `send_update(..., append: data_reports)` from the plot-data
-  batches the dashboard already receives.
+  Trend of a module's `value` (and `target`, when the module has a numeric
+  one) over the last 10 minutes, shown on the dashboard cards.
 
-  Rendered as an SVG polyline on the server, so it needs no JS hook.
+  The browser draws the lines (the `Sparkline` JS hook). The server only
+  sends the history once, thinned out, and afterwards the few new readings
+  of each 3 s plot-data batch, so it keeps no per-card buffer and re-sends
+  no SVG.
   """
   use Phoenix.LiveComponent
 
   require Logger
 
   alias SecantService.PlotDB.Builders
+  alias SecantServiceWeb.ValueFormat
 
   @window_ms 10 * 60 * 1000
-  @max_points 600
-  @width 200
-  # above this many readings the line is reduced to min/max per bucket
-  @buckets 100
-  @height 32
+  # history is reduced to the min and max of this many time buckets
+  @buckets 120
 
   @impl true
-  def mount(socket) do
-    {:ok, assign(socket, points: [], loaded: false)}
+  def update(%{append: reports, series: series}, socket) do
+    points = to_points(reports)
+
+    socket =
+      if points == [] or series not in socket.assigns.series do
+        socket
+      else
+        push_event(socket, "spark-add-#{socket.assigns.id}", %{s: series, p: points})
+      end
+
+    {:ok, socket}
   end
 
-  @impl true
-  def update(%{append: reports}, socket) do
-    new_points =
-      Enum.flat_map(reports, fn
-        [value, %{t: t}] when is_number(value) and is_number(t) -> [{trunc(t * 1000), value}]
-        _ -> []
-      end)
+  def update(%{value_param: value_param} = assigns, socket) do
+    target_param =
+      case assigns[:target_param] do
+        %{datainfo: datainfo} = param -> if ValueFormat.numeric?(datainfo), do: param
+        _ -> nil
+      end
 
-    {:ok, assign(socket, :points, trim(socket.assigns.points ++ new_points))}
-  end
+    params =
+      Enum.reject([{"value", value_param}, {"target", target_param}], &(elem(&1, 1) == nil))
 
-  def update(%{parameter: parameter} = assigns, socket) do
-    if socket.assigns[:parameter] && socket.assigns.parameter.id == parameter.id do
+    ids = Enum.map(params, fn {_, p} -> p.id end)
+
+    if socket.assigns[:param_ids] == ids do
       {:ok, socket}
     else
       socket =
         socket
         |> assign(:id, assigns.id)
-        |> assign(:parameter, parameter)
-        |> assign(:points, [])
-        |> assign(:loaded, false)
-        |> start_async(:history, fn -> load_history(parameter) end)
+        |> assign(:param_ids, ids)
+        |> assign(:series, Enum.map(params, &elem(&1, 0)))
+        |> assign(:history, nil)
+        |> assign(:client_ready, false)
+        |> start_async(:history, fn -> load_history(params) end)
 
       {:ok, socket}
     end
   end
 
-  defp load_history(parameter) do
-    now = System.os_time(:millisecond)
-    {values, timestamps} = Builders.fetch_param_data_in_range(parameter, now - @window_ms, now)
+  # [[value, %{t: seconds}], ...] -> [[ms, value], ...]
+  defp to_points(reports) do
+    Enum.flat_map(reports, fn
+      [value, %{t: t}] when is_number(t) ->
+        case number(value) do
+          nil -> []
+          v -> [[trunc(t * 1000), v]]
+        end
 
-    # double/scaled values are stored as numeric columns and come back as Decimal
-    timestamps
-    |> Enum.zip(values)
-    |> Enum.flat_map(fn
-      {t, %Decimal{} = v} -> [{t, Decimal.to_float(v)}]
-      {t, v} when is_number(v) -> [{t, v}]
-      _ -> []
+      _ ->
+        []
     end)
-    |> Enum.sort_by(&elem(&1, 0))
+  end
+
+  defp number(%Decimal{} = v), do: Decimal.to_float(v)
+  defp number(v) when is_number(v), do: v
+  defp number(_), do: nil
+
+  defp load_history(params) do
+    now = System.os_time(:millisecond)
+
+    Map.new(params, fn {series, param} ->
+      {values, timestamps} = Builders.fetch_param_data_in_range(param, now - @window_ms, now)
+
+      points =
+        timestamps
+        |> Enum.zip(values)
+        |> Enum.flat_map(fn {t, v} ->
+          case number(v) do
+            nil -> []
+            n -> [{t, n}]
+          end
+        end)
+        |> Enum.sort_by(&elem(&1, 0))
+        |> thin(@buckets)
+        |> Enum.map(fn {t, v} -> [t, v] end)
+
+      {series, points}
+    end)
+  end
+
+  @doc """
+  Reduces readings to the min and max of `buckets` equal-count chunks, in time
+  order, so a short spike survives. Fewer readings pass through unchanged.
+  """
+  def thin(points, buckets) when length(points) <= 2 * buckets, do: points
+
+  def thin(points, buckets) do
+    points
+    |> Enum.chunk_every(ceil(length(points) / buckets))
+    |> Enum.flat_map(fn chunk ->
+      lo = Enum.min_by(chunk, &elem(&1, 1))
+      hi = Enum.max_by(chunk, &elem(&1, 1))
+      [lo, hi] |> Enum.uniq() |> Enum.sort_by(&elem(&1, 0))
+    end)
   end
 
   @impl true
   def handle_async(:history, {:ok, history}, socket) do
-    # keep live points that arrived while the history query ran
-    last = List.last(history)
-    last_ts = if last, do: elem(last, 0), else: 0
-    live = Enum.filter(socket.assigns.points, fn {t, _} -> t > last_ts end)
-
-    {:noreply, socket |> assign(:points, trim(history ++ live)) |> assign(:loaded, true)}
+    socket = assign(socket, :history, history)
+    {:noreply, maybe_push_history(socket)}
   end
 
   def handle_async(:history, {:exit, reason}, socket) do
     Logger.warning("Sparkline history failed: #{inspect(reason)}")
-    {:noreply, assign(socket, :loaded, true)}
+    socket = assign(socket, :history, %{})
+    {:noreply, maybe_push_history(socket)}
   end
 
-  defp trim(points) do
-    cutoff = System.os_time(:millisecond) - @window_ms
-
-    points
-    |> Enum.drop_while(fn {t, _} -> t < cutoff end)
-    |> Enum.take(-@max_points)
+  # the hook announces itself; history goes out once both sides are ready
+  @impl true
+  def handle_event("spark-ready", _params, socket) do
+    {:noreply, socket |> assign(:client_ready, true) |> maybe_push_history()}
   end
 
-  @doc false
-  # Step line (each reading holds until the next one, which is right for
-  # sparse change-only data too). x spans the last 10 minutes, or less when
-  # there is less data so a freshly connected node still gets a full line.
-  def polyline([], _now), do: nil
-
-  def polyline(points, now) do
-    {lo, hi} = points |> Enum.map(&elem(&1, 1)) |> Enum.min_max()
-    span = if hi == lo, do: nil, else: hi - lo
-    {first_ts, _} = hd(points)
-    start = max(now - @window_ms, min(first_ts, now - 60_000))
-    window = max(now - start, 1)
-
-    x = fn t -> max(0.0, (t - start) / window * @width) end
-    y = fn v -> if span, do: @height - 3 - (v - lo) / span * (@height - 6), else: @height / 2 end
-
-    {_, last_v} = List.last(points)
-
-    coords =
-      if length(points) <= @buckets do
-        # sparse: hold each reading until the next one
-        {coords, _} =
-          Enum.reduce(points, {[], nil}, fn {t, v}, {acc, prev} ->
-            acc = if prev == nil, do: acc, else: [{x.(t), y.(prev)} | acc]
-            {[{x.(t), y.(v)} | acc], v}
-          end)
-
-        Enum.reverse(coords)
-      else
-        # dense: min and max of each bucket, in time order, so peaks survive
-        points
-        |> Enum.chunk_every(ceil(length(points) / @buckets))
-        |> Enum.flat_map(fn chunk ->
-          lo_pt = Enum.min_by(chunk, &elem(&1, 1))
-          hi_pt = Enum.max_by(chunk, &elem(&1, 1))
-          Enum.uniq(Enum.sort_by([lo_pt, hi_pt], &elem(&1, 0)))
-        end)
-        |> Enum.map(fn {t, v} -> {x.(t), y.(v)} end)
-      end
-
-    (coords ++ [{x.(now), y.(last_v)}])
-    |> Enum.map_join(" ", fn {cx, cy} ->
-      "#{Float.round(cx * 1.0, 1)},#{Float.round(cy * 1.0, 1)}"
-    end)
+  defp maybe_push_history(%{assigns: %{client_ready: true, history: history}} = socket)
+       when is_map(history) do
+    push_event(socket, "spark-init-#{socket.assigns.id}", history)
   end
+
+  defp maybe_push_history(socket), do: socket
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, :line, polyline(assigns.points, System.os_time(:millisecond)))
-
     ~H"""
-    <div id={@id} class="relative" title="last 10 minutes">
+    <div
+      id={@id}
+      phx-hook="Sparkline"
+      phx-update="ignore"
+      class="relative h-8"
+      title={
+        if "target" in @series, do: "last 10 minutes · value and target", else: "last 10 minutes"
+      }
+    >
       <svg
-        viewBox={"0 0 #{width()} #{height()}"}
+        viewBox="0 0 200 32"
         preserveAspectRatio="none"
-        class="block h-8 w-full"
+        class="block h-8 w-full overflow-visible"
         role="img"
-        aria-label={"#{@parameter.name}, last 10 minutes"}
+        aria-label="trend of the last 10 minutes"
       >
         <line
-          :if={@line == nil}
+          data-role="empty"
           x1="0"
-          x2={width()}
-          y1={height() / 2}
-          y2={height() / 2}
+          x2="200"
+          y1="16"
+          y2="16"
           stroke="currentColor"
           class="text-line"
           stroke-dasharray="3 3"
           vector-effect="non-scaling-stroke"
         />
         <polyline
-          :if={@line}
-          points={@line}
+          data-role="target"
+          fill="none"
+          stroke="currentColor"
+          class="text-muted"
+          stroke-width="1"
+          stroke-dasharray="3 2"
+          vector-effect="non-scaling-stroke"
+        />
+        <polyline
+          data-role="value"
           fill="none"
           stroke="currentColor"
           class="text-primary"
@@ -171,16 +192,7 @@ defmodule SecantServiceWeb.Components.Sparkline do
           vector-effect="non-scaling-stroke"
         />
       </svg>
-      <span
-        :if={@loaded and @line == nil}
-        class="absolute inset-0 flex items-center justify-center text-[10.5px] text-muted"
-      >
-        <span class="bg-base-100 px-1">no data in the last 10 min</span>
-      </span>
     </div>
     """
   end
-
-  defp width, do: @width
-  defp height, do: @height
 end
