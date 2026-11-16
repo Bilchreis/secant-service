@@ -748,9 +748,9 @@ defmodule SecantServiceWeb.DashboardComponents do
       <div :if={@enum_members != []} class="mt-1 flex flex-wrap gap-1">
         <span
           :for={{name, code} <- @enum_members}
-          class="rounded border border-line px-1.5 font-mono text-[10.5px]"
+          class={["rounded border px-1.5 font-mono text-[10.5px]", ValueFormat.enum_class(code)]}
         >
-          {name} <span class="text-muted">{code}</span>
+          {name} <span class="opacity-70">{code}</span>
         </span>
       </div>
     </div>

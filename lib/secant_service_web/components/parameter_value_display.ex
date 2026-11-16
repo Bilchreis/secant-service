@@ -402,9 +402,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
           >{@unit}</span>
         </span>
       <% @type == "enum" -> %>
-        <span class={["font-mono", if(@size == :lg, do: "text-lg font-semibold", else: "text-sm")]}>
-          {ValueFormat.enum_name(@value, @datainfo)}<span class="ml-1.5 text-[11px] text-muted">{@value}</span>
-        </span>
+        <.enum_badge value={@value} datainfo={@datainfo} size={@size} />
       <% @type == "bool" -> %>
         <span class={[
           "inline-flex items-center gap-1.5 rounded border border-line px-2 py-0.5 font-mono text-xs",
@@ -429,6 +427,30 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   attr :datainfo, :map, required: true
   attr :size, :atom, default: :md
 
+  @doc "Enum value as a coloured badge: member name and code."
+  def enum_badge(assigns) do
+    ~H"""
+    <span class={[
+      "inline-flex w-fit items-center gap-1.5 rounded-md border font-mono",
+      ValueFormat.enum_class(@value),
+      case @size do
+        :lg -> "px-2.5 py-1 text-base font-semibold"
+        :md -> "px-2 py-0.5 text-sm"
+        _ -> "px-1.5 text-[11px]"
+      end
+    ]}>
+      {ValueFormat.enum_name(@value, @datainfo)}
+      <span class="rounded-full bg-white/70 px-1.5 text-[10px] font-normal dark:bg-black/30">
+        {@value}
+      </span>
+    </span>
+    """
+  end
+
+  attr :value, :any, required: true
+  attr :datainfo, :map, required: true
+  attr :size, :atom, default: :md
+
   defp struct_value(assigns) do
     assigns = assign(assigns, :members, assigns.datainfo["members"] || %{})
 
@@ -437,10 +459,16 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
       <div class="flex max-h-40 flex-wrap gap-1 overflow-y-auto">
         <span
           :for={{name, info} <- @members}
-          class="rounded border border-line bg-base-200 px-1.5 py-0.5 font-mono text-[11px]"
+          class={[
+            "rounded border px-1.5 py-0.5 font-mono text-[11px]",
+            if(ValueFormat.enum?(info),
+              do: ValueFormat.enum_class(ValueFormat.member(@value, name)),
+              else: "border-line bg-base-200"
+            )
+          ]}
           title={name}
         >
-          <span class="text-muted">{name}</span>
+          <span class="opacity-70">{name}</span>
           <span class="ml-1">{ValueFormat.short(ValueFormat.member(@value, name), info)}</span>
         </span>
       </div>
@@ -452,7 +480,11 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
         >
           <dt class="shrink-0 text-muted">{name}</dt>
           <dd class="min-w-0 text-right break-words">
-            {ValueFormat.short(ValueFormat.member(@value, name), info)}
+            <%= if ValueFormat.enum?(info) do %>
+              <.enum_badge value={ValueFormat.member(@value, name)} datainfo={info} size={:sm} />
+            <% else %>
+              {ValueFormat.short(ValueFormat.member(@value, name), info)}
+            <% end %>
           </dd>
         </div>
       </dl>
@@ -517,7 +549,13 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
           <span :if={@count == 0} class="font-mono text-xs text-muted">[ ] empty</span>
           <span
             :for={v <- @value}
-            class="rounded border border-line bg-base-200 px-1.5 py-0.5 font-mono text-[11px]"
+            class={[
+              "rounded border px-1.5 py-0.5 font-mono text-[11px]",
+              if(ValueFormat.enum?(@members),
+                do: ValueFormat.enum_class(v),
+                else: "border-line bg-base-200"
+              )
+            ]}
           >
             {ValueFormat.short(v, @members)}
           </span>
