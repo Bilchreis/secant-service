@@ -104,10 +104,13 @@ prefersDark.addEventListener("change", () => ThemeWatch._fire());
 // Width of the module inspector, remembered per browser.
 const INSPECTOR_KEY = "secant:inspector-width";
 const INSPECTOR_MIN = 320;
-const INSPECTOR_MAX = 960;
+// Leave room for the module rail and one narrow column of cards; the panel
+// may take everything else. CSS caps it the same way on window resize.
+const INSPECTOR_RESERVED = 544; // 34rem
+const inspectorMax = () => Math.max(INSPECTOR_MIN, window.innerWidth - INSPECTOR_RESERVED);
 try {
   const saved = parseInt(localStorage.getItem(INSPECTOR_KEY), 10);
-  if (saved >= INSPECTOR_MIN && saved <= INSPECTOR_MAX) {
+  if (saved >= INSPECTOR_MIN) {
     document.documentElement.style.setProperty("--inspector-w", `${saved}px`);
   }
 } catch (_e) {
@@ -122,7 +125,7 @@ Hooks.ResizablePanel = {
   mounted() {
     const panel = this.el.parentElement;
     const setWidth = (w) => {
-      const width = Math.round(Math.min(INSPECTOR_MAX, Math.max(INSPECTOR_MIN, w)));
+      const width = Math.round(Math.min(inspectorMax(), Math.max(INSPECTOR_MIN, w)));
       document.documentElement.style.setProperty("--inspector-w", `${width}px`);
       return width;
     };

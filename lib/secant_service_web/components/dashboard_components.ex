@@ -207,7 +207,7 @@ defmodule SecantServiceWeb.DashboardComponents do
       id="node-header"
       class="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-box border border-line bg-base-100 px-4 py-3"
     >
-      <div class="min-w-0 flex-[1_1_320px]">
+      <div class="min-w-0 max-w-[36rem] flex-[0_1_auto]">
         <div class="flex flex-wrap items-center gap-2.5">
           <h1 class="text-xl font-bold tracking-tight">{Util.display_name(@node.equipment_id)}</h1>
           <.check_badge check_result={@node.check_result} />
@@ -231,7 +231,7 @@ defmodule SecantServiceWeb.DashboardComponents do
         </div>
       </div>
 
-      <dl class="grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 text-xs">
+      <dl class="grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 border-line text-xs sm:border-l sm:pl-8">
         <dt class="text-muted">URI</dt>
         <dd class="font-mono">{node_id_str(@node)}</dd>
         <dt class="text-muted">UUID</dt>
@@ -762,7 +762,7 @@ defmodule SecantServiceWeb.DashboardComponents do
     ~H"""
     <aside
       id={@id}
-      class="sticky top-[4.25rem] flex max-h-[calc(100vh-5.5rem)] w-full shrink-0 overflow-hidden rounded-box border border-line bg-base-100 xl:w-(--inspector-w) xl:max-w-[60vw]"
+      class="sticky top-[4.25rem] flex max-h-[calc(100vh-5.5rem)] w-full shrink-0 overflow-hidden rounded-box border border-line bg-base-100 xl:w-(--inspector-w) xl:max-w-[calc(100vw-34rem)]"
       aria-label="Selected module"
     >
       <div
