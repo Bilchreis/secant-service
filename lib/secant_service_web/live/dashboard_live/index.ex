@@ -212,7 +212,10 @@ defmodule SecantServiceWeb.DashboardLive.Index do
               {values, current_node}
             end
 
-          assign(socket, current_node: current_node) |> assign(values: values)
+          socket
+          |> assign(current_node: current_node)
+          |> assign(values: values)
+          |> assign(:status_map, status_map(values))
 
         state.node_id == current_node.node_id ->
           {values, current_node} =
@@ -237,14 +240,22 @@ defmodule SecantServiceWeb.DashboardLive.Index do
               {values, current_node}
             end
 
-          assign(socket, current_node: current_node) |> assign(values: values)
+          socket
+          |> assign(current_node: current_node)
+          |> assign(values: values)
+          |> assign(:status_map, status_map(values))
 
         true ->
           Logger.info("Current node not updated #{inspect(node_id)}")
           socket
       end
 
-    {:noreply, assign(socket, active_nodes: active_nodes)}
+    socket =
+      socket
+      |> assign(active_nodes: active_nodes)
+      |> assign_selected_module(socket.assigns.selected_module)
+
+    {:noreply, socket}
   end
 
   def handle_info({:conn_state, pubsub_topic, active}, socket) do
