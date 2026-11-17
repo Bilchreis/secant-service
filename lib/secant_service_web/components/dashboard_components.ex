@@ -361,14 +361,14 @@ defmodule SecantServiceWeb.DashboardComponents do
     ~H"""
     <aside
       id="module-rail"
-      class="w-full rounded-box border border-line bg-base-100 p-2 lg:sticky lg:top-[4.25rem] lg:z-[1] lg:max-h-[calc(100vh-5.5rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto"
+      class="w-full rounded-box border border-line bg-base-100 p-2 max-lg:columns-2 max-lg:gap-x-4 sm:max-lg:columns-3 lg:sticky lg:top-[4.25rem] lg:z-[1] lg:max-h-[calc(100vh-5.5rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto"
       aria-label="Modules"
     >
-      <div class="px-1.5 pt-1 pb-1 text-[11px] font-semibold tracking-wider text-muted uppercase">
+      <div class="px-1.5 pt-1 pb-1 text-[11px] font-semibold tracking-wider text-muted uppercase [column-span:all]">
         Modules · {length(@node.modules)}
       </div>
       <div :for={{label, modules} <- @groups} class="mt-2">
-        <div :if={label} class="px-1.5 pb-1 text-xs text-muted">{label}</div>
+        <div :if={label} class="break-after-avoid px-1.5 pb-1 text-xs text-muted">{label}</div>
         <button
           :for={module <- modules}
           id={"rail-" <> module.name}
@@ -376,7 +376,7 @@ defmodule SecantServiceWeb.DashboardComponents do
           phx-value-module={module.name}
           aria-current={if(module.name == @selected, do: "true")}
           class={[
-            "flex min-h-8 w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors",
+            "flex min-h-8 w-full break-inside-avoid items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors",
             if(module.name == @selected,
               do: "bg-base-300 font-semibold",
               else: "hover:bg-base-200"

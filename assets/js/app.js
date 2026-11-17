@@ -344,7 +344,11 @@ Hooks.EChartsChart = {
     const mapAxes = (a, f) => (Array.isArray(a) ? a.map(f) : f(a));
     const xAxis = mapAxes(option.xAxis, (ax) => tint(fixAxis(ax)));
     const yAxis = mapAxes(option.yAxis, tint);
-    const legend = mapAxes(option.legend, (l) => l && { ...l, textStyle: { color: muted, ...(l.textStyle || {}) } });
+    const inactive = isDarkTheme() ? "#6b6b70" : "#9a9aa0";
+    const legend = mapAxes(
+      option.legend,
+      (l) => l && { inactiveColor: inactive, ...l, textStyle: { color: muted, ...(l.textStyle || {}) } },
+    );
     return {
       color: CHART_PALETTE,
       ...option,

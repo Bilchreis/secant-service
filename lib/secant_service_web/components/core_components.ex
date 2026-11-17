@@ -659,7 +659,7 @@ defmodule SecantServiceWeb.CoreComponents do
   # narrow screens instead of letting cells overlap
   def browse_table_opts do
     Keyword.update!(table_opts(), :table_attrs, fn attrs ->
-      Keyword.update!(attrs, :class, &(&1 <> " min-w-[61rem] xl:min-w-[72rem]"))
+      Keyword.update!(attrs, :class, &(&1 <> " min-w-[57rem] xl:min-w-[72rem]"))
     end)
     |> Keyword.put(
       :no_results_content,

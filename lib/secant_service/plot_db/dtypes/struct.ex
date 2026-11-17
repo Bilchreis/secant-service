@@ -124,8 +124,8 @@ defmodule SecantService.PlotDB.DTypes.Struct do
           vms =
             Enum.map(vms, fn vm ->
               i = Map.get(vm, :_row, 0)
-              # bar plus its two value labels fill the sub-grid
-              Map.merge(vm, %{top: pct.(row_top.(i)), itemHeight: max(round(l.row_px - 36), 16)})
+              # bar plus its end handles fill the sub-grid
+              Map.merge(vm, %{top: pct.(row_top.(i)), itemHeight: max(round(l.row_px - 12), 16)})
             end)
 
           %{opt | visualMap: vms}
@@ -380,7 +380,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
 
     grids =
       if visual_maps == [],
-        do: Enum.map(grids, &Map.put(&1, :right, 16)),
+        do: Enum.map(grids, &Map.put(&1, :right, 32)),
         else: grids
 
     option = %{
