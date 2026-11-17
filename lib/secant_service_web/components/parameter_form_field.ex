@@ -120,7 +120,7 @@ defmodule SecantServiceWeb.Components.ParameterFormFieldComponents do
       type="number"
       field={@modal_form[@field]}
       value={Phoenix.HTML.Form.input_value(@modal_form, @field)}
-      class="input flex-1"
+      class="input input-sm w-full font-mono text-xs"
     />
 
     <.datainfo_tooltip datainfo={@datainfo} />
@@ -154,7 +154,7 @@ defmodule SecantServiceWeb.Components.ParameterFormFieldComponents do
       type="text"
       field={@modal_form[@field]}
       value={Phoenix.HTML.Form.input_value(@modal_form, @field)}
-      class="input flex-1"
+      class="input input-sm w-full font-mono text-xs"
     />
     <.datainfo_tooltip datainfo={@datainfo} />
     """
@@ -186,7 +186,7 @@ defmodule SecantServiceWeb.Components.ParameterFormFieldComponents do
       type="checkbox"
       field={@modal_form[@field]}
       value={Phoenix.HTML.Form.input_value(@modal_form, @field)}
-      class="input"
+      class="checkbox checkbox-sm"
     />
     <.datainfo_tooltip datainfo={@datainfo} />
     """
@@ -207,7 +207,7 @@ defmodule SecantServiceWeb.Components.ParameterFormFieldComponents do
     select_options = assigns.datainfo["members"]
 
     base_class =
-      "select flex-1"
+      "select select-sm w-full font-mono text-xs"
 
     class = if assigns[:class], do: "#{base_class} #{assigns[:class]}", else: base_class
 
@@ -276,17 +276,17 @@ defmodule SecantServiceWeb.Components.ParameterFormFieldComponents do
         type="text"
         field={@modal_form[@field]}
         value={Phoenix.HTML.Form.input_value(@modal_form, @field)}
-        class="input flex-1"
+        class="input input-sm w-full font-mono text-xs"
       />
       <.datainfo_tooltip datainfo={@datainfo} />
     <% else %>
-      <div class={"grid #{@grid_cols} gap-x-2 gap-y-2 items-center border-stone-500 dark:border-stone-500 rounded-lg  border p-2"}>
+      <div class={"grid #{@grid_cols} gap-x-2 gap-y-2 items-center border-line rounded-lg  border p-2"}>
         <%= for {member_name, member_info} <- @datainfo["members"] do %>
           <div class="grid grid-cols-2 gap-2 items-center w-full">
-            <div class="font-semibold text-gray-700 dark:text-gray-300 text-right">
+            <div class="text-right text-xs font-medium text-muted wrap-anywhere">
               {member_name}:
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 [&>.fieldset]:mb-0 [&>.fieldset]:min-w-0 [&>.fieldset]:flex-1">
               <.input_parameter
                 datainfo={member_info}
                 path={@path ++ [member_name]}
@@ -337,16 +337,16 @@ defmodule SecantServiceWeb.Components.ParameterFormFieldComponents do
         type="text"
         field={@modal_form[@field]}
         value={Phoenix.HTML.Form.input_value(@modal_form, @field)}
-        class="input flex-1"
+        class="input input-sm w-full font-mono text-xs"
       />
       <.datainfo_tooltip datainfo={@datainfo} />
     <% else %>
-      <div class={"grid #{@grid_cols} gap-x-2 gap-y-2 items-center border-stone-500 dark:border-stone-500 rounded-lg p-2"}>
+      <div class={"grid #{@grid_cols} gap-x-2 gap-y-2 items-center border-line rounded-lg p-2"}>
         <%= for {member_info, index} <- Enum.with_index(@datainfo["members"]) do %>
-          <div class="font-semibold text-gray-700 dark:text-gray-300 text-right">
+          <div class="text-right text-xs font-medium text-muted wrap-anywhere">
             {"f#{index}"}:
           </div>
-          <div>
+          <div class="flex items-center gap-2 [&>.fieldset]:mb-0 [&>.fieldset]:min-w-0 [&>.fieldset]:flex-1">
             <.input_parameter
               datainfo={member_info}
               path={@path ++ ["f#{index}"]}
@@ -395,7 +395,7 @@ defmodule SecantServiceWeb.Components.ParameterFormFieldComponents do
       type="text"
       field={@modal_form[@field]}
       value={Phoenix.HTML.Form.input_value(@modal_form, @field)}
-      class="input w-full"
+      class="input input-sm w-full font-mono text-xs"
     />
 
     <.datainfo_tooltip datainfo={@datainfo} />
@@ -411,15 +411,12 @@ defmodule SecantServiceWeb.Components.ParameterFormFieldComponents do
       |> assign(:pretty_datainfo, Jason.encode!(assigns.datainfo, pretty: true))
 
     ~H"""
-    <div class={["tooltip", @position]}>
-      <div class="tooltip-content text-left bg-transparent ">
-        <div class="card bg-base-100 border-base-content/30 border-3 p-3 ">
-          <span class="text-base-content">Datainfo:</span>
-          <pre class="card mt-2 card-border border-neutral-content/10  break-words max-h-[60vh] overflow-y-auto bg-neutral text-base-content font-mono text-xs p-2">{@pretty_datainfo}</pre>
-        </div>
-      </div>
-      <.icon name="hero-information-circle" class="bg-neutral-content h-5 w-5  mr-1" />
-    </div>
+    <span
+      class={["inline-flex shrink-0 cursor-help", @position]}
+      title={"Datainfo:\n" <> @pretty_datainfo}
+    >
+      <.icon name="hero-information-circle" class="size-4 text-muted" />
+    </span>
     """
   end
 end

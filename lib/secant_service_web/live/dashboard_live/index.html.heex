@@ -27,17 +27,19 @@
       />
 
       <%!-- header, rail and cards on the left; the module panel takes the
-           full height on the right, level with the header --%>
+           full height on the right, level with the header. Below xl the left
+           column dissolves so the panel sits between header and cards. --%>
+      <.stale_banner conn_state={conn_state(@active_nodes[@current_node.node_id])} />
+
       <div class="flex flex-col gap-3 xl:flex-row xl:items-start">
-        <div class="flex min-w-0 flex-1 flex-col gap-3">
-          <.stale_banner conn_state={conn_state(@active_nodes[@current_node.node_id])} />
+        <div class="contents xl:flex xl:min-w-0 xl:flex-1 xl:flex-col xl:gap-3">
           <.node_header
             node={@current_node}
             state_map={@active_nodes[@current_node.node_id]}
             status_counts={status_counts(@status_map)}
           />
 
-          <div class="flex flex-col gap-3 lg:flex-row lg:items-start">
+          <div class="order-3 flex flex-col gap-3 lg:flex-row lg:items-start xl:order-none">
             <.module_rail
               node={@current_node}
               selected={@selected_module}

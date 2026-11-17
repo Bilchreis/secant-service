@@ -340,10 +340,13 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   @impl true
   def handle_async(:load_plot, {:ok, plot}, socket) do
+    height = chart_height(plot, socket.assigns.base_height)
+    plot = SecantService.PlotDB.DTypes.Struct.fit_height(plot, height)
+
     socket =
       socket
       |> assign(:plot, AsyncResult.ok(socket.assigns.plot, plot))
-      |> assign(:chart_height, chart_height(plot, socket.assigns.base_height))
+      |> assign(:chart_height, height)
 
     socket =
       if socket.assigns.display_mode == :graph and Map.get(plot, :plottable) and

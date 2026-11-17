@@ -166,7 +166,7 @@ defmodule SecantServiceWeb.SECoPComponents do
     <.property
       :for={{name, value} <- @properties || %{}}
       prop_key={String.replace_prefix(name, "_", "")}
-      value_class="font-mono text-[11px]"
+      value_class="font-mono text-xs"
     >
       {Util.short_inspect(value)}
     </.property>

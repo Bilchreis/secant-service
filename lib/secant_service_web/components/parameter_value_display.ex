@@ -401,7 +401,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
         ]}>
           {ValueFormat.number(@value)}<span
             :if={@unit != ""}
-            class={["ml-1.5 text-muted", if(@size == :lg, do: "text-xs", else: "text-[11px]")]}
+            class={["ml-1.5 text-muted", "text-xs"]}
           >{@unit}</span>
         </span>
       <% @type == "enum" -> %>
@@ -445,8 +445,11 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
       ]}
       title={ValueFormat.enum_name(@value, @datainfo)}
     >
-      <span class="truncate">{ValueFormat.enum_name(@value, @datainfo)}</span>
-      <span class="shrink-0 rounded-full bg-white/70 px-1.5 text-[10px] font-normal dark:bg-black/30">
+      <span :if={@size == :sm} class="wrap-anywhere">
+        {ValueFormat.breakable(ValueFormat.enum_name(@value, @datainfo))}
+      </span>
+      <span :if={@size != :sm} class="truncate">{ValueFormat.enum_name(@value, @datainfo)}</span>
+      <span class="shrink-0 rounded-full bg-white/70 px-1.5 text-[11px] font-normal dark:bg-black/30">
         {@value}
       </span>
     </span>
@@ -461,14 +464,16 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     assigns = assign(assigns, :members, assigns.datainfo["members"] || %{})
 
     # field names right-aligned in one column, values (enums as coloured
-    # badges) in the other; long names and values are clipped
+    # badges) in the other; long names and enum values wrap
     ~H"""
     <dl class={[
       "grid grid-cols-[minmax(0,max-content)_minmax(7rem,1fr)] items-center gap-x-2 font-mono",
-      if(@size == :lg, do: "max-h-48 gap-y-1 overflow-y-auto text-[11px]", else: "gap-y-1.5 text-xs")
+      if(@size == :lg, do: "max-h-48 gap-y-1 overflow-y-auto text-xs", else: "gap-y-1.5 text-xs")
     ]}>
       <%= for {name, info} <- @members do %>
-        <dt class="truncate text-right text-muted" title={name}>{name}</dt>
+        <dt class="text-right text-muted wrap-anywhere" title={name}>
+          {ValueFormat.breakable(name)}
+        </dt>
         <dd class="min-w-0">
           <%= if ValueFormat.enum?(info) do %>
             <.enum_badge value={ValueFormat.member(@value, name)} datainfo={info} size={:sm} />
@@ -551,7 +556,10 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
               )
             ]}
           >
-            {ValueFormat.short(v, @members)}
+            {case ValueFormat.short(v, @members) do
+              "" -> "—"
+              s -> s
+            end}
           </span>
         </div>
       <% true -> %>
@@ -584,7 +592,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   # value reaching the target, so it says "Accepted", not "done".
   defp set_feedback(assigns) do
     ~H"""
-    <div id={@id} role="status" aria-live="polite" class="min-h-0 font-mono text-[11px]">
+    <div id={@id} role="status" aria-live="polite" class="min-h-0 font-mono text-xs">
       <%= cond do %>
         <% @pending -> %>
           <span class="inline-flex items-center gap-1.5 text-muted">
@@ -614,7 +622,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     ~H"""
     <div class={["min-w-0", @class]}>
       <%= if @variant == :target do %>
-        <div class="flex items-baseline justify-between gap-2 text-[11px] text-muted">
+        <div class="flex items-baseline justify-between gap-2 text-xs text-muted">
           <span>target</span>
           <span class="truncate font-mono" title="current target">
             {ValueFormat.short(@parameter_value, @parameter.datainfo)}
@@ -626,7 +634,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
 
       <div
         :if={@parameter_error != nil}
-        class="mt-1 rounded border border-st-error/50 px-2 py-1 font-mono text-[11px] text-st-error"
+        class="mt-1 rounded border border-st-error/50 px-2 py-1 font-mono text-xs text-st-error"
       >
         {Enum.at(@parameter_error, 0)}: {Enum.at(@parameter_error, 1)}
       </div>
@@ -674,7 +682,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
             phx-debounce="400"
             autocomplete="off"
             id={"form:" <> to_string(@parameter.id) <> @location}
-            class="input input-sm w-full font-mono text-xs"
+            class="input input-sm w-full font-mono text-xs placeholder:text-muted"
           />
         <% end %>
         <button
@@ -732,12 +740,14 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
             value={Phoenix.HTML.Form.input_value(@modal_form, :module)}
           />
 
-          <.input_parameter
-            datainfo={@parameter.datainfo}
-            modal_form={@modal_form}
-            parameter_id={to_string(@parameter.id)}
-            location={@location}
-          />
+          <div class="max-h-[50vh] overflow-y-auto">
+            <.input_parameter
+              datainfo={@parameter.datainfo}
+              modal_form={@modal_form}
+              parameter_id={to_string(@parameter.id)}
+              location={@location}
+            />
+          </div>
 
           <input type="hidden" name="parameter" value={@parameter.name} />
           <div class="mt-2 text-xs text-muted">JSON preview</div>
@@ -747,11 +757,11 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
             type="textarea"
             field={@modal_form[:value]}
             value={Phoenix.HTML.Form.input_value(@modal_form, :value)}
-            rows="14"
+            rows="6"
             class="textarea w-full font-mono text-xs"
           />
           <div class="mt-2 flex items-center gap-3">
-            <button type="submit" class="btn btn-primary" disabled={@set_pending}>
+            <button type="submit" class="btn btn-sm btn-primary" disabled={@set_pending}>
               {if @set_pending, do: "Setting…", else: "Set"}
             </button>
             <.set_feedback
@@ -834,6 +844,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
 
   defp set_placeholder(datainfo) do
     case {ValueFormat.limits(datainfo), ValueFormat.unit(datainfo)} do
+      {nil, ""} when is_map_key(datainfo, "members") -> "new value"
       {nil, ""} -> "new value (#{ValueFormat.type_label(datainfo)})"
       {nil, unit} -> "new value [#{unit}]"
       {limits, unit} -> String.trim("#{limits} #{unit}")

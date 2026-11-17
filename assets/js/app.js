@@ -329,13 +329,30 @@ Hooks.EChartsChart = {
       ax && ax.type === "time"
         ? { ...ax, axisLabel: { hideOverlap: true, ...(ax.axisLabel || {}) } }
         : ax;
-    const xAxis = Array.isArray(option.xAxis) ? option.xAxis.map(fixAxis) : fixAxis(option.xAxis);
+    // axis text, axis lines and grid lines in the page's muted and line colours
+    const css = getComputedStyle(document.documentElement);
+    const muted = css.getPropertyValue("--sc-muted").trim() || undefined;
+    const line = css.getPropertyValue("--sc-line").trim() || undefined;
+    const tint = (ax) =>
+      ax && {
+        ...ax,
+        axisLabel: { color: muted, ...(ax.axisLabel || {}) },
+        nameTextStyle: { color: muted, ...(ax.nameTextStyle || {}) },
+        axisLine: { ...(ax.axisLine || {}), lineStyle: { color: line, ...((ax.axisLine || {}).lineStyle || {}) } },
+        splitLine: { ...(ax.splitLine || {}), lineStyle: { color: line, ...((ax.splitLine || {}).lineStyle || {}) } },
+      };
+    const mapAxes = (a, f) => (Array.isArray(a) ? a.map(f) : f(a));
+    const xAxis = mapAxes(option.xAxis, (ax) => tint(fixAxis(ax)));
+    const yAxis = mapAxes(option.yAxis, tint);
+    const legend = mapAxes(option.legend, (l) => l && { ...l, textStyle: { color: muted, ...(l.textStyle || {}) } });
     return {
       color: CHART_PALETTE,
       ...option,
       ...(xAxis ? { xAxis } : {}),
+      ...(yAxis ? { yAxis } : {}),
+      ...(legend ? { legend } : {}),
       backgroundColor: "transparent",
-      textStyle: { fontFamily: "JetBrains Mono, ui-monospace, monospace", ...(option.textStyle || {}) },
+      textStyle: { fontFamily: "JetBrains Mono, ui-monospace, monospace", color: muted, ...(option.textStyle || {}) },
     };
   },
 

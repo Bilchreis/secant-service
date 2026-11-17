@@ -112,7 +112,7 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
     <span class="flex min-w-0 flex-1 items-center gap-2" title={@string}>
       <span class={["size-2 shrink-0 rounded-full", @dot]}></span>
       <span class="min-w-0 flex-1 truncate">{Util.display_name(@module_name)}</span>
-      <span :if={@code} class={["shrink-0 font-mono text-[10.5px] font-semibold", @text]}>{@code}</span>
+      <span :if={@code} class={["shrink-0 font-mono text-xs font-semibold", @text]}>{@code}</span>
     </span>
     """
   end
@@ -137,13 +137,13 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
 
     ~H"""
     <div class="min-w-0">
-      <span class={["inline-flex items-center gap-1.5 font-mono text-[11px] font-semibold", @text]}>
+      <span class={["inline-flex items-center gap-1.5 font-mono text-xs font-semibold", @text]}>
         <span class={["size-2 rounded-full", @dot]}></span>
         {@code || "no data"}
       </span>
       <div
         :if={@layout == :stacked}
-        class="mt-0.5 min-h-4 truncate text-[11.5px] text-muted"
+        class="mt-0.5 min-h-4 truncate text-xs text-muted"
         title={@string}
       >
         {@string}

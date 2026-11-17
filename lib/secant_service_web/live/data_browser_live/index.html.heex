@@ -1,48 +1,69 @@
 <Layouts.app flash={@flash} active={:browse}>
-  <div class="container mx-auto">
-    <div class="rounded-box border border-line bg-base-100 p-2">
+  <div class="flex flex-col gap-3">
+    <h1 class="text-xl font-bold tracking-tight">Recorded nodes</h1>
+    <div class="rounded-box border border-line bg-base-100">
       <%!-- State filter tabs & action buttons --%>
-      <div class="flex items-center justify-between mb-2">
-        <div role="tablist" class="tabs tabs-box">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-line p-2">
+        <div role="tablist" class="flex flex-wrap items-center gap-1">
           <button
             role="tab"
-            class={["tab", @state_filter == :active && "tab-active"]}
+            class={[
+              "inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs transition-colors",
+              filter_tab_class(@state_filter == :active)
+            ]}
+            aria-selected={to_string(@state_filter == :active)}
             phx-click="filter_state"
             phx-value-state="active"
           >
-            <.icon name="hero-server" class="w-4 h-4 mr-1" /> Active
+            <.icon name="hero-server" class="size-4" /> Active
           </button>
           <button
             role="tab"
-            class={["tab", @state_filter == :archived && "tab-active"]}
+            class={[
+              "inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs transition-colors",
+              filter_tab_class(@state_filter == :archived)
+            ]}
+            aria-selected={to_string(@state_filter == :archived)}
             phx-click="filter_state"
             phx-value-state="archived"
           >
-            <.icon name="hero-archive-box" class="w-4 h-4 mr-1" /> Archived
+            <.icon name="hero-archive-box" class="size-4" /> Archived
           </button>
           <button
             role="tab"
-            class={["tab", @state_filter == :trashed && "tab-active"]}
+            class={[
+              "inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs transition-colors",
+              filter_tab_class(@state_filter == :trashed)
+            ]}
+            aria-selected={to_string(@state_filter == :trashed)}
             phx-click="filter_state"
             phx-value-state="trashed"
           >
-            <.icon name="hero-trash" class="w-4 h-4 mr-1" /> Trashed
+            <.icon name="hero-trash" class="size-4" /> Trashed
           </button>
           <button
             role="tab"
-            class={["tab", @state_filter == :favourite && "tab-active"]}
+            class={[
+              "inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs transition-colors",
+              filter_tab_class(@state_filter == :favourite)
+            ]}
+            aria-selected={to_string(@state_filter == :favourite)}
             phx-click="filter_state"
             phx-value-state="favourite"
           >
-            <.icon name="hero-star" class="w-4 h-4 mr-1" /> Favourites
+            <.icon name="hero-star" class="size-4" /> Favourites
           </button>
           <button
             role="tab"
-            class={["tab", @state_filter == :all && "tab-active"]}
+            class={[
+              "inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs transition-colors",
+              filter_tab_class(@state_filter == :all)
+            ]}
+            aria-selected={to_string(@state_filter == :all)}
             phx-click="filter_state"
             phx-value-state="all"
           >
-            <.icon name="hero-squares-2x2" class="w-4 h-4 mr-1" /> All
+            <.icon name="hero-squares-2x2" class="size-4" /> All
           </button>
         </div>
         <div class="flex gap-2">
@@ -66,12 +87,12 @@
           <% end %>
         </div>
       </div>
-      <div class="min-h-[600px] flex flex-col">
+      <div class="min-h-[600px] overflow-x-auto">
         <AshPagify.Components.table
           items={@sec_nodes}
           meta={@meta}
           path={~p"/browse?state_filter=#{@state_filter}"}
-          opts={table_opts()}
+          opts={browse_table_opts()}
         >
           <:col :let={sec_node} label="" field={nil} class="w-12">
             <button
@@ -80,7 +101,7 @@
                 "btn btn-ghost btn-sm btn-circle transition-all duration-200",
                 if(sec_node.favourite,
                   do: "text-warning",
-                  else: "text-base-content/30 hover:text-warning/60"
+                  else: "text-muted/60 hover:text-warning"
                 )
               ]}
               phx-click="toggle_favourite"
@@ -96,21 +117,23 @@
             </button>
           </:col>
           <:col :let={sec_node} label="Created at" field={:inserted_at} class="w-36">
-            {sec_node.inserted_at
-            |> DateTime.from_naive!("Etc/UTC")
-            |> DateTime.shift_zone!("Europe/Berlin")
-            |> Calendar.strftime("%d.%m.%Y %H:%M")}
+            <span class="whitespace-nowrap tabular-nums">
+              {sec_node.inserted_at
+              |> DateTime.from_naive!("Etc/UTC")
+              |> DateTime.shift_zone!("Europe/Berlin")
+              |> Calendar.strftime("%d.%m.%Y %H:%M")}
+            </span>
           </:col>
-          <:col :let={sec_node} label="UUID" field={:uuid}>
-            <div class="flex justify-center">
+          <:col :let={sec_node} label="UUID" field={:uuid} class="w-28">
+            <div class="flex">
               <div
-                class="tooltip cursor-pointer hover:bg-base-300 px-2 py-1 rounded transition-colors"
+                class="tooltip tooltip-right -mx-1 cursor-pointer whitespace-nowrap rounded px-1 py-0.5 transition-colors hover:bg-base-200"
                 data-tip={sec_node.uuid}
                 data-copy={sec_node.uuid}
                 phx-hook="CopyToClipboard"
                 id={"uuid-#{sec_node.uuid}"}
               >
-                <span class="font-mono">{String.split(sec_node.uuid, "-") |> List.first()}…</span>
+                <span class="font-mono text-xs">{String.split(sec_node.uuid, "-") |> List.first()}…</span>
                 <.icon
                   name="hero-clipboard-document"
                   class="w-3 h-3 ml-1 inline-block opacity-50"
@@ -119,57 +142,58 @@
             </div>
           </:col>
           <:col :let={sec_node} label="Equipment ID" field={:equipment_id}>
-            <div class="tooltip w-45">
-              <div class="tooltip-content text-left bg-transparent ">
-                <div class="card bg-base-100 border-base-content/30 border-3 p-3 ">
+            <div class="tooltip tooltip-right inline-flex max-w-full min-w-0">
+              <div class="tooltip-content text-left bg-transparent">
+                <div class="rounded-box border border-line bg-base-100 p-3 text-base-content shadow-sm">
                   {sec_node.display_description || "No description available."}
                 </div>
               </div>
-              <div class="truncate">
-                <.icon
-                  name="hero-information-circle"
-                  class="w-5 h-5 ml-1 inline-block opacity-50"
-                />
-                <span>{sec_node.display_equipment_id}</span>
+              <div class="flex min-w-0 items-center gap-1">
+                <.icon name="hero-information-circle" class="size-4 shrink-0 text-muted" />
+                <span class="truncate">{sec_node.display_equipment_id}</span>
               </div>
             </div>
           </:col>
-          <:col :let={sec_node} label="Disk Size" field={:disk_size_bytes}>
-            <div class="px-3 py-1 rounded font-mono text-sm text-center">
+          <:col
+            :let={sec_node}
+            label="Disk Size"
+            field={:disk_size_bytes}
+            class="w-24 text-right!"
+          >
+            <div class="whitespace-nowrap text-right font-mono text-xs">
               {SecantService.Util.format_bytes(sec_node.disk_size_bytes)}
             </div>
           </:col>
-          <:col :let={sec_node} label="Datapoints" field={:datapoint_count} class="w-24">
-            <div class="flex justify-center">
-              <span class="font-mono text-sm">
-                {format_count(sec_node.datapoint_count)}
-              </span>
+          <:col
+            :let={sec_node}
+            label="Datapoints"
+            field={:datapoint_count}
+            class="w-24 text-right!"
+          >
+            <div class="whitespace-nowrap text-right font-mono text-xs">
+              {format_count(sec_node.datapoint_count)}
             </div>
           </:col>
-          <:col :let={sec_node} label="URI" field={:node_id_str}>
-            <div class="flex justify-center">
+          <:col :let={sec_node} label="URI" field={:node_id_str} class="w-44 max-xl:hidden">
+            <div class="truncate font-mono text-xs" title={sec_node.node_id_str}>
               {sec_node.node_id_str}
             </div>
           </:col>
-          <:col :let={sec_node} label="State" class="w-24">
-            <div class="flex justify-center">
-              <%= cond do %>
-                <% sec_node.state == :active -> %>
-                  <span class="badge badge-success badge-sm">Active</span>
-                <% sec_node.state == :archived -> %>
-                  <span class="badge badge-info badge-sm">Archived</span>
-                <% sec_node.state == :trashed -> %>
-                  <span class="badge badge-warning badge-sm">Trashed</span>
-                <% true -> %>
-                  <span class="badge badge-sm">{sec_node.state}</span>
-              <% end %>
-            </div>
+          <:col :let={sec_node} label="State" class="w-28">
+            <span class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-line px-2.5 py-0.5 text-[11px]">
+              <span class={["size-2 rounded-full", state_dot_class(sec_node.state)]}></span>
+              {state_label(sec_node.state)}
+            </span>
           </:col>
-          <:col :let={sec_node} label="Actions">
-            <div class="flex items-center justify-start gap-1">
+          <:col
+            :let={sec_node}
+            label="Actions"
+            class="sticky right-0 z-[1] w-44 bg-base-100 shadow-[inset_1px_0_0_var(--sc-line)]"
+          >
+            <div class="flex items-center gap-1">
               <.link
                 navigate={~p"/browse/node/#{sec_node.uuid}"}
-                class="btn btn-primary btn-xs"
+                class="btn btn-xs border-line bg-transparent font-normal"
                 id={"view-node-#{sec_node.uuid}"}
               >
                 View data
@@ -177,7 +201,7 @@
               <button
                 id={"json-btn-#{sec_node.uuid}"}
                 onclick="json_modal.showModal()"
-                class="btn btn-ghost btn-xs"
+                class="btn btn-ghost btn-xs font-normal"
                 phx-click="open_json_modal"
                 phx-value-uuid={sec_node.uuid}
                 title="Show the node's SECoP description (JSON)"
@@ -199,11 +223,13 @@
               <button
                 :if={sec_node.state == :trashed}
                 id={"restore-btn-#{sec_node.uuid}"}
-                class="btn btn-ghost btn-xs"
+                class="btn btn-ghost btn-xs btn-square text-muted hover:text-base-content"
                 phx-click="restore_node"
                 phx-value-uuid={sec_node.uuid}
+                title="Restore from trash"
+                aria-label={"Restore #{sec_node.equipment_id} recording from trash"}
               >
-                <.icon name="hero-arrow-uturn-left" class="size-4" /> Restore
+                <.icon name="hero-arrow-uturn-left" class="size-4" />
               </button>
             </div>
           </:col>
@@ -221,7 +247,7 @@
       title={@json_title}
       show={@show_json_modal}
     >
-      <div class="card border border-2 border-base-300 bg-base-200 p-2 text-base-content overflow-auto font-mono text-sm">
+      <div class="overflow-auto rounded border border-line bg-base-200 p-2 font-mono text-xs">
         <pre class="whitespace-pre-wrap break-words max-h-[60vh] overflow-y-auto"><%= @json_content %></pre>
       </div>
     </.modal>

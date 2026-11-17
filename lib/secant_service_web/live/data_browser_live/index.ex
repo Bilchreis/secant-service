@@ -190,4 +190,14 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
   end
 
   def format_count(n), do: to_string(n)
+
+  defp filter_tab_class(true), do: "bg-base-300 font-semibold text-base-content"
+  defp filter_tab_class(false), do: "text-muted hover:bg-base-200 hover:text-base-content"
+
+  defp state_dot_class(:active), do: "bg-st-idle"
+  defp state_dot_class(:archived), do: "bg-st-off"
+  defp state_dot_class(:trashed), do: "bg-st-warn"
+  defp state_dot_class(_), do: "bg-st-off"
+
+  defp state_label(state), do: state |> to_string() |> String.capitalize()
 end

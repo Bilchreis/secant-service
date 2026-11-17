@@ -180,11 +180,11 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
     <div class={[@variant == :row && "border-t border-line py-2 first:border-t-0", @class]}>
       <div class={[@variant == :row && "flex items-start gap-3"]}>
         <div :if={@variant == :row} class="min-w-0 flex-1">
-          <div class="font-mono text-[12.5px] font-semibold">{@command.name}</div>
-          <div :if={@command.description} class="text-[11.5px] text-muted">
+          <div class="font-mono text-[13px] font-semibold">{@command.name}</div>
+          <div :if={@command.description} class="text-xs text-muted">
             {@command.description}
           </div>
-          <div :if={@has_arg} class="mt-0.5 font-mono text-[10.5px] text-muted">
+          <div :if={@has_arg} class="mt-0.5 font-mono text-xs text-muted">
             argument: {SecantServiceWeb.ValueFormat.type_label(@command.datainfo["argument"])}
           </div>
           <div

@@ -27,13 +27,13 @@ defmodule SecantServiceWeb.Components.DashParameter do
     ~H"""
     <div class="border-t border-line py-2.5 first:border-t-0" id={"param-row:" <> @id}>
       <div class="flex items-baseline gap-2">
-        <span class="min-w-0 flex-1 font-mono text-[12.5px] font-semibold break-all">
+        <span class="min-w-0 flex-1 font-mono text-[13px] font-semibold break-all">
           {@parameter.name}
         </span>
-        <span class="font-mono text-[10.5px] text-muted" title={Jason.encode!(@parameter.datainfo)}>
+        <span class="font-mono text-xs text-muted" title={Jason.encode!(@parameter.datainfo)}>
           {@type_label}
         </span>
-        <span class="rounded border border-line px-1 font-mono text-[10px] text-muted">
+        <span class="rounded border border-line px-1 font-mono text-[11px] text-muted">
           {if @parameter.readonly, do: "r", else: "r/w"}
         </span>
         <button
@@ -49,10 +49,10 @@ defmodule SecantServiceWeb.Components.DashParameter do
           <.icon name="hero-chart-bar-micro" class="size-4" />
         </button>
       </div>
-      <div :if={@parameter.description} class="mt-0.5 text-[11.5px] text-muted">
+      <div :if={@parameter.description} class="mt-0.5 text-xs text-muted">
         {@parameter.description}
       </div>
-      <div :if={@limits} class="font-mono text-[10.5px] text-muted">range {@limits}</div>
+      <div :if={@limits} class="font-mono text-xs text-muted">range {@limits}</div>
       <div class="mt-1.5">
         <.live_component
           module={ParameterValueDisplay}
