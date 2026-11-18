@@ -93,7 +93,9 @@ defmodule SecantService.PlotDB.Builders do
     resource
     |> Ash.Query.for_read(:for_parameter, %{
       parameter_id: param.id,
-      end_timestamp: DateTime.add(from_dt, -1, :microsecond),
+      # strictly before the window; rows at from_dt are already in it
+      end_timestamp:
+        DateTime.from_unix!(DateTime.to_unix(from_dt, :microsecond) - 1, :microsecond),
       order: :desc,
       limit: 1
     })
