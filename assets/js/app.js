@@ -24,12 +24,15 @@ import { hooks as colocatedHooks } from "phoenix-colocated/secant_service";
 import topbar from "../vendor/topbar";
 
 import * as echarts from "echarts";
+import { pointTs, trimBefore, withTail } from "./chart_series";
 
 let csrfToken = document
   .querySelector("meta[name='csrf-token']")
   .getAttribute("content");
 
 const maxPoints = 20000;
+// How often a live line chart redraws just to carry its last value up to "now"
+const TAIL_REFRESH_MS = 5000;
 
 // Single shared timer driving all mounted EChartsChart flushes, instead of
 // one setInterval per chart — keeps per-tick cost bounded/coordinated rather
@@ -396,11 +399,7 @@ Hooks.EChartsChart = {
         } else if (!isExpanding && newXMin !== null) {
           // Shrinking: eagerly drop points that scrolled out
           Object.keys(this._seriesData).forEach((idx) => {
-            const d = this._seriesData[idx];
-            if (d.length > 0 && this._pointTs(d[0]) < newXMin) {
-              const cutoff = d.findIndex(p => this._pointTs(p) >= newXMin);
-              this._seriesData[idx] = cutoff === -1 ? [] : d.slice(cutoff);
-            }
+            this._seriesData[idx] = trimBefore(this._seriesData[idx], newXMin);
           });
         }
 
@@ -423,8 +422,7 @@ Hooks.EChartsChart = {
   // Timestamp of a buffered point, regardless of series data shape:
   // plain [ts, ...] arrays (line/scatter/heatmap) or enum's {value: [ts, y], ...} objects.
   _pointTs(point) {
-    if (!point) return null;
-    return Array.isArray(point) ? point[0] : (point.value ? point.value[0] : null);
+    return pointTs(point);
   },
 
   // Earliest timestamp currently buffered across all series, or null if nothing is buffered yet
@@ -445,6 +443,17 @@ Hooks.EChartsChart = {
     const msMap = { minute: 60_000, hour: 3_600_000, day: 86_400_000 };
     const windowMs = (msMap[btn.step] || 0) * (btn.count || 1);
     return { xMin: now - windowMs, xMax: now };
+  },
+
+  _isLineSeries(idx) {
+    const series = this._lastOption && this._lastOption.series;
+    return !!(series && series[idx] && series[idx].type === "line");
+  },
+
+  // Line series get a point at `now` repeating their last value
+  _displayData(idx, now) {
+    const d = this._seriesData[idx];
+    return this._isLineSeries(idx) ? withTail(d, now) : d;
   },
 
   _xAxisPatch(update) {
@@ -470,15 +479,14 @@ Hooks.EChartsChart = {
 
     // The rest (trimming + rebuilding series + heatmap extras) is the expensive
     // part — an ECharts re-diff over up to maxPoints per series — so only do it
-    // when data has actually changed since the last flush.
-    if (this._dataDirty) {
+    // when data has changed, or every TAIL_REFRESH_MS to move line tails to now.
+    const tailDue =
+      now - (this._tailAt || 0) >= TAIL_REFRESH_MS &&
+      Object.keys(this._seriesData).some((idx) => this._isLineSeries(idx));
+    if (this._dataDirty || tailDue) {
       if (xMin !== null) {
         Object.keys(this._seriesData).forEach((idx) => {
-          const d = this._seriesData[idx];
-          if (d.length > 0 && this._pointTs(d[0]) < xMin) {
-            const cutoff = d.findIndex(p => this._pointTs(p) >= xMin);
-            this._seriesData[idx] = cutoff === -1 ? [] : d.slice(cutoff);
-          }
+          this._seriesData[idx] = trimBefore(this._seriesData[idx], xMin);
         });
       } else {
         Object.keys(this._seriesData).forEach((idx) => {
@@ -488,8 +496,9 @@ Hooks.EChartsChart = {
       }
 
       patch.series = Object.keys(this._seriesData).map((idx) => ({
-        data: this._seriesData[idx],
+        data: this._displayData(idx, now),
       }));
+      this._tailAt = now;
 
       if (this._arrayLen != null) {
         patch.yAxis = { max: this._arrayLen - 1 };

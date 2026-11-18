@@ -55,19 +55,50 @@ defmodule SecantService.PlotDB.Builders do
   Whether a plot has enough data to render. For :live plots, data just outside
   the visible window still counts — only truly parameter-less plots are excluded.
   """
-  def plot_available?(vals, _param, :historical), do: length(vals) > 1
-  def plot_available?(vals, param, :live), do: length(vals) > 1 or any_data?(param)
+  # Values are only stored when they change, so a single stored value is a
+  # complete history (the value has not changed since).
+  def plot_available?(vals, _param, :historical), do: vals != []
+  def plot_available?(vals, param, :live), do: vals != [] or any_data?(param)
 
+  @doc """
+  Values and timestamps (ms) of `param` within `[from_ms, to_ms]`.
+
+  Values are stored only when they change (plus a periodic heartbeat), so the
+  value in effect at `from_ms` may have been written long before it. When
+  `from_ms` is given, the last value before the window is included as an
+  anchor point at `from_ms`.
+  """
   def fetch_param_data_in_range(param, from_ms, to_ms) do
+    from_dt = from_ms && DateTime.from_unix!(trunc(from_ms), :millisecond)
+
     args =
       %{parameter_id: param.id}
-      |> maybe_put(:start_timestamp, from_ms && DateTime.from_unix!(trunc(from_ms), :millisecond))
+      |> maybe_put(:start_timestamp, from_dt)
       |> maybe_put(:end_timestamp, to_ms && DateTime.from_unix!(trunc(to_ms), :millisecond))
 
-    ParameterValue.get_resource_module(param)
-    |> Ash.Query.for_read(:for_parameter, args)
-    |> Ash.read!()
+    resource = ParameterValue.get_resource_module(param)
+
+    in_window =
+      resource
+      |> Ash.Query.for_read(:for_parameter, args)
+      |> Ash.read!()
+
+    (anchor_before(resource, param, from_dt) ++ in_window)
     |> ParameterValue.extract_value_timestamp_lists(param)
+  end
+
+  defp anchor_before(_resource, _param, nil), do: []
+
+  defp anchor_before(resource, param, from_dt) do
+    resource
+    |> Ash.Query.for_read(:for_parameter, %{
+      parameter_id: param.id,
+      end_timestamp: DateTime.add(from_dt, -1, :microsecond),
+      order: :desc,
+      limit: 1
+    })
+    |> Ash.read!()
+    |> Enum.map(&%{&1 | timestamp: from_dt})
   end
 
   defp maybe_put(map, _key, nil), do: map

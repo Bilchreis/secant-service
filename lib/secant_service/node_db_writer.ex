@@ -2,6 +2,7 @@ defmodule SecantService.NodeDBWriter do
   use GenServer
   require Logger
 
+  alias SecantService.NodeDBWriter.ChangeFilter
   alias SecantService.SecNodes.ParameterValue
 
   @pubsub_name :secant_client_pubsub
@@ -9,6 +10,8 @@ defmodule SecantService.NodeDBWriter do
   @batch_interval 10_000
   # Safety limit for batch size
   @max_batch_size 1000
+  # Unchanged values are re-written at most this often (see ChangeFilter)
+  @default_heartbeat_ms 600_000
 
   @batch_list [
     :batch_int,
@@ -81,7 +84,11 @@ defmodule SecantService.NodeDBWriter do
        # Single counter for total batch size across all types
        batchsize: 0,
        # Cache of full parameter records (built once, never updated)
-       parameter_cache: parameter_cache
+       parameter_cache: parameter_cache,
+       # Last written value per parameter, so unchanged values are not stored again
+       change_filter: ChangeFilter.new(),
+       heartbeat_ms:
+         Application.get_env(:secant_service, :value_heartbeat_ms, @default_heartbeat_ms)
      }}
   end
 
@@ -105,42 +112,68 @@ defmodule SecantService.NodeDBWriter do
             qualifiers || %{}
           )
 
-        # Get the batch field name for this storage type
-        batch_key = get_batch_key(storage_type)
+        {decision, change_filter} =
+          filter_unchanged(
+            state.change_filter,
+            state.heartbeat_ms,
+            {module, parameter},
+            param_val_map.value
+          )
 
-        # Add to the appropriate batch
-        current_batch = Map.get(state, batch_key)
-        updated_batch = [param_val_map | current_batch]
+        state = %{state | change_filter: change_filter}
 
-        # Update state with new batch and increment total size
-        new_state =
-          state
-          |> Map.put(batch_key, updated_batch)
-          |> Map.put(:batchsize, state.batchsize + 1)
-
-        # Check if we need to flush based on total size
-        if new_state.batchsize >= @max_batch_size do
-          flush_all_batches(new_state)
-
-          # Clear all batches and reset counter
-          {:noreply,
-           %{
-             new_state
-             | batch_int: [],
-               batch_double: [],
-               batch_bool: [],
-               batch_string: [],
-               batch_array_int: [],
-               batch_array_double: [],
-               batch_array_bool: [],
-               batch_array_string: [],
-               batch_json: [],
-               batchsize: 0
-           }}
+        if decision == :skip do
+          {:noreply, state}
         else
-          {:noreply, new_state}
+          add_to_batch(state, storage_type, param_val_map)
         end
     end
+  end
+
+  defp add_to_batch(state, storage_type, param_val_map) do
+    # Get the batch field name for this storage type
+    batch_key = get_batch_key(storage_type)
+
+    # Add to the appropriate batch
+    current_batch = Map.get(state, batch_key)
+    updated_batch = [param_val_map | current_batch]
+
+    # Update state with new batch and increment total size
+    new_state =
+      state
+      |> Map.put(batch_key, updated_batch)
+      |> Map.put(:batchsize, state.batchsize + 1)
+
+    # Check if we need to flush based on total size
+    if new_state.batchsize >= @max_batch_size do
+      flush_all_batches(new_state)
+
+      # Clear all batches and reset counter
+      {:noreply,
+       %{
+         new_state
+         | batch_int: [],
+           batch_double: [],
+           batch_bool: [],
+           batch_string: [],
+           batch_array_int: [],
+           batch_array_double: [],
+           batch_array_bool: [],
+           batch_array_string: [],
+           batch_json: [],
+           batchsize: 0
+       }}
+    else
+      {:noreply, new_state}
+    end
+  end
+
+  # nil values are dropped before insert anyway; don't let them reset the filter
+  defp filter_unchanged(filter, _heartbeat_ms, _key, nil), do: {:write, filter}
+
+  defp filter_unchanged(filter, heartbeat_ms, key, value) do
+    now_ms = System.monotonic_time(:millisecond)
+    ChangeFilter.check(filter, key, value, now_ms, heartbeat_ms)
   end
 
   @impl true
@@ -192,63 +225,75 @@ defmodule SecantService.NodeDBWriter do
 
   @impl true
   def handle_info(:write_initial_values, state) do
-    case SecantService.NodeValues.get_values(state.node_id) do
-      {:ok, values} ->
-        initial_maps =
-          Enum.flat_map(state.parameter_cache, fn {{module_name, param_name}, parameter_db} ->
-            case get_in(values, [module_name, param_name]) do
-              %{data_report: [value, qualifiers]} when not is_nil(value) ->
-                timestamp =
-                  case qualifiers do
-                    %{t: t} -> t
-                    %{"t" => t} -> t
-                    _ -> DateTime.utc_now()
-                  end
+    state =
+      case SecantService.NodeValues.get_values(state.node_id) do
+        {:ok, values} ->
+          {initial_maps, change_filter} =
+            Enum.flat_map_reduce(state.parameter_cache, state.change_filter, fn
+              {{module_name, param_name} = key, parameter_db}, filter ->
+                case get_in(values, [module_name, param_name]) do
+                  %{data_report: [value, qualifiers]} when not is_nil(value) ->
+                    timestamp =
+                      case qualifiers do
+                        %{t: t} -> t
+                        %{"t" => t} -> t
+                        _ -> DateTime.utc_now()
+                      end
 
-                param_val_map =
-                  ParameterValue.create_map(value, parameter_db, timestamp, qualifiers || %{})
+                    param_val_map =
+                      ParameterValue.create_map(value, parameter_db, timestamp, qualifiers || %{})
 
-                [{ParameterValue.get_storage_type(parameter_db), param_val_map}]
+                    case filter_unchanged(filter, state.heartbeat_ms, key, param_val_map.value) do
+                      {:write, filter} ->
+                        {[{ParameterValue.get_storage_type(parameter_db), param_val_map}], filter}
 
-              _ ->
-                []
-            end
-          end)
+                      {:skip, filter} ->
+                        {[], filter}
+                    end
 
-        grouped =
-          Enum.group_by(initial_maps, fn {type, _} -> type end, fn {_, map} -> map end)
+                  _ ->
+                    {[], filter}
+                end
+            end)
 
-        count = length(initial_maps)
-        Logger.info("Writing #{count} initial parameter values for node #{state.equipment_id}")
+          grouped =
+            Enum.group_by(initial_maps, fn {type, _} -> type end, fn {_, map} -> map end)
 
-        Task.start(fn ->
-          Enum.each(grouped, fn {storage_type, maps} ->
-            resource_module = ParameterValue.get_resource_module(storage_type)
-            valid = Enum.reject(maps, fn m -> is_nil(m.value) end)
+          count = length(initial_maps)
+          Logger.info("Writing #{count} initial parameter values for node #{state.equipment_id}")
 
-            unless Enum.empty?(valid) do
-              case Ash.bulk_create(valid, resource_module, :bulk_create,
-                     return_errors?: true,
-                     stop_on_error?: false,
-                     return_records?: false
-                   ) do
-                %Ash.BulkResult{status: :success} ->
-                  :ok
+          Task.start(fn ->
+            Enum.each(grouped, fn {storage_type, maps} ->
+              resource_module = ParameterValue.get_resource_module(storage_type)
+              valid = Enum.reject(maps, fn m -> is_nil(m.value) end)
 
-                %Ash.BulkResult{status: status, error_count: error_count} ->
-                  Logger.warning(
-                    "Initial #{storage_type} insert: #{status}, #{error_count} errors"
-                  )
+              unless Enum.empty?(valid) do
+                case Ash.bulk_create(valid, resource_module, :bulk_create,
+                       return_errors?: true,
+                       stop_on_error?: false,
+                       return_records?: false
+                     ) do
+                  %Ash.BulkResult{status: :success} ->
+                    :ok
+
+                  %Ash.BulkResult{status: status, error_count: error_count} ->
+                    Logger.warning(
+                      "Initial #{storage_type} insert: #{status}, #{error_count} errors"
+                    )
+                end
               end
-            end
+            end)
           end)
-        end)
 
-      {:error, reason} ->
-        Logger.warning(
-          "Could not get initial values for node #{state.equipment_id}: #{inspect(reason)}"
-        )
-    end
+          %{state | change_filter: change_filter}
+
+        {:error, reason} ->
+          Logger.warning(
+            "Could not get initial values for node #{state.equipment_id}: #{inspect(reason)}"
+          )
+
+          state
+      end
 
     {:noreply, state}
   end

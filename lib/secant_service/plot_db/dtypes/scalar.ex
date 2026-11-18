@@ -13,6 +13,8 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
     %{
       name: name,
       type: "line",
+      # values are stored only when they change: hold each value until the next
+      step: "end",
       data: Enum.zip_with(ts_list, val_list, &[&1, &2]),
       symbol: "circle",
       symbolSize: @markersize,
