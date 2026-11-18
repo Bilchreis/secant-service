@@ -3,11 +3,11 @@ defmodule SecantService.PlotDB do
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.DTypePlot
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
+  alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
   alias SecantService.PlotDB.DTypes.Scalar
   alias SecantService.PlotDB.DTypes.Struct, as: StructDType
 
-  alias SecantService.SecNodes.ParameterValue
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.Module
   alias NodeTable
@@ -44,9 +44,35 @@ defmodule SecantService.PlotDB do
   # ---------------------------------------------------------------------------
 
   def init(secop_obj, mode \\ :live) do
-    case secop_obj do
-      %Parameter{} = param -> parameter_plot(param, mode)
-      %Module{} = mod -> module_plot(mod, mode)
+    case long_array(secop_obj) do
+      {param, latest} ->
+        ArrayLatest.plot(param, latest)
+
+      nil ->
+        case secop_obj do
+          %Parameter{} = param -> parameter_plot(param, mode)
+          %Module{} = mod -> module_plot(mod, mode)
+        end
+    end
+  end
+
+  # Arrays longer than the heatmap can carry are plotted as their latest
+  # reading only. Checked before any history is loaded: a few minutes of a
+  # 350 000-element spectrum would be far too much to fetch.
+  defp long_array(%Module{} = module) do
+    case Builders.find_param(module, "value") do
+      nil -> nil
+      param -> long_array(param)
+    end
+  end
+
+  defp long_array(%Parameter{} = param) do
+    with true <- ArrayLatest.numeric_array?(param),
+         {arr, _ts} = latest <- ArrayLatest.fetch_latest(param),
+         true <- length(arr) > @max_array_len do
+      {param, latest}
+    else
+      _ -> nil
     end
   end
 
@@ -106,8 +132,9 @@ defmodule SecantService.PlotDB do
               ArrayHeatmap.heatmap_option(
                 [ArrayHeatmap.heatmap_series(ts, val)],
                 array_len,
-                unit,
-                mode
+                ArrayHeatmap.unit(parameter.datainfo),
+                mode,
+                name: parameter.name
               )
 
             %{
@@ -154,23 +181,10 @@ defmodule SecantService.PlotDB do
       %{"type" => numeric} when numeric in ["double", "int", "scaled", "enum"] ->
         true
 
+      # short arrays as a time × index heatmap, long ones as their latest reading
       %{"type" => "array", "members" => %{"type" => member_type}}
       when member_type in ["double", "int", "scaled"] ->
-        latest =
-          ParameterValue.get_resource_module(parameter)
-          |> Ash.Query.for_read(:for_parameter, %{
-            parameter_id: parameter.id,
-            limit: 1,
-            order: :desc
-          })
-          |> Ash.read_first()
-
-        case latest do
-          {:ok, nil} -> true
-          {:ok, record} when is_list(record.value) -> length(record.value) <= @max_array_len
-          {:ok, _} -> true
-          {:error, _} -> true
-        end
+        true
 
       %{"type" => "struct"} = datainfo ->
         StructDType.supported_type?(datainfo)
@@ -192,6 +206,10 @@ defmodule SecantService.PlotDB do
   # ---------------------------------------------------------------------------
   # Live update formatting
   # ---------------------------------------------------------------------------
+
+  def get_trace_updates_batch(%{plot_type: :array_latest} = plot_map, datapoints, parameter) do
+    ArrayLatest.trace_updates(plot_map, datapoints, parameter)
+  end
 
   # Module plots (from PlotSpec implementations) carry _plot_spec_module for clean dispatch.
   def get_trace_updates_batch(%{_plot_spec_module: mod} = plot_map, datapoints, parameter) do

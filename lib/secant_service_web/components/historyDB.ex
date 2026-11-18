@@ -4,6 +4,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   require Logger
   alias SecantService.PlotDB
   alias SecantService.PlotDB.Builders
+  alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.SecNodes.ParameterValue
   alias Phoenix.LiveView.JS
   alias Phoenix.LiveView.AsyncResult
@@ -198,6 +199,23 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   @impl true
+  # Time slider of a long-array plot: load the reading at (or just before) `t`.
+  def handle_event("fetch-array-reading", %{"t" => t}, socket) when is_integer(t) do
+    with %AsyncResult{ok?: true, result: %{plot_type: :array_latest, _array_param: name}} <-
+           socket.assigns.plot,
+         %{} = param <- resolve_param(socket.assigns.secop_obj, name) do
+      {:noreply,
+       start_async(socket, :array_reading, fn ->
+         case ArrayLatest.fetch_at(param, t) do
+           nil -> nil
+           reading -> Map.put(ArrayLatest.snapshot(reading), :requested, t)
+         end
+       end)}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
   def handle_event("fetch-chart-range", %{"from" => from_ms, "to" => to_ms}, socket) do
     secop_obj = socket.assigns.secop_obj
     plot = socket.assigns.plot.result
@@ -365,6 +383,17 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     {:noreply, assign(socket, :plot, AsyncResult.failed(socket.assigns.plot, {:exit, reason}))}
   end
 
+  def handle_async(:array_reading, {:ok, nil}, socket), do: {:noreply, socket}
+
+  def handle_async(:array_reading, {:ok, snapshot}, socket) do
+    {:noreply, push_event(socket, "array-reading-#{socket.assigns.id}", snapshot)}
+  end
+
+  def handle_async(:array_reading, {:exit, reason}, socket) do
+    Logger.warning("Loading array reading failed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
   def handle_async(:fetch_chart_range, {:ok, update_data}, socket) do
     {:noreply, push_event(socket, "prepend-chart-data-#{socket.assigns.id}", update_data)}
   end
@@ -428,6 +457,16 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         >
           Calibration
         </button>
+        <%!-- Heatmap / Lines switch, filled by the chart hook for array plots --%>
+        <div
+          :if={@display_mode == :graph}
+          id={"array-mode-#{@id}"}
+          phx-update="ignore"
+          role="group"
+          aria-label="Array plot style"
+          class="ml-2 flex rounded border border-line p-0.5 empty:hidden"
+        >
+        </div>
         <span class="flex-1"></span>
         <div
           :if={@display_mode == :graph}
@@ -482,6 +521,13 @@ defmodule SecantServiceWeb.Components.HistoryDB do
                 style={"height: #{@chart_height}px"}
               >
                 <div id={@id} class="h-full" phx-hook="EChartsChart" phx-update="ignore"></div>
+              </div>
+              <%!-- time slider of long-array plots, filled by the chart hook --%>
+              <div
+                id={"array-scrub-#{@id}"}
+                phx-update="ignore"
+                class="mt-1.5 flex items-center gap-2 empty:hidden"
+              >
               </div>
             </.async_result>
           <% else %>

@@ -32,7 +32,7 @@ defmodule SecantService.PlotDB.Drivable do
           if array_len > @max_array_len do
             :not_plottable
           else
-            option = ArrayHeatmap.heatmap_option([ArrayHeatmap.heatmap_series(v_ts, v_val)], array_len, unit, mode)
+            option = ArrayHeatmap.heatmap_option([ArrayHeatmap.heatmap_series(v_ts, v_val)], array_len, ArrayHeatmap.unit(value_param.datainfo), mode, name: value_param.name)
 
             {:ok,
              %{

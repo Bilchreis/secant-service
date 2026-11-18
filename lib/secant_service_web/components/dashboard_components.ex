@@ -418,6 +418,7 @@ defmodule SecantServiceWeb.DashboardComponents do
 
   attr :node, :map, required: true
   attr :selected, :string, default: nil
+  attr :status_map, :map, default: %{}, doc: "module name → status, for the card tint"
 
   attr :node_state, :atom,
     default: :initialized,

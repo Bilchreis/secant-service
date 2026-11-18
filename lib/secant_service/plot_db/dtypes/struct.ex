@@ -265,7 +265,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
               y_opts =
                 if dtype_mod == ArrayHeatmap do
                   array_len = sub_datainfo["minlen"] || sub_datainfo["maxlen"] || 0
-                  %{type: "value", min: 0, max: max(array_len - 1, 0), minInterval: 1}
+                  ArrayHeatmap.index_axis(array_len) |> Map.drop([:name, :nameGap])
                 else
                   if is_enum,
                     do: %{type: "value", axisLabel: %{show: false}, splitLine: %{show: false}},
