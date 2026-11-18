@@ -395,7 +395,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
         <span class={[
           "font-mono",
           if(@size == :lg,
-            do: "text-[26px] leading-tight font-medium tracking-tight",
+            do: "text-[32px] leading-tight font-medium tracking-tight",
             else: "text-sm"
           )
         ]}>
@@ -418,6 +418,8 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
         <.struct_value value={@value} datainfo={@datainfo} size={@size} />
       <% @type == "array" -> %>
         <.array_value value={@value} datainfo={@datainfo} size={@size} />
+      <% @type == "string" and @value == "" -> %>
+        <span class="font-mono text-xs text-muted italic">"" (empty)</span>
       <% @type == "string" -> %>
         <span class="block max-h-32 overflow-y-auto font-mono text-xs break-words whitespace-pre-wrap">{@value}</span>
       <% true -> %>

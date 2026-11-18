@@ -85,13 +85,6 @@ defmodule SecantService.PlotDB.DTypes.Struct do
   ]
 
   @doc """
-  Build a complete multi-grid ECharts option for a struct-typed parameter.
-
-  One grid row per plottable field, stacked vertically. The option includes
-  `_structFields` — an ordered list of `{field_name, dtype_module}` pairs used
-  by `series_updates/3` to decompose live struct updates back to per-field series.
-  """
-  @doc """
   Re-fit a struct plot's sub-grids, titles and colour scales to the real chart
   height in pixels, so title bands, gaps and the time axis keep their size on
   short (dashboard) and tall (history page) charts alike.
@@ -107,7 +100,8 @@ defmodule SecantService.PlotDB.DTypes.Struct do
       grids
       |> Enum.with_index()
       |> Enum.map(fn {g, i} ->
-        h = if i == n - 1, do: l.row + l.x_reserve, else: l.row
+        # labels sit outside the grid (shared gutter), in the reserved band below
+        h = l.row
         %{g | top: pct.(row_top.(i)), height: pct.(h)}
       end)
 
@@ -162,6 +156,13 @@ defmodule SecantService.PlotDB.DTypes.Struct do
     }
   end
 
+  @doc """
+  Build a complete multi-grid ECharts option for a struct-typed parameter.
+
+  One grid row per plottable field, stacked vertically. The option includes
+  `_structFields` — an ordered list of `{field_name, dtype_module}` pairs used
+  by `series_updates/3` to decompose live struct updates back to per-field series.
+  """
   def build_struct_option(param_name, ts, vals, datainfo, mode, opts \\ []) do
     target = Keyword.get(opts, :target)
     fields = plottable_fields(datainfo)
@@ -176,7 +177,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
 
     # Built for the usual chart height (HistoryDB.chart_height/2); fit_height/2
     # redoes the positions once the real height is known.
-    %{band: title_band, top: top_offset, gap: gap, row: row_height, x_reserve: x_axis_reserve} =
+    %{band: title_band, top: top_offset, gap: gap, row: row_height} =
       layout(n, max(n * 80, 240), has_legend)
 
     row_h = row_height + gap
@@ -193,7 +194,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
         %{
           text: text,
           top: "#{Float.round(title_top, 1)}%",
-          left: 85,
+          left: 91,
           padding: [2, 5],
           textStyle: %{fontSize: 12, fontWeight: 600}
         }
@@ -293,7 +294,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
               name: unit,
               nameLocation: "middle",
               nameRotate: 90,
-              nameGap: 35
+              nameGap: 56
             })
           else
             Map.merge(y_type_opts, %{gridIndex: idx})
@@ -337,17 +338,17 @@ defmodule SecantService.PlotDB.DTypes.Struct do
               {colored, new_names, sci + series_count, new_sr}
           end
 
-        grid_height = if(idx == last_idx, do: row_height + x_axis_reserve, else: row_height)
+        grid_height = row_height
 
         {
           [
             %{
               show: true,
-              left: 60,
+              left: 96,
               right: 90,
               top: top,
               height: "#{Float.round(grid_height, 1)}%",
-              containLabel: true,
+              containLabel: false,
               borderWidth: 0,
               backgroundColor: "rgba(255,255,255,0.04)"
             }

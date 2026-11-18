@@ -7,6 +7,7 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
   alias SecantService.Util
   alias SecantService.NodeValues
   alias SecantServiceWeb.SECoPComponents
+  import SecantServiceWeb.CoreComponents, only: [icon: 1]
 
   @impl true
   def mount(socket) do
@@ -133,11 +134,28 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
         {dot, text, code, string && "last known: " <> string}
       end
 
-    assigns = assign(assigns, dot: dot, text: text, code: code, string: string)
+    alarm =
+      assigns.node_state == :initialized and
+        match?(%{stat_color: c} when c in [:warning, :error], assigns.status_value)
+
+    assigns = assign(assigns, dot: dot, text: text, code: code, string: string, alarm: alarm)
 
     ~H"""
     <div class="min-w-0">
-      <span class={["inline-flex items-center gap-1.5 font-mono text-xs font-semibold", @text]}>
+      <span
+        :if={@alarm}
+        class={[
+          "inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs font-semibold text-base-100",
+          @dot
+        ]}
+      >
+        <.icon name="hero-exclamation-triangle-micro" class="size-3.5" />
+        {@code}
+      </span>
+      <span
+        :if={!@alarm}
+        class={["inline-flex items-center gap-1.5 font-mono text-xs font-semibold", @text]}
+      >
         <span class={["size-2 rounded-full", @dot]}></span>
         {@code || "no data"}
       </span>

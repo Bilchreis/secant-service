@@ -106,8 +106,9 @@ const INSPECTOR_KEY = "secant:inspector-width";
 const INSPECTOR_MIN = 320;
 // Leave room for the module rail and one narrow column of cards; the panel
 // may take everything else. CSS caps it the same way on window resize.
-const INSPECTOR_RESERVED = 544; // 34rem
-const inspectorMax = () => Math.max(INSPECTOR_MIN, window.innerWidth - INSPECTOR_RESERVED);
+// From xl the rail (15rem) is shown too; between lg and xl it is hidden.
+const inspectorReserved = () => (window.innerWidth >= 1280 ? 544 : 288); // 34rem / 18rem
+const inspectorMax = () => Math.max(INSPECTOR_MIN, window.innerWidth - inspectorReserved());
 try {
   const saved = parseInt(localStorage.getItem(INSPECTOR_KEY), 10);
   if (saved >= INSPECTOR_MIN) {
@@ -345,6 +346,8 @@ Hooks.EChartsChart = {
     const xAxis = mapAxes(option.xAxis, (ax) => tint(fixAxis(ax)));
     const yAxis = mapAxes(option.yAxis, tint);
     const inactive = isDarkTheme() ? "#6b6b70" : "#9a9aa0";
+    const live = Array.isArray(option._rangeButtons);
+    const series = (option.series || []).map((s) => (s && s._enumBand ? this._enumBand(s, live) : s));
     const legend = mapAxes(
       option.legend,
       (l) => l && { inactiveColor: inactive, ...l, textStyle: { color: muted, ...(l.textStyle || {}) } },
@@ -355,8 +358,38 @@ Hooks.EChartsChart = {
       ...(xAxis ? { xAxis } : {}),
       ...(yAxis ? { yAxis } : {}),
       ...(legend ? { legend } : {}),
+      series,
       backgroundColor: "transparent",
       textStyle: { fontFamily: "JetBrains Mono, ui-monospace, monospace", color: muted, ...(option.textStyle || {}) },
+    };
+  },
+
+  // Enum states as continuous bands: each reading holds until the next one
+  // (and, on live charts, until now). Colour comes from the point's itemStyle.
+  _enumBand(series, live) {
+    return {
+      ...series,
+      renderItem: (params, api) => {
+        const i = params.dataIndexInside;
+        const t0 = api.value(0);
+        const y = api.value(1);
+        const next = i + 1 < params.dataInsideLength ? api.value(0, i + 1) : live ? Date.now() : t0;
+        const p0 = api.coord([t0, y]);
+        const p1 = api.coord([next, y]);
+        const band = api.size([0, 1])[1];
+        const h = Math.max(6, Math.min(18, (band || 30) * 0.6));
+        const rect = echarts.graphic.clipRectByRect(
+          // +1 px overlap so neighbouring segments show no seam
+          { x: p0[0], y: p0[1] - h / 2, width: Math.max(p1[0] - p0[0] + 1, 2), height: h },
+          {
+            x: params.coordSys.x,
+            y: params.coordSys.y,
+            width: params.coordSys.width,
+            height: params.coordSys.height,
+          },
+        );
+        return rect && { type: "rect", shape: rect, style: { fill: api.visual("color") } };
+      },
     };
   },
 
@@ -678,9 +711,18 @@ Hooks.Sparkline = {
     };
 
     this.lines.value.setAttribute("points", steps(value));
+    this.lines.value.style.opacity = range === 0 ? "0.4" : "";
     this.lines.target.setAttribute("points", steps(target));
   },
 };
+
+window.addEventListener("phx:reveal-panel", (e) => {
+  if (window.innerWidth >= 1024) return;
+  const el = document.getElementById(e.detail.id);
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  if (r.top < 0 || r.top > window.innerHeight * 0.5) el.scrollIntoView({ behavior: "smooth", block: "start" });
+});
 
 // CopyToClipboard hook for copying text with visual feedback
 Hooks.CopyToClipboard = {

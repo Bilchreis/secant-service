@@ -352,6 +352,8 @@ defmodule SecantServiceWeb.DashboardComponents do
   attr :mode, :atom, default: :live
   attr :node_state, :atom, default: :initialized
 
+  attr :class, :any, default: nil
+
   def module_rail(assigns) do
     assigns =
       assigns
@@ -361,7 +363,10 @@ defmodule SecantServiceWeb.DashboardComponents do
     ~H"""
     <aside
       id="module-rail"
-      class="w-full rounded-box border border-line bg-base-100 p-2 max-lg:columns-2 max-lg:gap-x-4 sm:max-lg:columns-3 lg:sticky lg:top-[4.25rem] lg:z-[1] lg:max-h-[calc(100vh-5.5rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto"
+      class={[
+        "w-full rounded-box border border-line bg-base-100 p-2 max-lg:columns-2 max-lg:gap-x-4 sm:max-lg:columns-3 lg:sticky lg:top-[4.25rem] lg:z-[1] lg:max-h-[calc(100vh-5.5rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto",
+        @class
+      ]}
       aria-label="Modules"
     >
       <div class="px-1.5 pt-1 pb-1 text-[11px] font-semibold tracking-wider text-muted uppercase [column-span:all]">
@@ -434,6 +439,7 @@ defmodule SecantServiceWeb.DashboardComponents do
             node={@node}
             selected={module.name == @selected}
             node_state={@node_state}
+            status={Map.get(@status_map, module.name)}
           />
         </div>
       </section>
@@ -445,6 +451,7 @@ defmodule SecantServiceWeb.DashboardComponents do
   attr :node, :map, required: true
   attr :selected, :boolean, default: false
   attr :node_state, :atom, default: :initialized
+  attr :status, :atom, default: nil, doc: "SECoP status range: :idle, :busy, :warning, :error"
 
   def module_card(assigns) do
     module = assigns.module
@@ -471,12 +478,19 @@ defmodule SecantServiceWeb.DashboardComponents do
     <article
       id={"card-" <> @module.name}
       class={[
-        "flex min-w-0 flex-col gap-2 rounded-box border bg-base-100 p-3 transition-[color,background-color,border-color,opacity]",
+        "relative flex min-w-0 flex-col gap-2 overflow-hidden rounded-box border p-3 transition-[color,background-color,border-color,opacity]",
         if(@selected, do: "border-primary", else: "border-line"),
+        card_tint(@node_state == :initialized && @status),
         @node_state != :initialized && "border-dashed opacity-75"
       ]}
       data-stale={to_string(@node_state != :initialized)}
+      data-status={@status}
     >
+      <span
+        :if={@node_state == :initialized && @status in [:busy, :warning, :error]}
+        class={["absolute inset-y-0 left-0 w-1", card_edge(@status)]}
+        aria-hidden="true"
+      ></span>
       <header class="flex items-start gap-2">
         <button
           phx-click="select_module"
@@ -562,7 +576,12 @@ defmodule SecantServiceWeb.DashboardComponents do
           phx-value-module={@module.name}
           class="rounded px-1 py-0.5 text-xs text-muted hover:bg-base-200 hover:text-base-content"
         >
-          {length(@module.parameters)} params<span :if={@other_commands > 0}> · {@other_commands} cmds</span>
+          {length(@module.parameters)} params<span :if={@other_commands > 0}> · {@other_commands} {if @other_commands ==
+                                                                                                        1,
+                                                                                                      do:
+                                                                                                        "cmd",
+                                                                                                      else:
+                                                                                                        "cmds"}</span>
           ›
         </button>
       </footer>
@@ -831,7 +850,7 @@ defmodule SecantServiceWeb.DashboardComponents do
     ~H"""
     <aside
       id={@id}
-      class="order-2 flex max-h-[max(45vh,32rem)] w-full shrink-0 overflow-hidden rounded-box border border-line bg-base-100 xl:sticky xl:top-[4.25rem] xl:order-none xl:max-h-[calc(100vh-5.5rem)] xl:w-(--inspector-w) xl:max-w-[calc(100vw-34rem)]"
+      class="flex max-h-[calc(100vh-5.5rem)] w-full shrink-0 scroll-mt-[4.25rem] overflow-hidden rounded-box border border-line bg-base-100 lg:sticky lg:top-[4.25rem] lg:w-(--inspector-w) lg:max-w-[calc(100vw-18rem)] xl:max-w-[calc(100vw-34rem)]"
       aria-label="Selected module"
     >
       <div
@@ -852,4 +871,13 @@ defmodule SecantServiceWeb.DashboardComponents do
     </aside>
     """
   end
+
+  # warn and error tint the whole card; busy only gets the edge
+  defp card_tint(:error), do: "bg-st-error/8"
+  defp card_tint(:warning), do: "bg-st-warn/8"
+  defp card_tint(_), do: "bg-base-100"
+
+  defp card_edge(:error), do: "bg-st-error"
+  defp card_edge(:warning), do: "bg-st-warn"
+  defp card_edge(_), do: "bg-st-busy"
 end

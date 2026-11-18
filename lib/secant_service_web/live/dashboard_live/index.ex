@@ -476,7 +476,9 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     node = socket.assigns.current_node
 
     {:noreply,
-     push_patch(socket, to: ~p"/dashboard?node=#{"#{node.host}:#{node.port}"}&module=#{module}")}
+     socket
+     |> push_patch(to: ~p"/dashboard?node=#{"#{node.host}:#{node.port}"}&module=#{module}")
+     |> push_event("reveal-panel", %{id: "inspector"})}
   end
 
   @impl true

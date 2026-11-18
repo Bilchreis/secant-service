@@ -55,14 +55,14 @@ defmodule SecantService.PlotDB.DTypes.Enum do
         }
       end)
 
+    # drawn by the chart hook as one band per state, from each reading to the
+    # next (see _enumBand in app.js)
     %{
       name: name,
-      type: "line",
-      step: "end",
-      data: data,
-      symbol: "roundRect",
-      symbolSize: [6, 20],
-      lineStyle: %{color: "#666", width: 20, opacity: 0.2}
+      type: "custom",
+      _enumBand: true,
+      encode: %{x: 0, y: 1},
+      data: data
     }
   end
 
@@ -110,7 +110,15 @@ defmodule SecantService.PlotDB.DTypes.Enum do
       grid: %{top: 10, bottom: 40, left: 20, right: 160, containLabel: true},
       xAxis: %{type: "time"},
       yAxis: y_axis,
-      legend: %{orient: "vertical", right: 0, top: "center", data: legend_names},
+      # pages instead of wrapping into columns over the plot in narrow panels
+      legend: %{
+        type: "scroll",
+        orient: "vertical",
+        right: 0,
+        top: 4,
+        bottom: 4,
+        data: legend_names
+      },
       series: series ++ legend_series
     }
 
