@@ -8,12 +8,17 @@ export function pointTs(point) {
   return Array.isArray(point) ? point[0] : point.value ? point.value[0] : null;
 }
 
-// Drop points before xMin, but keep the last one: it holds the value still in
-// effect at the window's left edge.
+// Drop points before xMin, but keep the last reading before it: it holds the
+// value still in effect at the window's left edge. A reading is every point
+// sharing that timestamp (array plots store one point per element).
 export function trimBefore(data, xMin) {
   if (data.length === 0 || pointTs(data[0]) >= xMin) return data;
-  const cutoff = data.findIndex((p) => pointTs(p) >= xMin);
-  return cutoff === -1 ? data.slice(-1) : data.slice(cutoff - 1);
+  let cutoff = data.findIndex((p) => pointTs(p) >= xMin);
+  if (cutoff === -1) cutoff = data.length;
+  const lastTs = pointTs(data[cutoff - 1]);
+  let start = cutoff - 1;
+  while (start > 0 && pointTs(data[start - 1]) === lastTs) start--;
+  return start === 0 ? data : data.slice(start);
 }
 
 // Data for display: an unmarked point at `now` repeating the last value, so
