@@ -3,16 +3,31 @@ name: Build and Push Docker Image
 on:
   push:
     branches: [ "main" ]
+  # PRs build (but don't push) the image to prove the release still builds.
+  # Changes that can't affect the image are skipped.
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - "**.md"
+      - "test/**"
+      - ".github/dependabot.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/security.yml"
   release:
     types: [published]
   # Allow manual triggering
   workflow_dispatch:
 
+# A new push to a PR supersedes the previous build. Pushes to main and
+# releases queue up instead of cancelling, so every tag gets published.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  SCAN_TAG: secant-service:scan
 
 jobs:
   build-and-push:
@@ -22,6 +37,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      security-events: write
 
     steps:
       - name: Checkout repository
@@ -31,6 +47,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to the Container registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -48,11 +65,56 @@ jobs:
             type=semver,pattern={{version}}
             type=sha,format=short
 
-      - name: Build and push Docker image
+      # Build into the local Docker daemon first so the image can be scanned
+      # before anything is published.
+      - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          load: true
+          tags: ${{ env.SCAN_TAG }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Report-only: OS/base-image CVEs show up in the Security tab (and the
+      # job log) without blocking deploys. Only fixable HIGH/CRITICAL issues.
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.SCAN_TAG }}
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          format: table
+
+      - name: Trivy SARIF report
+        if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.SCAN_TAG }}
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-image.sarif
+          # SARIF output ignores `severity` unless this is set.
+          limit-severities-for-sarif: true
+          # The previous step already installed Trivy.
+          skip-setup-trivy: true
+
+      - name: Upload Trivy report
+        if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      # Same inputs as the build step, so this is served from the build cache.
+      - name: Push Docker image
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

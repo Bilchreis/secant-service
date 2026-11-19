@@ -1,0 +1,128 @@
+name: Security
+
+# Runs on PRs to catch new issues before merge, and weekly because new
+# advisories are published against code that hasn't changed.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 5 * * 1" # Mondays 05:23 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  MIX_ENV: test
+  # Fork and Dependabot PRs get a read-only token and can't upload SARIF.
+  CAN_UPLOAD_SARIF: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
+
+jobs:
+  sobelow:
+    name: Sobelow (Phoenix static analysis)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/setup-elixir
+
+      # Existing findings are baselined in .sobelow-skips; only new ones fail.
+      - name: Sobelow (fail on new findings)
+        run: mix sobelow --skip --exit low --format compact
+
+      # The report ignores the baseline so every finding stays visible in the
+      # Security tab until it's actually fixed.
+      - name: Sobelow SARIF report
+        if: ${{ !cancelled() && env.CAN_UPLOAD_SARIF == 'true' }}
+        run: mix sobelow --format sarif > sobelow.sarif
+
+      - name: Upload Sobelow report
+        if: ${{ !cancelled() && env.CAN_UPLOAD_SARIF == 'true' }}
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: sobelow.sarif
+          category: sobelow
+
+  hex-audit:
+    name: Dependency advisories (hex.audit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Erlang/OTP and Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+
+      # Mix needs the deps present to load the project; nothing is compiled.
+      - name: Fetch dependencies
+        run: mix deps.get
+
+      # Fails on retired packages, open advisories, and ignore entries in
+      # mix.exs that no longer match anything (so they get cleaned up).
+      - name: Audit dependencies
+        run: mix hex.audit --check-unused-ignores
+
+      - name: Hex audit SARIF report
+        if: ${{ !cancelled() && env.CAN_UPLOAD_SARIF == 'true' }}
+        run: mix hex.audit --format sarif --output hex-audit.sarif || true
+
+      - name: Upload hex audit report
+        if: ${{ !cancelled() && env.CAN_UPLOAD_SARIF == 'true' }}
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: hex-audit.sarif
+          category: hex-audit
+
+  # PR and main images are scanned at build time in docker-build-push.yml.
+  # This rescans the published main image weekly for newly disclosed CVEs.
+  image-scan:
+    name: Scan published image (Trivy)
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    steps:
+      - name: Image reference
+        run: echo "IMAGE_REF=ghcr.io/${GITHUB_REPOSITORY,,}:main" >> "$GITHUB_ENV"
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          format: sarif
+          output: trivy-image.sarif
+          # SARIF output ignores `severity` unless this is set.
+          limit-severities-for-sarif: true
+
+      - name: Upload Trivy report
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
