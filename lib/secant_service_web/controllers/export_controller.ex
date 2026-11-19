@@ -6,11 +6,17 @@ defmodule SecantServiceWeb.ExportController do
   as CSV (UTC ISO 8601 timestamp, value). Optional `from`/`to` query
   parameters (Unix milliseconds) restrict the time range. Non-scalar values
   are written as JSON in the value column.
+
+  `GET /export/node/:uuid` returns everything recorded for one SEC node as a
+  NeXus (HDF5) file, see `SecantService.NexusExport`. It takes the same
+  `from`/`to` parameters.
   """
   use SecantServiceWeb, :controller
 
+  alias SecantService.NexusExport
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.ParameterValue
+  alias SecantService.SecNodes.SecNode
 
   def parameter(conn, %{"id" => id} = params) do
     with {id, ""} <- Integer.parse(id),
@@ -32,6 +38,23 @@ defmodule SecantServiceWeb.ExportController do
     end
   end
 
+  def node(conn, %{"uuid" => uuid} = params) do
+    with {:ok, %SecNode{} = node} <- Ash.get(SecNode, uuid, not_found_error?: false),
+         {:ok, file} <- NexusExport.node_file(node, time_range(params)) do
+      conn
+      |> put_resp_content_type("application/x-hdf5", nil)
+      |> put_resp_header(
+        "content-disposition",
+        ~s(attachment; filename="#{node_filename(node)}")
+      )
+      |> send_resp(200, file)
+    else
+      {:error, :failed} -> send_resp(conn, 500, "NeXus export failed")
+      {:error, :no_description} -> send_resp(conn, 404, "node has no describe message")
+      _ -> send_resp(conn, 404, "node not found")
+    end
+  end
+
   defp get_parameter(id) do
     Parameter
     |> Ash.Query.for_read(:get_with_context, %{id: id})
@@ -39,7 +62,11 @@ defmodule SecantServiceWeb.ExportController do
   end
 
   defp read_args(parameter_id, params) do
-    %{parameter_id: parameter_id, order: :asc}
+    Map.merge(time_range(params), %{parameter_id: parameter_id, order: :asc})
+  end
+
+  defp time_range(params) do
+    %{}
     |> put_time(:start_timestamp, params["from"])
     |> put_time(:end_timestamp, params["to"])
   end
@@ -54,13 +81,19 @@ defmodule SecantServiceWeb.ExportController do
   defp put_time(args, _key, _), do: args
 
   defp filename(parameter) do
-    node = parameter.module.sec_node
-    equipment = node.equipment_id || "node"
-    uuid = node.uuid |> to_string() |> String.slice(0, 8)
+    node_parts(parameter.module.sec_node)
+    |> Kernel.++([parameter.module.name, parameter.name])
+    |> join_filename(".csv")
+  end
 
-    [equipment, uuid, parameter.module.name, parameter.name]
-    |> Enum.map_join("_", &String.replace(to_string(&1), ~r/[^\w.-]+/, "-"))
-    |> Kernel.<>(".csv")
+  defp node_filename(node), do: node |> node_parts() |> join_filename(".nxs")
+
+  defp node_parts(node) do
+    [node.equipment_id || "node", node.uuid |> to_string() |> String.slice(0, 8)]
+  end
+
+  defp join_filename(parts, extension) do
+    Enum.map_join(parts, "_", &String.replace(to_string(&1), ~r/[^\w.-]+/, "-")) <> extension
   end
 
   defp to_csv(values, parameter) do

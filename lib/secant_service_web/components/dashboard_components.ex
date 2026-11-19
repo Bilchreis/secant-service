@@ -295,6 +295,15 @@ defmodule SecantServiceWeb.DashboardComponents do
         >
           <.icon name="hero-arrow-down-tray-micro" class="size-4" /> ophyd class
         </a>
+        <a
+          id="nexus-export"
+          href={"/export/node/#{@node.uuid}"}
+          download
+          class="btn btn-sm border-line bg-transparent font-normal"
+          title="Download everything recorded for this node as a NeXus (HDF5) file"
+        >
+          <.icon name="hero-arrow-down-tray-micro" class="size-4" /> NeXus
+        </a>
       </div>
     </section>
     """

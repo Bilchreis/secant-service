@@ -62,6 +62,7 @@ defmodule SecantServiceWeb.Router do
     live "/browse", DataBrowserLive.Index, :index
     live "/browse/node/:uuid", NodeBrowserLive.Index, :index
     get "/export/parameter/:id", ExportController, :parameter
+    get "/export/node/:uuid", ExportController, :node
     auth_routes AuthController, SecantService.Accounts.User, path: "/auth"
     sign_out_route AuthController
   end

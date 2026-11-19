@@ -161,7 +161,8 @@ config :pythonx, :uv_init,
   requires-python = "==3.13.*"
   dependencies = [
     "secop_check @ git+https://github.com/Bilchreis/secop_check.git",
-    "secop-ophyd"
+    "secop-ophyd",
+    "secop-to-nexus @ git+https://github.com/Bilchreis/secop-to-nexus.git@ad99c04c30a5af612d07d905b84f0450b4caae93"
   ]
   """
 
