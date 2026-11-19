@@ -87,9 +87,6 @@ defmodule SecantService.NexusExport do
   defp unix_seconds(%DateTime{} = timestamp),
     do: DateTime.to_unix(timestamp, :microsecond) / 1_000_000
 
-  defp unix_seconds(%NaiveDateTime{} = timestamp),
-    do: timestamp |> DateTime.from_naive!("Etc/UTC") |> unix_seconds()
-
   defp pack_values(values, parameter) do
     case ParameterValue.get_storage_type(parameter) do
       :double ->
