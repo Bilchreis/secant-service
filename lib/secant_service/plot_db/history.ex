@@ -11,6 +11,8 @@ defmodule SecantService.PlotDB.History do
   a smaller window, which gets narrower buckets and finally every reading.
   """
 
+  import Ecto.Query
+
   alias SecantService.Repo
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.ParameterValue
@@ -113,7 +115,6 @@ defmodule SecantService.PlotDB.History do
 
   defp empty, do: %{values: [], timestamps: [], aggregated: false, bucket_ms: nil}
 
-  # value tables are fixed names taken from the Ash resources, never user input
   defp table(param) do
     param |> ParameterValue.get_resource_module() |> AshPostgres.DataLayer.Info.table()
   end
@@ -125,10 +126,11 @@ defmodule SecantService.PlotDB.History do
   end
 
   defp bounds(table, id, from_ms, to_ms) do
-    %{rows: [[first, last]]} =
-      Repo.query!(
-        ~s|SELECT min("timestamp"), max("timestamp") FROM #{table} WHERE parameter_id = $1|,
-        [id]
+    {first, last} =
+      Repo.one(
+        from v in table,
+          where: v.parameter_id == ^id,
+          select: {min(v.timestamp), max(v.timestamp)}
       )
 
     if first do
@@ -140,32 +142,24 @@ defmodule SecantService.PlotDB.History do
     ms |> trunc() |> DateTime.from_unix!(:millisecond) |> DateTime.to_naive()
   end
 
+  defp readings(table, id, from, to) do
+    from v in table,
+      where: v.parameter_id == ^id and v.timestamp >= ^from and v.timestamp <= ^to
+  end
+
   # number of readings in the window, counting no further than `limit`
   defp count_up_to(table, id, from, to, limit) do
-    %{rows: [[count]]} =
-      Repo.query!(
-        """
-        SELECT count(*) FROM (
-          SELECT 1 FROM #{table}
-          WHERE parameter_id = $1 AND "timestamp" >= $2 AND "timestamp" <= $3
-          LIMIT $4
-        ) readings
-        """,
-        [id, from, to, limit]
-      )
+    capped = from v in readings(table, id, from, to), limit: ^limit, select: %{one: 1}
 
-    count
+    Repo.one(from r in subquery(capped), select: count())
   end
 
   defp raw(table, id, from, to) do
-    %{rows: rows} =
-      Repo.query!(
-        """
-        SELECT "timestamp", value FROM #{table}
-        WHERE parameter_id = $1 AND "timestamp" >= $2 AND "timestamp" <= $3
-        ORDER BY "timestamp"
-        """,
-        [id, from, to]
+    rows =
+      Repo.all(
+        from v in readings(table, id, from, to),
+          order_by: v.timestamp,
+          select: [v.timestamp, v.value]
       )
 
     {timestamps, values} = rows |> Enum.map(&point/1) |> Enum.unzip()
@@ -176,20 +170,23 @@ defmodule SecantService.PlotDB.History do
   # and highest value. `first(a, b)` is TimescaleDB's "a of the row with the
   # smallest b", so `first("timestamp", value)` is when the minimum occurred.
   defp bucketed(table, id, from, to, bucket_ms) do
-    %{rows: rows} =
-      Repo.query!(
-        """
-        SELECT
-          min("timestamp"), first(value, "timestamp"),
-          first("timestamp", value), min(value),
-          last("timestamp", value), max(value),
-          max("timestamp"), last(value, "timestamp")
-        FROM #{table}
-        WHERE parameter_id = $1 AND "timestamp" >= $2 AND "timestamp" <= $3
-        GROUP BY time_bucket($4::interval, "timestamp")
-        ORDER BY 1
-        """,
-        [id, from, to, %Postgrex.Interval{microsecs: bucket_ms * 1000}]
+    width = %Postgrex.Interval{microsecs: bucket_ms * 1000}
+
+    rows =
+      Repo.all(
+        from v in readings(table, id, from, to),
+          group_by: fragment("time_bucket(?::interval, ?)", ^width, v.timestamp),
+          order_by: min(v.timestamp),
+          select: [
+            min(v.timestamp),
+            fragment("first(?, ?)", v.value, v.timestamp),
+            fragment("first(?, ?)", v.timestamp, v.value),
+            min(v.value),
+            fragment("last(?, ?)", v.timestamp, v.value),
+            max(v.value),
+            max(v.timestamp),
+            fragment("last(?, ?)", v.value, v.timestamp)
+          ]
       )
 
     {timestamps, values} =
