@@ -6,6 +6,8 @@ config :secant_service, SecantService.Repo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
+  # The TimescaleDB container from compose.dev.yml; PGPORT overrides it
+  port: String.to_integer(System.get_env("PGPORT", "5435")),
   database: "secant_service_dev",
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,

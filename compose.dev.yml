@@ -1,0 +1,31 @@
+# Development database: Postgres 17 + TimescaleDB, the same image as the db
+# service in docker-compose.yml. config/dev.exs and config/test.exs connect to
+# it on 127.0.0.1:5435 by default (override with PGPORT).
+#
+#   docker compose -f compose.dev.yml up -d
+#
+# Its own project name keeps it apart from the production compose project in
+# this directory, so `down` here never touches those containers.
+name: secant-service-dev
+
+services:
+  db:
+    build: docker/postgres
+    image: secant-service-postgres:17-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - 127.0.0.1:5435:5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+    name: secant-pgdata

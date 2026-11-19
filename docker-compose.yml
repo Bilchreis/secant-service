@@ -1,7 +1,12 @@
 services:
 
   db:
-    image: postgres:17.4
+    # Postgres 17 with TimescaleDB (the parameter value tables are hypertables).
+    # Built locally from docker/postgres on the same Debian base the plain
+    # postgres:17.4 image used, so an existing ./postgres-data volume can be
+    # reused: `docker compose up -d --build db`.
+    build: docker/postgres
+    image: secant-service-postgres:17-timescaledb
     env_file: ".env.example"
     restart: always
     volumes:
