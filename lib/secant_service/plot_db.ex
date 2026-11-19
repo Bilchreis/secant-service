@@ -66,7 +66,7 @@ defmodule SecantService.PlotDB do
     resolution =
       secop_obj
       |> history_params()
-      |> Enum.map(&History.resolution(&1, nil, nil))
+      |> Enum.map(&Parameter.history_resolution!(&1.id, nil, nil))
       |> History.coarsest()
 
     put_in(plot, [:option, :_windowFetch], resolution)

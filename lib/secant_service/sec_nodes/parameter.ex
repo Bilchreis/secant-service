@@ -16,6 +16,11 @@ defmodule SecantService.SecNodes.Parameter do
     identity_index_names module_id_name: "parameters_module_id_name_index"
   end
 
+  code_interface do
+    define :history_window, args: [:parameter_id, :from_ms, :to_ms]
+    define :history_resolution, args: [:parameter_id, :from_ms, :to_ms]
+  end
+
   actions do
     defaults [:read, :destroy]
 
@@ -75,6 +80,35 @@ defmodule SecantService.SecNodes.Parameter do
       filter expr(id == ^arg(:id))
 
       prepare build(load: [module: [sec_node: [:node_id]]])
+    end
+
+    # Readings for the historical plots, thinned out in the database when the
+    # window holds more than a chart can show. See `SecantService.PlotDB.History`.
+    action :history_window, :map do
+      description "Readings of a numeric parameter in a time window, thinned out if there are many."
+
+      argument :parameter_id, :integer, allow_nil?: false
+      # Unix milliseconds, inclusive; nil = from the first / to the last reading
+      argument :from_ms, :integer
+      argument :to_ms, :integer
+      # a window with at most this many readings is returned in full
+      argument :max_raw, :integer, constraints: [min: 1]
+      # otherwise it is split into at most this many time buckets
+      argument :max_buckets, :integer, constraints: [min: 1]
+
+      run SecantService.SecNodes.Actions.HistoryWindow
+    end
+
+    action :history_resolution, :map do
+      description "How :history_window would answer (thinned out or not, bucket width), without loading the readings."
+
+      argument :parameter_id, :integer, allow_nil?: false
+      argument :from_ms, :integer
+      argument :to_ms, :integer
+      argument :max_raw, :integer, constraints: [min: 1]
+      argument :max_buckets, :integer, constraints: [min: 1]
+
+      run SecantService.SecNodes.Actions.HistoryWindow
     end
   end
 

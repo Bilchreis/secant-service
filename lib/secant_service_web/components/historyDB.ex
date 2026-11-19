@@ -6,6 +6,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.History
   alias SecantService.PlotDB.DTypes.ArrayLatest
+  alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.ParameterValue
   alias Phoenix.LiveView.JS
   alias Phoenix.LiveView.AsyncResult
@@ -319,7 +320,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       start_async(socket, :fetch_chart_window, fn ->
         windows =
           for param <- PlotDB.history_params(secop_obj) do
-            {param, History.window(param, from_ms, to_ms)}
+            {param, Parameter.history_window!(param.id, trunc(from_ms), trunc(to_ms))}
           end
 
         updates =

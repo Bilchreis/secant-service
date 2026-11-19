@@ -21,7 +21,7 @@ defmodule SecantService.PlotDB.Builders do
   # (see `History`). The chart asks for more detail when it is zoomed in.
   def fetch_param_data(param, :historical) do
     if History.numeric?(param) do
-      %{values: values, timestamps: timestamps} = History.window(param, nil, nil)
+      %{values: values, timestamps: timestamps} = Parameter.history_window!(param.id, nil, nil)
       {values, timestamps}
     else
       get_values(param) |> ParameterValue.extract_value_timestamp_lists(param)
