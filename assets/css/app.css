@@ -19,8 +19,8 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Secant "A6b" look: neutral greys, one violet accent, status colours kept
-   separate. Fonts are vendored in priv/static/fonts (SIL OFL 1.1) so the UI
+   Secant look in the Helmholtz-Zentrum Berlin (HZB) palette: HZB greys,
+   HZB blue (#00589c) as the one accent, status colours kept separate. Fonts are vendored in priv/static/fonts (SIL OFL 1.1) so the UI
    works on beamline networks without internet access.
    --------------------------------------------------------------------------- */
 
@@ -77,12 +77,12 @@
   --color-base-200: #0e0e0f;
   --color-base-300: #1f1f21;
   --color-base-content: #ededed;
-  --color-primary: oklch(56% 0.25 292.717);
-  --color-primary-content: oklch(96% 0.016 293.756);
-  --color-secondary: oklch(58% 0.233 277.117);
-  --color-secondary-content: oklch(96% 0.018 272.314);
-  --color-accent: oklch(60% 0.25 292.717);
-  --color-accent-content: oklch(96% 0.016 293.756);
+  --color-primary: #0078c8;
+  --color-primary-content: #ffffff;
+  --color-secondary: #00589c;
+  --color-secondary-content: #ffffff;
+  --color-accent: #009ee0;
+  --color-accent-content: #001a2b;
   --color-neutral: #2a2a2d;
   --color-neutral-content: #ededed;
   --color-info: oklch(72% 0.11 240);
@@ -109,17 +109,17 @@
   prefersdark: false;
   color-scheme: "light";
   --color-base-100: #ffffff;
-  --color-base-200: #f4f4f5;
-  --color-base-300: #ececee;
-  --color-base-content: #111113;
-  --color-primary: oklch(56% 0.25 292.717);
-  --color-primary-content: oklch(96% 0.016 293.756);
-  --color-secondary: oklch(58% 0.233 277.117);
-  --color-secondary-content: oklch(96% 0.018 272.314);
-  --color-accent: oklch(60% 0.25 292.717);
-  --color-accent-content: oklch(96% 0.016 293.756);
-  --color-neutral: #e4e4e7;
-  --color-neutral-content: #111113;
+  --color-base-200: #f0f0f1;
+  --color-base-300: #e6e6e8;
+  --color-base-content: #303030;
+  --color-primary: #00589c;
+  --color-primary-content: #ffffff;
+  --color-secondary: #003560;
+  --color-secondary-content: #ffffff;
+  --color-accent: #009ee0;
+  --color-accent-content: #001a2b;
+  --color-neutral: #d0d1d3;
+  --color-neutral-content: #303030;
   --color-info: oklch(52% 0.13 240);
   --color-info-content: #ffffff;
   --color-success: #17794a;
@@ -156,9 +156,9 @@
 
 :root,
 [data-theme="light"] {
-  --sc-line: #d4d4d8;
-  --sc-muted: #56565c;
-  --sc-ink: oklch(52% 0.25 292.717);
+  --sc-line: #d0d1d3;
+  --sc-muted: #515151;
+  --sc-ink: #00589c;
   --sc-st-idle: #17794a;
   --sc-st-warn: #b04a0b;
   --sc-st-busy: #8a5f00;
@@ -169,7 +169,7 @@
 [data-theme="dark"] {
   --sc-line: #333336;
   --sc-muted: #a3a3a8;
-  --sc-ink: oklch(77% 0.15 292.717);
+  --sc-ink: #4cb8ec;
   --sc-st-idle: #4cc38a;
   --sc-st-warn: #f28f55;
   --sc-st-busy: #e8b545;
@@ -181,7 +181,7 @@
   :root:not([data-theme="light"]) {
     --sc-line: #333336;
     --sc-muted: #a3a3a8;
-    --sc-ink: oklch(77% 0.15 292.717);
+    --sc-ink: #4cb8ec;
     --sc-st-idle: #4cc38a;
     --sc-st-warn: #f28f55;
     --sc-st-busy: #e8b545;
