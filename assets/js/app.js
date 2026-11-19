@@ -52,6 +52,11 @@ const ARRAY_LINE_STOPS = [
   [245, 158, 11],
   [244, 63, 94],
 ];
+// Text from the node's description (units, names) going into tooltip HTML.
+function escHtml(v) {
+  return String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
 // Axis and scale labels that stay readable for tiny or huge values
 // (e.g. partial pressures of 1e-13 mbar): exponent form outside 1e-3 … 1e6.
 function formatAxisNumber(v) {
@@ -253,6 +258,14 @@ Hooks.EChartsChart = {
       this._arrayLatest = _arrayLatest || null;
       this._arrayTimes = Array.isArray(_arrayTimes) ? _arrayTimes : null;
       this._scrubIndex = null; // null = follow the latest reading
+      this._wantT = null;
+      // the starting reading may not be in the database yet either: cache it
+      // like a live one so "latest" on the slider finds it
+      this._liveReadings = new Map();
+      if (_arrayLatest && _arrayLatest.t != null) {
+        const { unit: _u, ...info } = _arrayLatest;
+        this._liveReadings.set(_arrayLatest.t, { ...info, data: (echartsOption.series?.[0]?.data) || [] });
+      }
 
       this._seriesData = {};
       this._visualMapMin = null;
@@ -302,11 +315,13 @@ Hooks.EChartsChart = {
       this._chart && this._chart.setOption(this._themed(echartsOption), { notMerge: true });
     });
 
-    this.handleEvent(`prepend-chart-data-${this.el.id}`, ({ seriesUpdates }) => {
+    this.handleEvent(`prepend-chart-data-${this.el.id}`, ({ seriesUpdates, arrayLen }) => {
       (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
         if (!this._seriesData[seriesIndex]) this._seriesData[seriesIndex] = [];
         this._seriesData[seriesIndex] = [...data, ...this._seriesData[seriesIndex]];
+        if (this._arrayLen != null && seriesIndex === 0) this._trackHeatRange(data);
       });
+      this._growArrayLen(arrayLen);
       this._dataDirty = true;
     });
 
@@ -323,25 +338,21 @@ Hooks.EChartsChart = {
           this._liveReadings.set(snapshot.t, snapshot);
           if (this._liveReadings.size > 30) this._liveReadings.delete(this._liveReadings.keys().next().value);
         }
-        if (this._scrubIndex == null) this._applySnapshot(snapshot);
+        if (this._scrubIndex == null) {
+          // a DB reply still on its way is older than this reading
+          this._wantT = null;
+          this._applySnapshot(snapshot);
+        }
         this._renderScrub();
         return;
       }
       (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
         if (!this._seriesData[seriesIndex]) this._seriesData[seriesIndex] = [];
         this._seriesData[seriesIndex].push(...data);
-        // Update running min/max for heatmap series (values at index 2)
-        if (this._arrayLen != null && seriesIndex === 0) {
-          for (const p of data) {
-            const v = p[2];
-            if (this._visualMapMin === null || v < this._visualMapMin) this._visualMapMin = v;
-            if (this._visualMapMax === null || v > this._visualMapMax) this._visualMapMax = v;
-          }
-        }
+        // running min/max of the heatmap values
+        if (this._arrayLen != null && seriesIndex === 0) this._trackHeatRange(data);
       });
-      if (arrayLen != null && arrayLen !== this._arrayLen) {
-        this._arrayLen = arrayLen;
-      }
+      this._growArrayLen(arrayLen);
       this._dataDirty = true;
     });
 
@@ -435,7 +446,7 @@ Hooks.EChartsChart = {
       ? option.yAxis.map((ax, i) => tint(intLabels(ax, i)))
       : option.yAxis && tint(intLabels(option.yAxis, 0));
     const inactive = isDarkTheme() ? "#6b6b70" : "#9a9aa0";
-    const live = Array.isArray(option._rangeButtons);
+    const live = Array.isArray(this._rangeButtons);
     const series = (option.series || []).map((s, i) => {
       if (s && s._enumBand) return this._enumBand(s, live);
       if (s && s._arrayHeat) return this._arrayHeat(s, live, i);
@@ -652,6 +663,7 @@ Hooks.EChartsChart = {
     if (!box) return;
     if (!this._arrayLatest || !times || times.length < 2) {
       box.innerHTML = "";
+      box._built = false;
       return;
     }
     const last = times.length - 1;
@@ -702,7 +714,7 @@ Hooks.EChartsChart = {
     const today = d.toDateString() === new Date().toDateString();
     label.textContent = `${idx + 1}/${times.length} · ${today ? d.toLocaleTimeString([], { hour12: false }) : d.toLocaleString([], { hour12: false })}`;
     const following = this._scrubIndex == null;
-    live.textContent = following ? (this._rangeButtons ? "following" : "latest") : "latest ›";
+    live.textContent = following ? "latest" : "latest ›";
     live.disabled = following;
     live.title = following ? "Showing the newest reading" : "Jump to the newest reading";
     ["bg-base-300", "text-base-content", "font-semibold"].forEach((c) => live.classList.toggle(c, !following));
@@ -725,10 +737,10 @@ Hooks.EChartsChart = {
       this._applySnapshot(cached);
       return;
     }
-    const load = () => {
-      this._wantT = t;
-      this.pushEventTo(this.el, "fetch-array-reading", { t });
-    };
+    // claim the reading now, so a reply for an earlier position is dropped
+    // even while the debounce is still running
+    this._wantT = t;
+    const load = () => this.pushEventTo(this.el, "fetch-array-reading", { t });
     if (debounce) this._scrubTimer = setTimeout(load, 120);
     else load();
   },
@@ -753,7 +765,7 @@ Hooks.EChartsChart = {
   _composeOption(option) {
     if (this._arrayLatest) {
       const css = getComputedStyle(document.documentElement);
-      const unit = this._arrayLatest.unit ? ` ${this._arrayLatest.unit}` : "";
+      const unit = this._arrayLatest.unit ? ` ${escHtml(this._arrayLatest.unit)}` : "";
       return {
         ...option,
         title: {
@@ -842,7 +854,7 @@ Hooks.EChartsChart = {
 
   _linesTooltip(ps) {
     if (!ps || ps.length === 0) return "";
-    const esc = (v) => String(v).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+    const esc = escHtml;
     const time = new Date(ps[0].value[0]).toLocaleTimeString([], { hour12: false });
     const unit = this._arrayUnit ? ` ${esc(this._arrayUnit)}` : "";
     const fmt = (v) => (typeof v === "number" ? formatAxisNumber(v) : esc(v));
@@ -919,6 +931,21 @@ Hooks.EChartsChart = {
     this._flushBuffer();
   },
 
+  // heatmap points are [t, index, value]
+  _trackHeatRange(data) {
+    for (const p of data) {
+      const v = p[2];
+      if (this._visualMapMin === null || v < this._visualMapMin) this._visualMapMin = v;
+      if (this._visualMapMax === null || v > this._visualMapMax) this._visualMapMax = v;
+    }
+  },
+
+  // the index axis only grows: older, longer readings stay in the buffer
+  _growArrayLen(arrayLen) {
+    if (this._arrayLen == null || arrayLen == null) return;
+    if (arrayLen > this._arrayLen) this._arrayLen = arrayLen;
+  },
+
   _applyInitialOption(echartsOption) {
     this._lastOption = echartsOption;
     this._heatCache = {};
@@ -940,7 +967,12 @@ Hooks.EChartsChart = {
 
   _renderRangeButtons() {
     const buttonsEl = document.getElementById(`range-buttons-${this.el.id}`);
-    if (!buttonsEl || !this._rangeButtons) return;
+    if (!buttonsEl) return;
+    if (!this._rangeButtons) {
+      // e.g. a heatmap that switched to the latest-reading plot
+      buttonsEl.innerHTML = "";
+      return;
+    }
 
     buttonsEl.innerHTML = "";
     this._rangeButtons.forEach((btn, index) => {
@@ -1114,14 +1146,12 @@ Hooks.EChartsChart = {
 
 // ---------------------------------------------------------------------------
 // Sparkline: 10-minute trend of a module's value (and target) on the cards.
-// The server sends the history once and then only new readings; the lines are
-// drawn here so the server keeps no per-card buffer and re-sends no SVG.
+// The server sends the history once and then only new readings. Drawn with a
+// small ECharts instance (SVG renderer, no axes) so hovering shows the value.
 // ---------------------------------------------------------------------------
 
 const SPARK_WINDOW_MS = 10 * 60 * 1000;
 const SPARK_MAX_POINTS = 2000;
-const SPARK_W = 200;
-const SPARK_H = 32;
 
 // one timer for all sparklines: keeps the time axis moving between batches
 const SparkDriver = {
@@ -1129,7 +1159,8 @@ const SparkDriver = {
   _timer: null,
   add(hook) {
     this._hooks.add(hook);
-    if (!this._timer) this._timer = setInterval(() => this._hooks.forEach((h) => h._visible && h.draw()), 3000);
+    if (!this._timer)
+      this._timer = setInterval(() => !document.hidden && this._hooks.forEach((h) => h._visible && h.draw()), 3000);
   },
   remove(hook) {
     this._hooks.delete(hook);
@@ -1149,13 +1180,51 @@ const SparkVisibility = new IntersectionObserver((entries) => {
   });
 });
 
+// Shared look of the small card charts: no axes, no animation, a compact
+// tooltip appended to <body> so the card does not clip it.
+function sparkBase(formatter) {
+  const muted = getComputedStyle(document.documentElement).getPropertyValue("--sc-muted").trim() || "#888";
+  const dark = isDarkTheme();
+  return {
+    muted,
+    base: {
+      animation: false,
+      grid: { left: 1, right: 1, top: 3, bottom: 3 },
+      yAxis: { type: "value", scale: true, show: false, splitLine: { show: false } },
+      tooltip: {
+        trigger: "axis",
+        appendTo: "body",
+        transitionDuration: 0,
+        padding: [4, 8],
+        backgroundColor: dark ? "#1f1f22" : "#ffffff",
+        borderColor: dark ? "#333336" : "#d4d4d8",
+        textStyle: { fontSize: 11, color: dark ? "#e4e4e7" : "#27272a" },
+        axisPointer: { type: "line", lineStyle: { color: muted, width: 1, type: "dashed" } },
+        formatter,
+      },
+    },
+  };
+}
+
+// y range from the data; a flat line sits in the middle
+function sparkRange(lo, hi) {
+  const pad = hi === lo ? Math.abs(lo) * 0.1 || 1 : 0;
+  return { min: lo - pad, max: hi + pad };
+}
+
+function sparkTime(ms) {
+  const d = new Date(ms);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 Hooks.Sparkline = {
   mounted() {
     this.series = { value: [], target: [] };
     this.skew = 0; // node clock minus browser clock, from the newest readings
     this._visible = true;
-    const q = (role) => this.el.querySelector(`[data-role=${role}]`);
-    this.lines = { value: q("value"), target: q("target"), empty: q("empty") };
+    this.unit = this.el.dataset.unit || "";
+    this.box = this.el.querySelector("[data-role=chart]");
+    this.empty = this.el.querySelector("[data-role=empty]");
 
     this.handleEvent(`spark-init-${this.el.id}`, (history) => {
       ["value", "target"].forEach((s) => {
@@ -1164,7 +1233,7 @@ Hooks.Sparkline = {
         // keep live readings that arrived while the history was loading
         this.series[s] = hist.concat(this.series[s].filter((p) => p[0] > lastT));
       });
-      this.draw();
+      if (this._visible) this.draw();
     });
 
     this.handleEvent(`spark-add-${this.el.id}`, ({ s, p }) => {
@@ -1174,6 +1243,16 @@ Hooks.Sparkline = {
       this.skew = p[p.length - 1][0] - Date.now();
       if (this._visible) this.draw();
     });
+
+    this._onThemeChange = () => {
+      if (!this.chart) return;
+      this.chart.dispose();
+      this.chart = null;
+      this.draw();
+    };
+    ThemeWatch.add(this._onThemeChange);
+    this._resize = new ResizeObserver(() => this.chart && this.chart.resize());
+    this._resize.observe(this.box);
 
     this.el._sparkHook = this;
     SparkVisibility.observe(this.el);
@@ -1189,6 +1268,77 @@ Hooks.Sparkline = {
   destroyed() {
     SparkDriver.remove(this);
     SparkVisibility.unobserve(this.el);
+    ThemeWatch.remove(this._onThemeChange);
+    this._resize && this._resize.disconnect();
+    this.chart && this.chart.dispose();
+    this.chart = null;
+  },
+
+  // created on first draw with data, so cards off screen or without readings
+  // cost nothing
+  _ensureChart() {
+    if (this.chart) return this.chart;
+    if (!this.box.clientWidth) return null;
+    const { muted, base } = sparkBase((items) => this._tooltip(items));
+    this.chart = echarts.init(this.box, null, { renderer: "svg" });
+    this.chart.setOption({
+      ...base,
+      xAxis: { type: "time", show: false },
+      series: [
+        {
+          name: "value",
+          type: "line",
+          step: "end",
+          showSymbol: false,
+          symbolSize: 5,
+          lineStyle: { width: 1.5, color: CHART_PALETTE[0] },
+          itemStyle: { color: CHART_PALETTE[0] },
+          emphasis: { disabled: true },
+          data: [],
+        },
+        {
+          name: "target",
+          type: "line",
+          step: "end",
+          showSymbol: false,
+          symbolSize: 4,
+          lineStyle: { width: 1, type: [3, 2], color: muted },
+          itemStyle: { color: muted },
+          emphasis: { disabled: true },
+          data: [],
+        },
+      ],
+    });
+    return this.chart;
+  },
+
+  // value and target in force at the hovered time (each reading holds until
+  // the next), not just the readings that happen to lie under the cursor
+  _tooltip(items) {
+    if (!items.length) return "";
+    const t = items[0].axisValue;
+    const at = (points) => {
+      let lo = 0;
+      let hi = points.length - 1;
+      if (hi < 0 || points[0][0] > t) return null;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (points[mid][0] <= t) lo = mid;
+        else hi = mid - 1;
+      }
+      return points[lo][1];
+    };
+    const fmt = (v) => `${formatAxisNumber(v)}${this.unit ? ` ${escHtml(this.unit)}` : ""}`;
+    const row = (label, v) =>
+      v === null
+        ? ""
+        : `<div style="display:flex;justify-content:space-between;gap:12px">` +
+          `<span style="opacity:.7">${label}</span><b style="font-variant-numeric:tabular-nums">${fmt(v)}</b></div>`;
+    return (
+      `<div style="opacity:.7;margin-bottom:2px">${sparkTime(t)}</div>` +
+      row("value", at(this.series.value)) +
+      row("target", at(this.series.target))
+    );
   },
 
   // drop readings that left the window, but keep the last one before it so
@@ -1206,44 +1356,139 @@ Hooks.Sparkline = {
     this.series.target = this._trim(this.series.target, cutoff);
     const { value, target } = this.series;
 
-    if (value.length === 0) {
-      this.lines.empty.style.display = "";
-      this.lines.value.setAttribute("points", "");
-      this.lines.target.setAttribute("points", "");
-      return;
-    }
-    this.lines.empty.style.display = "none";
+    this.empty.style.display = value.length ? "none" : "";
+    this.box.style.visibility = value.length ? "" : "hidden";
+    if (value.length === 0) return;
+    const chart = this._ensureChart();
+    if (!chart) return;
 
-    // x spans 10 minutes, or less while there is less data (fresh node); the
-    // value line sets the start, older target readings are clamped to it
+    // x spans 10 minutes, or less while there is less data (fresh node)
     const start = Math.max(cutoff, Math.min(value[0][0], now - 60_000));
-    const span = Math.max(now - start, 1);
-
+    // each reading holds until the next one, the last one until now
+    const held = (points) => (points.length ? points.concat([[now, points[points.length - 1][1]]]) : []);
+    // tight y range from the data (ECharts' own range rounds outward and
+    // leaves a flat line at the bottom); a flat line sits in the middle
     let lo = Infinity;
     let hi = -Infinity;
     for (const p of value.concat(target)) {
       if (p[1] < lo) lo = p[1];
       if (p[1] > hi) hi = p[1];
     }
-    const range = hi - lo;
-    const x = (t) => Math.max(0, ((t - start) / span) * SPARK_W).toFixed(1);
-    const y = (v) => (range === 0 ? SPARK_H / 2 : SPARK_H - 3 - ((v - lo) / range) * (SPARK_H - 6)).toFixed(1);
+    const flat = hi === lo;
 
-    // step line: each reading holds until the next one, then until now
-    const steps = (points) => {
-      if (points.length === 0) return "";
-      const out = [];
-      points.forEach((p, i) => {
-        if (i > 0) out.push(`${x(p[0])},${y(points[i - 1][1])}`);
-        out.push(`${x(p[0])},${y(p[1])}`);
-      });
-      out.push(`${SPARK_W},${y(points[points.length - 1][1])}`);
-      return out.join(" ");
+    chart.setOption({
+      xAxis: { min: start, max: now },
+      yAxis: sparkRange(lo, hi),
+      series: [
+        { data: held(value), lineStyle: { opacity: flat ? 0.4 : 1 } },
+        { data: held(target) },
+      ],
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------
+// ArraySpark: latest reading of a numeric array on the cards, plotted against
+// index. The server sends thinned [index, value] points in data-points and
+// replaces the attribute with each reading; hovering shows index and value.
+// ---------------------------------------------------------------------------
+
+const ArraySparkVisibility = new IntersectionObserver((entries) => {
+  entries.forEach((e) => {
+    const hook = e.target._arraySparkHook;
+    if (!hook) return;
+    hook._visible = e.isIntersecting;
+    if (hook._visible && hook._stale) hook.draw();
+  });
+});
+
+Hooks.ArraySpark = {
+  mounted() {
+    this._visible = true;
+    this._stale = true;
+    this._onThemeChange = () => {
+      if (!this.chart) return;
+      this.chart.dispose();
+      this.chart = null;
+      this._stale = true;
+      this.draw();
     };
+    ThemeWatch.add(this._onThemeChange);
+    this._resize = new ResizeObserver(() => (this.chart ? this.chart.resize() : this._stale && this.draw()));
+    this._resize.observe(this.el);
+    this.el._arraySparkHook = this;
+    ArraySparkVisibility.observe(this.el);
+    this.draw();
+  },
 
-    this.lines.value.setAttribute("points", steps(value));
-    this.lines.value.style.opacity = range === 0 ? "0.4" : "";
-    this.lines.target.setAttribute("points", steps(target));
+  // the server patched data-points with a new reading
+  updated() {
+    this._stale = true;
+    if (this._visible) this.draw();
+  },
+
+  destroyed() {
+    ThemeWatch.remove(this._onThemeChange);
+    ArraySparkVisibility.unobserve(this.el);
+    this._resize && this._resize.disconnect();
+    this.chart && this.chart.dispose();
+    this.chart = null;
+  },
+
+  _ensureChart() {
+    if (this.chart) return this.chart;
+    if (!this.box) this.box = this.el.querySelector("[data-role=chart]") || this.el;
+    if (!this.box.clientWidth) return null;
+    const { base } = sparkBase((items) => {
+      const it = items[0];
+      if (!it) return "";
+      const [i, v] = it.value;
+      const unit = this.el.dataset.unit;
+      return `<span style="opacity:.7">[${i}]</span> <b style="font-variant-numeric:tabular-nums">${formatAxisNumber(v)}${unit ? ` ${escHtml(unit)}` : ""}</b>`;
+    });
+    this.chart = echarts.init(this.box, null, { renderer: "svg" });
+    this.chart.setOption({
+      ...base,
+      xAxis: { type: "value", show: false },
+      series: [
+        {
+          type: "line",
+          showSymbol: false,
+          symbolSize: 5,
+          lineStyle: { width: 1.5, color: CHART_PALETTE[0] },
+          itemStyle: { color: CHART_PALETTE[0] },
+          emphasis: { disabled: true },
+          data: [],
+        },
+      ],
+    });
+    return this.chart;
+  },
+
+  draw() {
+    let points;
+    try {
+      points = JSON.parse(this.el.dataset.points || "[]");
+    } catch (_e) {
+      points = [];
+    }
+    if (points.length === 0) return;
+    const chart = this._ensureChart();
+    if (!chart) return;
+    this._stale = false;
+
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const p of points) {
+      if (p[1] < lo) lo = p[1];
+      if (p[1] > hi) hi = p[1];
+    }
+    const n = Number(this.el.dataset.n) || points.length;
+    chart.setOption({
+      xAxis: { min: 0, max: Math.max(n - 1, 1) },
+      yAxis: sparkRange(lo, hi),
+      series: [{ data: points, lineStyle: { opacity: hi === lo ? 0.4 : 1 } }],
+    });
   },
 };
 

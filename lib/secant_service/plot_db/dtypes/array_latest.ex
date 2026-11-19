@@ -94,6 +94,14 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
     arr |> info(ts, nil) |> Map.delete(:unit) |> Map.put(:data, points(arr))
   end
 
+  # the latest reading may be live and not yet written to the database
+  defp with_latest(times, nil), do: times
+  defp with_latest([], ts), do: [ts]
+
+  defp with_latest(times, ts) do
+    if List.last(times) < ts, do: times ++ [ts], else: times
+  end
+
   @doc "Plot map for `param`, starting from its latest reading (or nothing yet)."
   def plot(param, latest) do
     {arr, ts} = latest || {[], nil}
@@ -101,7 +109,7 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
     option =
       arr
       |> option(ts, param)
-      |> Map.put(:_arrayTimes, reading_times(param))
+      |> Map.put(:_arrayTimes, with_latest(reading_times(param), ts))
 
     %{
       plottable: true,
@@ -173,7 +181,7 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
   each of `@max_points / 2` chunks, in index order.
   """
   def points(arr) when length(arr) <= @max_points do
-    arr |> Enum.with_index() |> Enum.map(fn {v, i} -> [i, v] end)
+    for {v, i} <- Enum.with_index(arr), is_number(v), do: [i, v]
   end
 
   def points(arr) do

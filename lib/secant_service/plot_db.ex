@@ -76,6 +76,36 @@ defmodule SecantService.PlotDB do
     end
   end
 
+  @doc """
+  When a live reading makes the plotted array longer than the heatmap can
+  carry (e.g. a spectrum that was 3 points at startup and 10 000 after an
+  acquisition), returns `{param, {array, ms}}` to rebuild the plot as the
+  latest-reading plot. Otherwise nil.
+  """
+  def outgrown(%{plot_type: :array_latest}, _secop_obj, _datapoints, _parameter), do: nil
+
+  def outgrown(_plot_map, secop_obj, datapoints, parameter) do
+    param =
+      case secop_obj do
+        %Module{} = module -> parameter == "value" && Builders.find_param(module, "value")
+        %Parameter{name: ^parameter} = param -> param
+        _ -> nil
+      end
+
+    # any long reading in the batch counts, not only the last one: it must
+    # not go into the heatmap. The new plot starts from the batch's final
+    # reading, long or not (the latest-reading plot shows short ones too).
+    long? = fn {arr, _ts} -> is_list(arr) and length(arr) > @max_array_len end
+
+    with %Parameter{} <- param,
+         true <- ArrayLatest.numeric_array?(param),
+         true <- Enum.any?(datapoints, long?) do
+      {param, datapoints |> Enum.filter(&is_list(elem(&1, 0))) |> List.last()}
+    else
+      _ -> nil
+    end
+  end
+
   def module_plot(module, mode \\ :live) do
     schema_id = get_in(module.custom_properties || %{}, ["schema"])
     iface_class = Util.get_highest_if_class(module.interface_classes)
@@ -123,10 +153,11 @@ defmodule SecantService.PlotDB do
 
       case parameter.datainfo["type"] do
         "array" ->
-          array_len = val |> List.first([]) |> length()
+          array_len = ArrayHeatmap.max_len(val)
 
+          # a long reading inside the window: plot the latest reading instead
           if array_len > @max_array_len do
-            not_plottable()
+            ArrayLatest.plot(parameter, ArrayLatest.fetch_latest(parameter))
           else
             option =
               ArrayHeatmap.heatmap_option(

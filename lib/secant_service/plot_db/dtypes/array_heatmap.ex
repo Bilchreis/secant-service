@@ -138,6 +138,18 @@ defmodule SecantService.PlotDB.DTypes.ArrayHeatmap do
     [%{seriesIndex: 0, data: data}]
   end
 
-  def array_len_from_datapoints([{arr, _} | _]), do: length(arr)
-  def array_len_from_datapoints([]), do: 0
+  # longest reading in the batch: lengths can differ between readings
+  def array_len_from_datapoints(datapoints),
+    do: datapoints |> Enum.map(&elem(&1, 0)) |> max_len()
+
+  @doc """
+  Longest array among the loaded readings (lengths can change, e.g. a
+  spectrometer that reports 3 points until its first acquisition).
+  """
+  def max_len(values) do
+    Enum.reduce(values, 0, fn
+      v, acc when is_list(v) -> max(acc, length(v))
+      _, acc -> acc
+    end)
+  end
 end

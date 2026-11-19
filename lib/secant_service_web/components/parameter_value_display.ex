@@ -377,6 +377,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   # Value rendering, chosen from the datainfo only
   # ---------------------------------------------------------------------------
 
+  attr :id, :string, required: true
   attr :value, :any, required: true
   attr :datainfo, :map, required: true
   attr :size, :atom, default: :md
@@ -417,7 +418,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
       <% @type == "struct" -> %>
         <.struct_value value={@value} datainfo={@datainfo} size={@size} />
       <% @type == "array" -> %>
-        <.array_value value={@value} datainfo={@datainfo} size={@size} />
+        <.array_value id={@id} value={@value} datainfo={@datainfo} size={@size} />
       <% @type == "string" and @value == "" -> %>
         <span class="font-mono text-xs text-muted italic">"" (empty)</span>
       <% @type == "string" -> %>
@@ -493,6 +494,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     """
   end
 
+  attr :id, :string, required: true
   attr :value, :any, required: true
   attr :datainfo, :map, required: true
   attr :size, :atom, default: :md
@@ -512,9 +514,14 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
 
     assigns =
       if assigns.as_spectrum do
-        {points, lo, hi} = ValueFormat.spectrum(values, 200, height)
+        {points, lo, hi} = ValueFormat.spectrum(values)
 
-        assign(assigns, points: points, lo: lo, hi: hi, unit: ValueFormat.unit(members))
+        assign(assigns,
+          points: Jason.encode!(points),
+          lo: lo,
+          hi: hi,
+          unit: SecantService.PlotDB.DTypes.ArrayHeatmap.unit(assigns.datainfo) || ""
+        )
       else
         assigns
       end
@@ -523,23 +530,21 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     <%= cond do %>
       <% @as_spectrum -> %>
         <div class="flex flex-col gap-1">
-          <svg
-            viewBox={"0 0 200 #{@height}"}
-            preserveAspectRatio="none"
-            class="block w-full border-b border-line"
+          <%!-- drawn by the ArraySpark hook; the points attribute updates with each reading --%>
+          <div
+            id={"spark-arr:" <> @id}
+            phx-hook="ArraySpark"
+            phx-update="ignore"
+            data-points={@points}
+            data-n={@count}
+            data-unit={@unit}
+            class="relative w-full border-b border-line"
             style={"height: #{@height}px"}
             role="img"
-            aria-label="Latest array value"
+            aria-label={"latest array value, #{@count} points"}
           >
-            <polyline
-              points={@points}
-              fill="none"
-              stroke="currentColor"
-              class="text-primary"
-              stroke-width="1.5"
-              vector-effect="non-scaling-stroke"
-            />
-          </svg>
+            <div data-role="chart" class="absolute inset-0"></div>
+          </div>
           <div class="flex justify-between gap-2 font-mono text-[11px] text-muted">
             <span>{@count} pts</span>
             <span>{ValueFormat.number(@lo)} … {ValueFormat.number(@hi)} {@unit}</span>
@@ -631,7 +636,12 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
           </span>
         </div>
       <% else %>
-        <.value_block value={@parameter_value} datainfo={@parameter.datainfo} size={@size} />
+        <.value_block
+          id={"value:" <> @id_str}
+          value={@parameter_value}
+          datainfo={@parameter.datainfo}
+          size={@size}
+        />
       <% end %>
 
       <div

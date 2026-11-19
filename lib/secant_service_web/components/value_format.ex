@@ -168,38 +168,33 @@ defmodule SecantServiceWeb.ValueFormat do
   def limits(_), do: nil
 
   @doc """
-  SVG polyline points for a numeric array, downsampled to at most `max_points`
-  by keeping each bucket's extreme value so peaks stay visible.
-  Returns `{points, min, max}`.
+  Plot points `[[index, value], ...]` for a numeric array, thinned to about
+  `max_points` by keeping the lowest and highest value of each chunk (in
+  index order), so both peaks and dips survive. Returns `{points, min, max}`.
   """
-  def spectrum(values, width, height, max_points \\ 240) when is_list(values) do
-    nums = Enum.filter(values, &is_number/1)
+  def spectrum(values, max_points \\ 300) when is_list(values) do
+    indexed = for {v, i} <- Enum.with_index(values), is_number(v), do: {i, v}
 
-    case nums do
+    case indexed do
       [] ->
-        {"", nil, nil}
+        {[], nil, nil}
 
       _ ->
-        {lo, hi} = Enum.min_max(nums)
-        span = if hi == lo, do: 1.0, else: hi - lo
-        n = length(nums)
-        bucket = max(1, ceil(n / max_points))
-
-        sampled =
-          nums
-          |> Enum.chunk_every(bucket)
-          |> Enum.map(fn chunk -> Enum.max_by(chunk, fn v -> abs(v - lo) end) end)
-
-        count = max(length(sampled) - 1, 1)
+        {lo, hi} = indexed |> Enum.map(&elem(&1, 1)) |> Enum.min_max()
+        chunk = max(1, ceil(length(indexed) / max(div(max_points, 2), 1)))
 
         points =
-          sampled
-          |> Enum.with_index()
-          |> Enum.map_join(" ", fn {v, i} ->
-            x = i / count * width
-            y = height - 2 - (v - lo) / span * (height - 4)
-            "#{Float.round(x * 1.0, 1)},#{Float.round(y * 1.0, 1)}"
-          end)
+          if chunk == 1 do
+            Enum.map(indexed, fn {i, v} -> [i, v] end)
+          else
+            indexed
+            |> Enum.chunk_every(chunk)
+            |> Enum.flat_map(fn part ->
+              a = Enum.min_by(part, &elem(&1, 1))
+              b = Enum.max_by(part, &elem(&1, 1))
+              [a, b] |> Enum.uniq() |> Enum.sort() |> Enum.map(fn {i, v} -> [i, v] end)
+            end)
+          end
 
         {points, lo, hi}
     end

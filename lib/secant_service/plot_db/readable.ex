@@ -5,6 +5,7 @@ defmodule SecantService.PlotDB.Readable do
 
   alias SecantService.PlotDB.DTypePlot
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
+  alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.PlotDB.DTypes.Struct
 
   @max_array_len 100
@@ -26,10 +27,11 @@ defmodule SecantService.PlotDB.Readable do
           :not_plottable
 
         ArrayHeatmap ->
-          array_len = val |> List.first([]) |> length()
+          array_len = ArrayHeatmap.max_len(val)
 
+          # a long reading inside the window: plot the latest reading instead
           if array_len > @max_array_len do
-            :not_plottable
+            {:ok, ArrayLatest.plot(value_param, ArrayLatest.fetch_latest(value_param))}
           else
             option = ArrayHeatmap.heatmap_option([ArrayHeatmap.heatmap_series(ts, val)], array_len, ArrayHeatmap.unit(value_param.datainfo), mode, name: value_param.name)
 
