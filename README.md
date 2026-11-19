@@ -2,6 +2,7 @@
 
 To start your Phoenix server:
 
+  * Start the development database with `docker compose -f compose.dev.yml up -d`
   * Run `mix setup` to install and setup dependencies
   * Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
 
@@ -14,15 +15,15 @@ hypertables with compression, so Postgres needs the `timescaledb` extension
 installed and preloaded (`shared_preload_libraries = 'timescaledb'`). The
 migrations fail on a plain Postgres.
 
-The easiest way to get one for development is the image in `docker/postgres`
-(Postgres 17 + TimescaleDB, telemetry off):
+`compose.dev.yml` runs one for development: the image in `docker/postgres`
+(Postgres 17 + TimescaleDB, telemetry off) on `127.0.0.1:5435`, which is where
+`config/dev.exs` and `config/test.exs` connect by default. It restarts with
+Docker and keeps its data in the `secant-pgdata` volume. It is a separate
+compose project from `docker-compose.yml`, so the two never share containers
+or data.
 
-    docker build -t secant-postgres docker/postgres
-    docker run -d --name secant-postgres -e POSTGRES_PASSWORD=postgres \
-      -p 127.0.0.1:5434:5432 secant-postgres
-
-    export PGPORT=5434   # dev and test read the port from PGPORT (default 5432)
-    mix setup
+To use your own Postgres with TimescaleDB instead, set `PGPORT` to its port
+(e.g. `export PGPORT=5432`).
 
 `docker compose up -d --build db` builds the same image for the production
 setup in `docker-compose.yml`.
