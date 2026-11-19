@@ -173,6 +173,8 @@ defmodule SecantServiceWeb.SECoPComponents do
     """
   end
 
+  attr :id, :string, default: "connect-node", doc: "prefix for the ids, unique per instance"
+
   def connect_node(assigns) do
     ~H"""
     <div class="rounded-box border border-line bg-base-100 p-5">
@@ -183,14 +185,14 @@ defmodule SecantServiceWeb.SECoPComponents do
 
       <form
         phx-submit="connect-node"
-        id="connect-node-form"
+        id={@id <> "-form"}
         class="mt-4 flex flex-wrap items-end gap-3"
       >
         <label class="flex flex-col gap-1">
           <span class="text-xs text-muted">Host</span>
           <input
             type="text"
-            id="host"
+            id={@id <> "-host"}
             name="host"
             placeholder="localhost"
             required
@@ -201,7 +203,7 @@ defmodule SecantServiceWeb.SECoPComponents do
           <span class="text-xs text-muted">Port</span>
           <input
             type="number"
-            id="port"
+            id={@id <> "-port"}
             name="port"
             placeholder="10767"
             required

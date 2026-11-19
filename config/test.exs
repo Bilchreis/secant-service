@@ -1,6 +1,11 @@
 import Config
 config :secant_service, Oban, testing: :manual
 config :secant_service, token_signing_secret: "aAAT96csYVHMuEPfYDoDI3pDRgj7THhG"
+# Node handling is driven by the tests: no UDP discovery of real SEC nodes and
+# no NodeManager started with the application (see test/support/node_case.ex)
+config :secant_client, start_node_discover: false
+config :secant_service, start_node_manager: false, node_state_timeout: 200
+
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
 # Only in tests, remove the complexity from the password hashing algorithm

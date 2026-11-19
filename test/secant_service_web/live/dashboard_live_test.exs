@@ -1,0 +1,102 @@
+defmodule SecantServiceWeb.DashboardLiveTest do
+  @moduledoc """
+  The dashboard must follow a node through description changes: show the new
+  module tree, drop removed modules and keep receiving live values.
+  """
+  use SecantServiceWeb.ConnCase, async: false, node: true
+
+  @desc_a %{"temp" => ["value", "status", "target"], "press" => ["value", "status"]}
+  @desc_b %{"temp" => ["value", "status", "target"], "flow" => ["value", "status"]}
+
+  setup %{conn: conn} do
+    Phoenix.PubSub.subscribe(SecantService.PubSub, NodeManager.services_topic())
+    node_id = unique_node_id()
+    {:ok, conn: conn, node_id: node_id, path: "/dashboard?node=#{topic(node_id)}"}
+  end
+
+  defp connect_and_wait(node_id, modules) do
+    state = connect_node(node_id, raw_description("eq-#{elem(node_id, 1)}", modules))
+    assert_receive {:node_services_ready, ^node_id, _}, 5_000
+    state
+  end
+
+  # The view handles messages in order, so a render after the broadcast has
+  # seen everything broadcast before it.
+  defp rerender(view), do: render(view) && view
+
+  test "shows the modules of the node", %{conn: conn, node_id: node_id, path: path} do
+    state = connect_and_wait(node_id, @desc_a)
+    {:ok, view, _html} = live(conn, path)
+
+    assert has_element?(view, "#rail-temp")
+    assert has_element?(view, "#rail-press")
+    assert has_element?(view, "#uuid-#{state.uuid}")
+  end
+
+  test "follows a reconnect with a changed description",
+       %{conn: conn, node_id: node_id, path: path} do
+    old = connect_and_wait(node_id, @desc_a)
+    {:ok, view, _html} = live(conn, path)
+
+    new = change_description(node_id, raw_description("eq-b", @desc_b))
+    assert_receive {:node_services_ready, ^node_id, _}, 5_000
+    rerender(view)
+
+    assert has_element?(view, "#rail-flow")
+    refute has_element?(view, "#rail-press")
+    assert has_element?(view, "#uuid-#{new.uuid}")
+    refute has_element?(view, "#uuid-#{old.uuid}")
+    # The tab of the shown node stays highlighted (compared by node, not uuid)
+    assert has_element?(view, "#node-tab-#{escape(topic(node_id))}.border-primary")
+  end
+
+  test "keeps receiving live values after the services restarted",
+       %{conn: conn, node_id: node_id, path: path} do
+    connect_and_wait(node_id, @desc_a)
+    {:ok, view, _html} = live(conn, path)
+
+    change_description(node_id, raw_description("eq-b", @desc_b))
+    assert_receive {:node_services_ready, ^node_id, _}, 5_000
+    rerender(view)
+    refute has_element?(view, "#status-summary", "busy")
+
+    # A status update on a module that only exists in the new description
+    send_value_update(node_id, "flow", "status", [[300, "moving"], %{t: 1_700_000_300.0}])
+
+    eventually(fn -> has_element?(view, "#status-summary", "1 busy") end)
+  end
+
+  test "shows a node whose services come up after the page was opened",
+       %{conn: conn, node_id: node_id, path: path} do
+    # Known to the client, but the service side has not caught up yet
+    raw = raw_description("eq-late", @desc_a)
+    seed_node_table(node_id, raw)
+    state = node_state(node_id, raw)
+    start_supervised!({FakeNodeStatem, {node_id, state, []}})
+
+    {:ok, view, _html} = live(conn, path)
+    refute has_element?(view, "#rail-temp")
+
+    broadcast("new_node", {:new_node, topic(node_id), state})
+    assert_receive {:node_services_ready, ^node_id, _}, 5_000
+
+    assert has_element?(rerender(view), "#rail-temp")
+  end
+
+  test "stays usable when a plotted parameter disappears",
+       %{conn: conn, node_id: node_id, path: path} do
+    connect_and_wait(node_id, @desc_a)
+    {:ok, view, _html} = live(conn, path <> "&module=press")
+    render_hook(view, "plot_parameter", %{"param" => "value"})
+
+    change_description(node_id, raw_description("eq-b", @desc_b))
+    assert_receive {:node_services_ready, ^node_id, _}, 5_000
+    rerender(view)
+
+    refute has_element?(view, "#rail-press")
+    assert has_element?(view, "#inspector")
+  end
+
+  # "127.0.0.1:1234" -> CSS-safe id selector part
+  defp escape(id), do: String.replace(id, ~r/([.:])/, "\\\\\\1")
+end

@@ -27,14 +27,23 @@ defmodule SecantService.Application do
       {Registry, keys: :unique, name: Registry.PlotCacheDispatcher},
       {Registry, keys: :unique, name: Registry.PlotCache},
       SecantClient.Supervisor,
-      SecantService.NodeManager,
-      {SecantService.NodeSupervisor, []},
-      # Start a worker by calling: SecantService.Worker.start_link(arg)
-      # {SecantService.Worker, arg},
-      # Start to serve requests, typically the last entry
-      SecantServiceWeb.Endpoint,
-      {AshAuthentication.Supervisor, [otp_app: :secant_service]}
+      {SecantService.NodeSupervisor, []}
     ]
+
+    # Tests start the NodeManager themselves (see SecantService.NodeCase)
+    node_manager =
+      if Application.get_env(:secant_service, :start_node_manager, true),
+        do: [SecantService.NodeManager],
+        else: []
+
+    children =
+      children ++
+        node_manager ++
+        [
+          # Start to serve requests, typically the last entry
+          SecantServiceWeb.Endpoint,
+          {AshAuthentication.Supervisor, [otp_app: :secant_service]}
+        ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

@@ -1,15 +1,37 @@
 defmodule SecantService.NodeManager do
+  @moduledoc """
+  Keeps the per-node services (`SecantService.NodeServices`) and the `SecNode`
+  database records in line with the SEC nodes known to `secant_client`.
+
+  Invariant: for every node that `secant_client` has described, the running
+  NodeServices were started from the `SecNode` record whose uuid equals the
+  client's *current* uuid for that node. `secant_client` issues a new uuid
+  whenever the description of a node changes (or its state machine restarts),
+  so a uuid mismatch means the services hold an outdated description and are
+  restarted from the new record. The record they replace is archived.
+
+  The running services are the source of truth for "which uuid is live", so no
+  separate bookkeeping is kept here that could drift out of sync.
+
+  Whenever services for a node have been (re)started or stopped, this is
+  broadcast on `SecantService.PubSub`, topic `services_topic/0`:
+
+    * `{:node_services_ready, node_id, uuid}`
+    * `{:node_services_stopped, node_id}`
+
+  so that LiveViews can reload the node description and values.
+  """
   use GenServer
   require Logger
+
   alias SecantService.SecNodes.SecNode
-  alias SecantService.NodeSupervisor
-  alias SEC_Node_Supervisor
   alias SecantService.NodeSupervisor
   alias SecantService.DescribeMessageTransformer
 
   @pubsub_name :secant_client_pubsub
-  # Check for node changes every minute
-  @check_interval 1000 * 60 * 10
+  @services_topic "node_services"
+  # Periodic safety-net sync; events (new node, description change) are the primary trigger
+  @check_interval :timer.minutes(10)
 
   # Client API
 
@@ -17,78 +39,48 @@ defmodule SecantService.NodeManager do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  def get_stored_nodes do
-    GenServer.call(__MODULE__, :get_stored_nodes)
-  end
+  @doc "Topic on `SecantService.PubSub` where service lifecycle events are broadcast."
+  def services_topic, do: @services_topic
 
+  @doc "Trigger an asynchronous sync of all nodes."
   def sync_nodes do
     GenServer.cast(__MODULE__, :sync_nodes)
+  end
+
+  @doc "Sync all nodes and wait until it is done."
+  def sync_nodes!(timeout \\ 60_000) do
+    GenServer.call(__MODULE__, :sync_nodes, timeout)
   end
 
   # Server Callbacks
 
   @impl true
-  def init(_opts) do
-    # Initial sync of nodes from SEC_Node_Supervisor
+  def init(opts) do
     Phoenix.PubSub.subscribe(@pubsub_name, "descriptive_data_change")
     Phoenix.PubSub.subscribe(@pubsub_name, "new_node")
 
-    send(self(), :sync_nodes)
-    {:ok, %{nodes: %{}, subscriptions: %{}}}
+    if Keyword.get(opts, :periodic_sync, true) do
+      send(self(), :periodic_sync)
+    end
+
+    {:ok, %{}}
   end
 
   @impl true
-  def handle_call(:get_stored_nodes, _from, state) do
-    {:reply, state.nodes, state}
+  def handle_call(:sync_nodes, _from, state) do
+    {:reply, guarded(&sync_all/0), state}
   end
 
   @impl true
   def handle_cast(:sync_nodes, state) do
-    Logger.info("Syncing nodes with database...")
-
-    updated_state =
-      try do
-        # Get active nodes from supervisor
-        active_nodes = SEC_Node_Supervisor.get_active_nodes()
-
-        # Store nodes in database and subscribe to updates
-        sync_nodes_with_db(active_nodes, state)
-      rescue
-        _e in [DBConnection.OwnershipError] ->
-          Logger.warning("NodeManager sync skipped (no DB connection available)")
-          state
-
-        e ->
-          if Exception.message(e) =~ "OwnershipError" do
-            Logger.warning("NodeManager sync skipped (no DB connection available)")
-          else
-            Logger.error("NodeManager sync failed: #{Exception.message(e)}")
-          end
-
-          state
-      end
-
-    # Schedule next sync
-    schedule_sync()
-
-    {:noreply, updated_state}
-  end
-
-  @impl true
-  def handle_info(:sync_nodes, state) do
-    # Same as handle_cast but triggered by timer
-    handle_cast(:sync_nodes, state)
-  end
-
-  def handle_info({:conn_state, _pubsub_topic, _active}, state) do
-    # TODO
-
+    guarded(&sync_all/0)
     {:noreply, state}
   end
 
-  def handle_info({:state_change, pubsub_topic, _node_state}, state) do
-    Logger.info("new node status: #{pubsub_topic} #{state.state}")
-
+  @impl true
+  def handle_info(:periodic_sync, state) do
+    guarded(&sync_all/0)
+    Process.send_after(self(), :periodic_sync, @check_interval)
     {:noreply, state}
   end
 
@@ -98,170 +90,210 @@ defmodule SecantService.NodeManager do
 
   def handle_info({:new_node, _pubsub_topic, node_state}, state) do
     Logger.info("New node: #{node_state.equipment_id} #{node_state.host} (#{node_state.port})")
-
-    handle_cast(:sync_nodes, state)
+    guarded(&sync_all/0)
     {:noreply, state}
   end
 
   def handle_info({:description_change, _pubsub_topic, node_state}, state) do
-    # Handle node description changes
-    Logger.info("Description Change for node: #{node_state.equipment_id}")
+    Logger.info("Description change for node: #{node_state.equipment_id}")
 
-    # Find the old UUID if present
-    old_uuid = find_old_uuid(state.nodes, node_state.node_id)
-
-    # If we have an old UUID and it's different, stop the old writer
-    state =
-      if old_uuid && old_uuid != node_state.uuid do
-        Logger.info(
-          "Node UUID changed from #{old_uuid} to #{node_state.uuid}, stopping node Services"
-        )
-
-        NodeSupervisor.stop_node_services(node_state.node_id)
-
-        transformed_node_state = DescribeMessageTransformer.transform(node_state)
-
-        case SecNode
-             |> Ash.Changeset.for_create(:upsert, transformed_node_state)
-             |> Ash.create() do
-          {:ok, node} ->
-            Logger.info(
-              "Synced node: #{node_state.equipment_id} #{node_state.host}:#{node_state.port}"
-            )
-
-            node_db = Ash.get!(SecNode, node.uuid)
-            Logger.debug("publish new node added at: #{node_db.uuid}")
-
-            updated_nodes = Map.put(state.nodes, node_state.node_id, node_state)
-            # Start a new writer
-
-            NodeSupervisor.start_child(node_db)
-            Task.start(fn -> SecantService.PlotCacheSupervisor.start_plot_cache(node_db) end)
-            %{state | nodes: updated_nodes}
-
-          {:error, changeset} ->
-            Logger.error("Failed to sync node: #{inspect(changeset.errors)}")
-            state
-        end
-      else
-        state
+    # The message is a snapshot; when it is processed the node may already have
+    # moved on to yet another description. Prefer the current state.
+    current =
+      case fetch_node_state(node_state.node_id) do
+        {:ok, current} -> current
+        :error -> node_state
       end
 
+    guarded(fn -> if described?(current), do: ensure_services(current), else: :ok end)
     {:noreply, state}
   end
 
-  # Helper to find a node's old UUID
-  defp find_old_uuid(nodes, node_id) do
-    Map.get(nodes, node_id)
-    |> case do
-      nil -> nil
-      node -> node.uuid
-    end
+  # Late replies of timed out get_state calls, and anything else
+  def handle_info(_msg, state) do
+    {:noreply, state}
   end
 
   # Private functions
 
-  defp schedule_sync do
-    Process.send_after(self(), :sync_nodes, @check_interval)
+  defp guarded(fun) do
+    fun.()
+  rescue
+    e in [DBConnection.OwnershipError] ->
+      Logger.warning("NodeManager: sync skipped (no DB connection available)")
+      {:error, e}
+
+    e ->
+      if Exception.message(e) =~ "OwnershipError" do
+        Logger.warning("NodeManager: sync skipped (no DB connection available)")
+      else
+        Logger.error("NodeManager: sync failed: #{Exception.format(:error, e, __STACKTRACE__)}")
+      end
+
+      {:error, e}
   end
 
-  defp sync_nodes_with_db(active_nodes, state) do
-    # Store/update nodes in database using upsert
-    uuids = Enum.map(active_nodes, fn {_node_id, node_state} -> node_state.uuid end)
+  defp sync_all do
+    Logger.info("Syncing nodes with database...")
+    {node_states, unreachable} = fetch_node_states()
 
-    uuids_in_db =
-      SecNode
-      |> Ash.Query.for_read(:exists_by_uuids, %{uuids: uuids})
-      |> Ash.read!()
-      |> Enum.map(fn node -> node.uuid end)
-      |> MapSet.new()
+    node_states
+    |> Map.values()
+    |> Enum.filter(&described?/1)
+    |> Enum.each(&ensure_services/1)
 
-    result =
-      Enum.reduce(active_nodes, %{}, fn {node_id, node_state}, acc ->
-        if not MapSet.member?(uuids_in_db, node_state.uuid) do
-          transformed_node_state = DescribeMessageTransformer.transform(node_state)
+    # Stop services of nodes secant_client no longer knows about. Nodes whose
+    # state machine did not answer in time are kept; they are still there.
+    known = node_states |> Map.keys() |> MapSet.new() |> MapSet.union(unreachable)
 
-          case SecNode
-               |> Ash.Changeset.for_create(:upsert, transformed_node_state)
-               |> Ash.create() do
-            {:ok, _node} ->
-              Logger.info(
-                "Synced node: #{node_state.equipment_id} #{node_state.host}:#{node_state.port}"
-              )
+    NodeSupervisor.list_node_id_services()
+    |> Enum.reject(&MapSet.member?(known, &1))
+    |> Enum.each(&retire_services/1)
 
-              Map.put(acc, node_id, node_state)
+    :ok
+  end
 
-            {:error, changeset} ->
-              Logger.error("Failed to sync node: #{inspect(changeset.errors)}")
-              acc
+  # Only nodes that completed a describe can be stored and served.
+  defp described?(node_state) do
+    node_state[:description] != nil and node_state[:uuid] != nil
+  end
+
+  @doc false
+  # Makes sure the services of `node_state.node_id` run from the record of
+  # `node_state.uuid`, (re)starting them if needed.
+  def ensure_services(node_state) do
+    node_id = node_state.node_id
+    uuid = node_state.uuid
+
+    case NodeSupervisor.running_uuid(node_id) do
+      ^uuid ->
+        :ok
+
+      old_uuid ->
+        with {:ok, node_db} <- ensure_record(node_state) do
+          if NodeSupervisor.services_running?(node_id) do
+            Logger.info(
+              "Node #{inspect(node_id)} changed uuid #{inspect(old_uuid)} -> #{uuid}, restarting services"
+            )
+
+            NodeSupervisor.stop_node_services(node_id)
           end
-        else
-          acc
-        end
-      end)
 
-    # Start node Services for active nodes that don't have one
-    Enum.each(active_nodes, fn {_node_id, node_state} ->
-      if not NodeSupervisor.services_running?(node_state.node_id) do
-        Logger.info(
-          "Starting Services for node: #{node_state.equipment_id} #{node_state.host}:#{node_state.port}"
+          if old_uuid, do: archive_record(old_uuid)
+
+          start_services(node_db)
+        end
+    end
+  end
+
+  defp ensure_record(node_state) do
+    case Ash.get(SecNode, node_state.uuid) do
+      {:ok, node_db} ->
+        {:ok, node_db}
+
+      {:error, _not_found} ->
+        transformed = DescribeMessageTransformer.transform(node_state)
+
+        case SecNode |> Ash.Changeset.for_create(:upsert, transformed) |> Ash.create() do
+          {:ok, node} ->
+            Logger.info(
+              "Stored node: #{node_state.equipment_id} #{node_state.host}:#{node_state.port}"
+            )
+
+            Ash.get(SecNode, node.uuid)
+
+          {:error, error} ->
+            Logger.error("Failed to store node #{inspect(node_state.node_id)}: #{inspect(error)}")
+            {:error, error}
+        end
+    end
+  end
+
+  defp start_services(node_db) do
+    case NodeSupervisor.start_child(node_db) do
+      {:ok, _pid} ->
+        broadcast({:node_services_ready, node_db.node_id, node_db.uuid})
+        :ok
+
+      {:error, reason} = error ->
+        Logger.error(
+          "Failed to start services for node #{inspect(node_db.node_id)}: #{inspect(reason)}"
         )
 
-        Task.start(fn ->
-          node_db = Ash.get!(SecNode, node_state.uuid)
-          NodeSupervisor.start_child(node_db)
-          Task.start(fn -> SecantService.PlotCacheSupervisor.start_plot_cache(node_db) end)
-        end)
-      end
-    end)
-
-    # Stop Node Services for nodes that are no longer active
-    active_node_ids = active_nodes |> Enum.map(fn {_, node} -> node.node_id end) |> MapSet.new()
-    current_service_node_ids = NodeSupervisor.list_node_id_services() |> MapSet.new()
-
-    # Writers to stop: those that exist but aren't in active nodes
-    MapSet.difference(current_service_node_ids, active_node_ids)
-    |> Enum.each(fn node_id ->
-      NodeSupervisor.stop_node_services(node_id)
-
-      # Archive the node in the database
-      {host_charlist, port} = node_id
-      host = List.to_string(host_charlist)
-
-      case SecNode
-           |> Ash.Query.filter_input(%{
-             host: %{eq: host},
-             port: %{eq: port},
-             state: %{eq: :active}
-           })
-           |> Ash.read_one() do
-        {:ok, %SecNode{} = node} ->
-          case Ash.update(node, %{}, action: :archive) do
-            {:ok, _} ->
-              Logger.info("NodeManager: archived disconnected node #{host}:#{port}")
-
-            {:error, error} ->
-              Logger.warning(
-                "NodeManager: failed to archive node #{host}:#{port}: #{inspect(error)}"
-              )
-          end
-
-        _ ->
-          :ok
-      end
-    end)
-
-    old_nodes = state.nodes
-
-    # Update statenode
-    merged_nodes =
-      Map.merge(old_nodes, result, fn _key, new_node, _old_node -> new_node end)
-      |> keep_common_keys(active_nodes)
-
-    %{state | nodes: merged_nodes}
+        error
+    end
   end
 
-  defp keep_common_keys(map1, map2) do
-    Map.filter(map1, fn {key, _value} -> Map.has_key?(map2, key) end)
+  defp retire_services(node_id) do
+    old_uuid = NodeSupervisor.running_uuid(node_id)
+    NodeSupervisor.stop_node_services(node_id)
+    if old_uuid, do: archive_record(old_uuid)
+    broadcast({:node_services_stopped, node_id})
+  end
+
+  defp archive_record(uuid) do
+    with {:ok, %SecNode{state: :active} = node} <- Ash.get(SecNode, uuid) do
+      case Ash.update(node, %{}, action: :archive) do
+        {:ok, _} ->
+          Logger.info("NodeManager: archived node record #{uuid}")
+
+        {:error, error} ->
+          Logger.warning("NodeManager: failed to archive node #{uuid}: #{inspect(error)}")
+      end
+    end
+
+    :ok
+  end
+
+  # A node state machine blocks while handshaking, don't let one node stall all others
+  defp get_state_timeout do
+    Application.get_env(:secant_service, :node_state_timeout, 5_000)
+  end
+
+  defp broadcast(message) do
+    Phoenix.PubSub.broadcast(SecantService.PubSub, @services_topic, message)
+  end
+
+  # Like SEC_Node_Supervisor.get_active_nodes/0, but one slow or dying node
+  # state machine can neither block nor crash the sync of all others.
+  # Returns the states by node_id and the set of node_ids that did not answer.
+  defp fetch_node_states do
+    Registry.select(Registry.SEC_Node_Statem, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+    |> Enum.reduce({%{}, MapSet.new()}, fn {node_id, pid}, {states, unreachable} ->
+      case get_state(pid) do
+        {:ok, state} -> {Map.put(states, state.node_id, state), unreachable}
+        :gone -> {states, unreachable}
+        :error -> {states, MapSet.put(unreachable, node_id)}
+      end
+    end)
+  end
+
+  defp fetch_node_state(node_id) do
+    case Registry.lookup(Registry.SEC_Node_Statem, node_id) do
+      [{pid, _}] ->
+        case get_state(pid) do
+          {:ok, state} -> {:ok, state}
+          _ -> :error
+        end
+
+      [] ->
+        :error
+    end
+  end
+
+  # :gone when the state machine already exited (the Registry unregisters
+  # asynchronously, so a just-stopped node can still be listed for a moment).
+  defp get_state(pid) do
+    case :gen_statem.call(pid, :get_state, get_state_timeout()) do
+      {:ok, state} -> {:ok, state}
+      _ -> :error
+    end
+  catch
+    :exit, {reason, _} when reason in [:noproc, :normal, :shutdown] ->
+      :gone
+
+    :exit, reason ->
+      Logger.warning("NodeManager: could not get node state: #{inspect(reason)}")
+      :error
   end
 end
