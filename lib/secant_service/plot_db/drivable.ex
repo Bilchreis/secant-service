@@ -5,6 +5,7 @@ defmodule SecantService.PlotDB.Drivable do
 
   alias SecantService.PlotDB.DTypePlot
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
+  alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
   alias SecantService.PlotDB.DTypes.Struct, as: StructDType
 
@@ -27,12 +28,20 @@ defmodule SecantService.PlotDB.Drivable do
           :not_plottable
 
         ArrayHeatmap ->
-          array_len = v_val |> List.first([]) |> length()
+          array_len = ArrayHeatmap.max_len(v_val)
 
+          # a long reading inside the window: plot the latest reading instead
           if array_len > @max_array_len do
-            :not_plottable
+            {:ok, ArrayLatest.plot(value_param, ArrayLatest.fetch_latest(value_param))}
           else
-            option = ArrayHeatmap.heatmap_option([ArrayHeatmap.heatmap_series(v_ts, v_val)], array_len, unit, mode)
+            option =
+              ArrayHeatmap.heatmap_option(
+                [ArrayHeatmap.heatmap_series(v_ts, v_val)],
+                array_len,
+                ArrayHeatmap.unit(value_param.datainfo),
+                mode,
+                name: value_param.name
+              )
 
             {:ok,
              %{
@@ -48,12 +57,20 @@ defmodule SecantService.PlotDB.Drivable do
         StructDType ->
           target_param = find_param(module, "target")
           {t_val, t_ts} = fetch_param_data(target_param, mode)
-          target_opt = if length(t_val) > 0, do: [target: {t_ts, t_val}], else: []
+          target_opt = if t_val != [], do: [target: {t_ts, t_val}], else: []
 
-          option = StructDType.build_struct_option("value", v_ts, v_val, value_param.datainfo, mode, target_opt)
+          option =
+            StructDType.build_struct_option(
+              "value",
+              v_ts,
+              v_val,
+              value_param.datainfo,
+              mode,
+              target_opt
+            )
 
           param_mods =
-            if length(t_val) > 0,
+            if t_val != [],
               do: %{"value" => StructDType, "target" => StructDType},
               else: %{"value" => StructDType}
 
@@ -83,7 +100,13 @@ defmodule SecantService.PlotDB.Drivable do
             end
 
           option =
-            dtype_mod.build_option(v_series ++ t_series, value_param.datainfo, unit, mode, extra_opts)
+            dtype_mod.build_option(
+              v_series ++ t_series,
+              value_param.datainfo,
+              unit,
+              mode,
+              extra_opts
+            )
 
           {:ok,
            %{
@@ -100,14 +123,22 @@ defmodule SecantService.PlotDB.Drivable do
   end
 
   @impl true
-  def trace_updates(%{_param_dtype_modules: mods, option: opt} = _plot_map, datapoints, param_name) do
+  def trace_updates(
+        %{_param_dtype_modules: mods, option: opt} = _plot_map,
+        datapoints,
+        param_name
+      ) do
     case Map.get(mods, param_name) do
       nil ->
         %{seriesUpdates: []}
 
       ArrayHeatmap = dtype_mod ->
         series_upds = dtype_mod.series_updates(opt, datapoints, param_name)
-        %{seriesUpdates: series_upds, arrayLen: ArrayHeatmap.array_len_from_datapoints(datapoints)}
+
+        %{
+          seriesUpdates: series_upds,
+          arrayLen: ArrayHeatmap.array_len_from_datapoints(datapoints)
+        }
 
       dtype_mod ->
         %{seriesUpdates: dtype_mod.series_updates(opt, datapoints, param_name)}

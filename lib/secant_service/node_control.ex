@@ -221,7 +221,7 @@ defmodule SecantService.NodeControl do
     # Convert datainfo string keys to atoms
     atomized_datainfo = atomize_keys(datainfo)
 
-    case Jason.decode(unsigned_params["value"], keys: :atoms) do
+    case decode_input(unsigned_params["value"], datainfo) do
       {:ok, value} ->
         case validate_against_datainfo(atomized_datainfo, value) do
           {:ok, _} ->
@@ -243,8 +243,38 @@ defmodule SecantService.NodeControl do
         end
 
       {:error, _} ->
-        # Field-specific JSON error
-        %{set_form | errors: [value: {"Invalid JSON format", []}]}
+        %{set_form | errors: parse_errors(unsigned_params["value"], datainfo)}
+    end
+  end
+
+  # Plain text typed into a string parameter does not need JSON quotes.
+  defp decode_input(raw, %{"type" => "string"}) when is_binary(raw) and raw != "" do
+    case Jason.decode(raw) do
+      {:ok, value} when is_binary(value) -> {:ok, value}
+      _ -> {:ok, raw}
+    end
+  end
+
+  defp decode_input(raw, _datainfo), do: Jason.decode(raw || "", keys: :atoms)
+
+  # Messages for input that is not valid JSON, phrased for the person typing
+  # rather than in terms of JSON. An empty field is not an error while typing.
+  defp parse_errors(raw, datainfo) do
+    raw = String.trim(raw || "")
+    type = datainfo["type"]
+
+    cond do
+      raw == "" ->
+        []
+
+      type in ["double", "scaled", "int"] and Regex.match?(~r/^[+-]?\d*,\d+$/, raw) ->
+        [value: {"Use a decimal point, e.g. #{String.replace(raw, ",", ".")}", []}]
+
+      type in ["double", "scaled", "int"] ->
+        [value: {"Not a number", []}]
+
+      true ->
+        [value: {"Invalid JSON format", []}]
     end
   end
 

@@ -16,6 +16,16 @@
           <span class="rounded-full border border-line px-2.5 py-0.5 text-[11px] text-muted">
             {@node.state} · recorded data
           </span>
+          <.link
+            :if={@node.state == :active}
+            navigate={
+              ~p"/dashboard?#{%{node: "#{@node.host}:#{@node.port}", module: @selected_module}}"
+            }
+            class="inline-flex h-6 items-center gap-1 rounded-full border border-line px-2.5 text-[11px] text-muted hover:bg-base-200 hover:text-base-content"
+            id="open-live"
+          >
+            <span class="size-2 rounded-full bg-st-idle"></span> Live
+          </.link>
         </:extra>
       </.node_header>
 
@@ -33,7 +43,7 @@
             mode={:historical}
             plot_param={@plot_param}
             plot_id={plot_id(@node, @selected_module, @plot_param)}
-            chart_height={420}
+            chart_height={520}
           />
         </section>
       </div>

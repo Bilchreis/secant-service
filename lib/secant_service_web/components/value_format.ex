@@ -24,30 +24,32 @@ defmodule SecantServiceWeb.ValueFormat do
 
   def number(val), do: to_string(val)
 
-  # Rotating colours for enum members, indexed by rem(code, 20). Same order as
+  # Rotating colours for enum members, indexed by rem(code, 20). Neutral hues
+  # come first and the status-like ones (green, yellow, orange, red) last, so
+  # common codes 0..3 don't read as alarms. Same order as
   # the plot colours in SecantService.PlotDB.DTypes.Enum, so a member has the
   # same colour on cards, in the inspector and in plots.
   @enum_classes [
-    "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300 border-red-300 dark:border-red-800",
-    "bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300 border-green-300 dark:border-green-800",
+    "bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300 border-slate-300 dark:border-slate-700",
     "bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300 border-blue-300 dark:border-blue-800",
-    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300 border-yellow-300 dark:border-yellow-800",
+    "bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-300 border-teal-300 dark:border-teal-800",
     "bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300 border-purple-300 dark:border-purple-800",
     "bg-pink-100 text-pink-800 dark:bg-pink-900/50 dark:text-pink-300 border-pink-300 dark:border-pink-800",
-    "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800",
-    "bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-300 border-orange-300 dark:border-orange-800",
-    "bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-300 border-teal-300 dark:border-teal-800",
     "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/50 dark:text-cyan-300 border-cyan-300 dark:border-cyan-800",
-    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800",
     "bg-lime-100 text-lime-800 dark:bg-lime-900/50 dark:text-lime-300 border-lime-300 dark:border-lime-800",
-    "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 border-amber-300 dark:border-amber-800",
-    "bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300 border-rose-300 dark:border-rose-800",
-    "bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-300 border-violet-300 dark:border-violet-800",
+    "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800",
     "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/50 dark:text-fuchsia-300 border-fuchsia-300 dark:border-fuchsia-800",
     "bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-300 border-sky-300 dark:border-sky-800",
-    "bg-slate-100 text-slate-800 dark:bg-slate-800/50 dark:text-slate-300 border-slate-300 dark:border-slate-700",
+    "bg-violet-100 text-violet-800 dark:bg-violet-900/50 dark:text-violet-300 border-violet-300 dark:border-violet-800",
+    "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800",
     "bg-zinc-100 text-zinc-800 dark:bg-zinc-800/50 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700",
-    "bg-stone-100 text-stone-800 dark:bg-stone-800/50 dark:text-stone-300 border-stone-300 dark:border-stone-700"
+    "bg-stone-100 text-stone-800 dark:bg-stone-800/50 dark:text-stone-300 border-stone-300 dark:border-stone-700",
+    "bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300 border-green-300 dark:border-green-800",
+    "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300 border-yellow-300 dark:border-yellow-800",
+    "bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-300 border-orange-300 dark:border-orange-800",
+    "bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300 border-amber-300 dark:border-amber-800",
+    "bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300 border-red-300 dark:border-red-800",
+    "bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300 border-rose-300 dark:border-rose-800"
   ]
 
   @doc "Colour classes (background, text, border) for an enum member code."
@@ -77,6 +79,15 @@ defmodule SecantServiceWeb.ValueFormat do
   end
 
   def enum_name(raw, _), do: to_string(raw)
+
+  @doc "Text with a line-break opportunity after each underscore, for long identifiers."
+  def breakable(text) do
+    text
+    |> to_string()
+    |> String.split("_")
+    |> Enum.map(&Phoenix.HTML.html_escape/1)
+    |> Enum.intersperse({:safe, "_<wbr>"})
+  end
 
   @doc "One-line rendering of any value, used in compact places."
   def short(nil, _datainfo), do: "—"
@@ -157,38 +168,33 @@ defmodule SecantServiceWeb.ValueFormat do
   def limits(_), do: nil
 
   @doc """
-  SVG polyline points for a numeric array, downsampled to at most `max_points`
-  by keeping each bucket's extreme value so peaks stay visible.
-  Returns `{points, min, max}`.
+  Plot points `[[index, value], ...]` for a numeric array, thinned to about
+  `max_points` by keeping the lowest and highest value of each chunk (in
+  index order), so both peaks and dips survive. Returns `{points, min, max}`.
   """
-  def spectrum(values, width, height, max_points \\ 240) when is_list(values) do
-    nums = Enum.filter(values, &is_number/1)
+  def spectrum(values, max_points \\ 300) when is_list(values) do
+    indexed = for {v, i} <- Enum.with_index(values), is_number(v), do: {i, v}
 
-    case nums do
+    case indexed do
       [] ->
-        {"", nil, nil}
+        {[], nil, nil}
 
       _ ->
-        {lo, hi} = Enum.min_max(nums)
-        span = if hi == lo, do: 1.0, else: hi - lo
-        n = length(nums)
-        bucket = max(1, ceil(n / max_points))
-
-        sampled =
-          nums
-          |> Enum.chunk_every(bucket)
-          |> Enum.map(fn chunk -> Enum.max_by(chunk, fn v -> abs(v - lo) end) end)
-
-        count = max(length(sampled) - 1, 1)
+        {lo, hi} = indexed |> Enum.map(&elem(&1, 1)) |> Enum.min_max()
+        chunk = max(1, ceil(length(indexed) / max(div(max_points, 2), 1)))
 
         points =
-          sampled
-          |> Enum.with_index()
-          |> Enum.map_join(" ", fn {v, i} ->
-            x = i / count * width
-            y = height - 2 - (v - lo) / span * (height - 4)
-            "#{Float.round(x * 1.0, 1)},#{Float.round(y * 1.0, 1)}"
-          end)
+          if chunk == 1 do
+            Enum.map(indexed, fn {i, v} -> [i, v] end)
+          else
+            indexed
+            |> Enum.chunk_every(chunk)
+            |> Enum.flat_map(fn part ->
+              a = Enum.min_by(part, &elem(&1, 1))
+              b = Enum.max_by(part, &elem(&1, 1))
+              [a, b] |> Enum.uniq() |> Enum.sort() |> Enum.map(fn {i, v} -> [i, v] end)
+            end)
+          end
 
         {points, lo, hi}
     end

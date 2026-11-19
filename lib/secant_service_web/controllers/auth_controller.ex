@@ -41,7 +41,9 @@ defmodule SecantServiceWeb.AuthController do
 
     conn
     |> put_flash(:error, message)
-    |> redirect(to: ~p"/sign-in")
+    # The AshAuthentication sign-in page isn't mounted in the router yet,
+    # so this can't be a verified ~p route.
+    |> redirect(to: "/sign-in")
   end
 
   def sign_out(conn, _params) do

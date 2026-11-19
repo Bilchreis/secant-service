@@ -4,6 +4,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   require Logger
   alias SecantService.PlotDB
   alias SecantService.PlotDB.Builders
+  alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.SecNodes.ParameterValue
   alias Phoenix.LiveView.JS
   alias Phoenix.LiveView.AsyncResult
@@ -65,12 +66,30 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   # payload the EChartsChart hook expects for one prepend-chart-data event.
   defp merge_trace_updates(updates_list) do
     series_updates = Enum.flat_map(updates_list, &Map.get(&1, :seriesUpdates, []))
-    array_len = Enum.find_value(updates_list, &Map.get(&1, :arrayLen))
+
+    array_len =
+      updates_list
+      |> Enum.map(&Map.get(&1, :arrayLen))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.max(fn -> nil end)
 
     case array_len do
       nil -> %{seriesUpdates: series_updates}
       len -> %{seriesUpdates: series_updates, arrayLen: len}
     end
+  end
+
+  # Rebuild the plot as the latest-reading plot. The old chart stays up
+  # meanwhile (`:rebuilding_plot` holds back updates into it); a newer
+  # rebuild replaces a running one.
+  defp rebuild_as_latest(socket, param, latest_fun) do
+    socket
+    |> assign(:rebuilding_plot, true)
+    |> assign(:rebuild_param, param)
+    |> cancel_async(:load_plot)
+    # heatmap history still loading would only go into the replaced chart
+    |> cancel_async(:fetch_chart_range)
+    |> start_async(:load_plot, fn -> ArrayLatest.plot(param, latest_fun.()) end)
   end
 
   def tabular?(%SecantService.SecNodes.Module{} = module) do
@@ -161,17 +180,49 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           end)
           |> Enum.reverse()
 
-        if length(validated_datapoints) > 0 do
-          update_data =
-            PlotDB.get_trace_updates_batch(
+        outgrown =
+          validated_datapoints != [] &&
+            PlotDB.outgrown(
               socket.assigns.plot.result,
+              socket.assigns.secop_obj,
               validated_datapoints,
               parameter
             )
 
-          push_event(socket, "extend-chart-#{socket.assigns.id}", update_data)
-        else
-          socket
+        cond do
+          # the array got too long for the heatmap: rebuild as latest-reading
+          # plot. The old chart stays up meanwhile; a newer long reading
+          # restarts the rebuild (only the last start_async result is used).
+          outgrown ->
+            {param, latest} = outgrown
+            rebuild_as_latest(socket, param, fn -> latest end)
+
+          # while rebuilding, a newer reading of the rebuilt parameter
+          # restarts the rebuild from it; nothing goes into the old heatmap
+          socket.assigns[:rebuilding_plot] ->
+            case socket.assigns[:rebuild_param] do
+              %{name: ^parameter} = param ->
+                case Enum.filter(validated_datapoints, &is_list(elem(&1, 0))) do
+                  [] -> socket
+                  readings -> rebuild_as_latest(socket, param, fn -> List.last(readings) end)
+                end
+
+              _ ->
+                socket
+            end
+
+          validated_datapoints != [] ->
+            update_data =
+              PlotDB.get_trace_updates_batch(
+                socket.assigns.plot.result,
+                validated_datapoints,
+                parameter
+              )
+
+            push_event(socket, "extend-chart-#{socket.assigns.id}", update_data)
+
+          true ->
+            socket
         end
       else
         socket
@@ -198,6 +249,29 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   @impl true
+  # Time slider of a long-array plot: load the reading at (or just before) `t`.
+  def handle_event("fetch-array-reading", %{"t" => t}, socket) when is_integer(t) do
+    with %AsyncResult{ok?: true, result: %{plot_type: :array_latest, _array_param: name}} <-
+           socket.assigns.plot,
+         %{} = param <- resolve_param(socket.assigns.secop_obj, name) do
+      {:noreply,
+       start_async(socket, :array_reading, fn ->
+         case ArrayLatest.fetch_at(param, t) do
+           nil -> nil
+           reading -> Map.put(ArrayLatest.snapshot(reading), :requested, t)
+         end
+       end)}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("fetch-array-reading", _params, socket), do: {:noreply, socket}
+
+  # the chart is about to be replaced by the latest-reading plot
+  def handle_event("fetch-chart-range", _params, %{assigns: %{rebuilding_plot: true}} = socket),
+    do: {:noreply, socket}
+
   def handle_event("fetch-chart-range", %{"from" => from_ms, "to" => to_ms}, socket) do
     secop_obj = socket.assigns.secop_obj
     plot = socket.assigns.plot.result
@@ -208,12 +282,22 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         param_names
         |> Enum.map(&resolve_param(secop_obj, &1))
         |> Enum.reject(&is_nil/1)
-        |> Enum.map(fn param ->
+        |> Enum.reduce_while([], fn param, acc ->
           {values, timestamps} = Builders.fetch_param_data_in_range(param, from_ms, to_ms)
           datapoints = Enum.zip(values, timestamps)
-          PlotDB.get_trace_updates_batch(plot, datapoints, param.name)
+
+          # older readings longer than the heatmap carries: switch to the
+          # latest-reading plot instead of backfilling them
+          if PlotDB.outgrown(plot, secop_obj, datapoints, param.name) do
+            {:halt, {:rebuild, param}}
+          else
+            {:cont, [PlotDB.get_trace_updates_batch(plot, datapoints, param.name) | acc]}
+          end
         end)
-        |> merge_trace_updates()
+        |> case do
+          {:rebuild, param} -> {:rebuild, param}
+          updates -> updates |> Enum.reverse() |> merge_trace_updates()
+        end
       end)
 
     {:noreply, socket}
@@ -340,10 +424,14 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   @impl true
   def handle_async(:load_plot, {:ok, plot}, socket) do
+    height = chart_height(plot, socket.assigns.base_height)
+    plot = SecantService.PlotDB.DTypes.Struct.fit_height(plot, height)
+
     socket =
       socket
       |> assign(:plot, AsyncResult.ok(socket.assigns.plot, plot))
-      |> assign(:chart_height, chart_height(plot, socket.assigns.base_height))
+      |> assign(:chart_height, height)
+      |> assign(:rebuilding_plot, false)
 
     socket =
       if socket.assigns.display_mode == :graph and Map.get(plot, :plottable) and
@@ -359,12 +447,32 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   def handle_async(:load_plot, {:exit, reason}, socket) do
+    socket = assign(socket, :rebuilding_plot, false)
     {:noreply, assign(socket, :plot, AsyncResult.failed(socket.assigns.plot, {:exit, reason}))}
+  end
+
+  def handle_async(:array_reading, {:ok, nil}, socket), do: {:noreply, socket}
+
+  def handle_async(:array_reading, {:ok, snapshot}, socket) do
+    {:noreply, push_event(socket, "array-reading-#{socket.assigns.id}", snapshot)}
+  end
+
+  def handle_async(:array_reading, {:exit, reason}, socket) do
+    Logger.warning("Loading array reading failed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  def handle_async(:fetch_chart_range, {:ok, {:rebuild, param}}, socket) do
+    {:noreply, rebuild_as_latest(socket, param, fn -> ArrayLatest.fetch_latest(param) end)}
   end
 
   def handle_async(:fetch_chart_range, {:ok, update_data}, socket) do
     {:noreply, push_event(socket, "prepend-chart-data-#{socket.assigns.id}", update_data)}
   end
+
+  # cancelled by rebuild_as_latest/3
+  def handle_async(:fetch_chart_range, {:exit, {:shutdown, :cancel}}, socket),
+    do: {:noreply, socket}
 
   def handle_async(:fetch_chart_range, {:exit, reason}, socket) do
     Logger.error("Chart range fetch failed: #{inspect(reason)}")
@@ -425,6 +533,16 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         >
           Calibration
         </button>
+        <%!-- Heatmap / Lines switch, filled by the chart hook for array plots --%>
+        <div
+          :if={@display_mode == :graph}
+          id={"array-mode-#{@id}"}
+          phx-update="ignore"
+          role="group"
+          aria-label="Array plot style"
+          class="ml-2 flex rounded border border-line p-0.5 empty:hidden"
+        >
+        </div>
         <span class="flex-1"></span>
         <div
           :if={@display_mode == :graph}
@@ -433,12 +551,23 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           class="flex gap-0.5"
         >
         </div>
+        <a
+          :if={@parameter}
+          id={"csv-export-#{@id}"}
+          href={"/export/parameter/#{@parameter.id}"}
+          download
+          class="inline-flex items-center gap-1 rounded border border-line px-1.5 py-0.5 text-[11px] text-muted hover:bg-base-200 hover:text-base-content"
+          title={"Download all recorded values of #{@parameter.name} as CSV"}
+        >
+          <.icon name="hero-arrow-down-tray-micro" class="size-3.5" /> CSV
+        </a>
         <button
           :if={@display_mode == :graph}
           id={"rangeslider-btn-#{@id}"}
           class="rounded border border-line px-1.5 py-0.5 text-[11px] text-muted hover:bg-base-200"
           data-chart-id={@id}
-          title="Toggle range slider"
+          title="Show or hide the time range slider"
+          aria-label="Toggle time range slider"
           phx-click={JS.toggle_class("text-ink") |> JS.dispatch("toggle-rangeslider")}
         >
           <.icon name="hero-arrows-right-left-micro" class="size-3.5" />
@@ -468,6 +597,13 @@ defmodule SecantServiceWeb.Components.HistoryDB do
                 style={"height: #{@chart_height}px"}
               >
                 <div id={@id} class="h-full" phx-hook="EChartsChart" phx-update="ignore"></div>
+              </div>
+              <%!-- time slider of long-array plots, filled by the chart hook --%>
+              <div
+                id={"array-scrub-#{@id}"}
+                phx-update="ignore"
+                class="mt-1.5 flex items-center gap-2 empty:hidden"
+              >
               </div>
             </.async_result>
           <% else %>

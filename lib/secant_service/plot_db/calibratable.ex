@@ -53,7 +53,11 @@ defmodule SecantService.PlotDB.Calibratable do
   end
 
   @impl true
-  def trace_updates(%{_param_dtype_modules: mods, option: opt} = _plot_map, datapoints, param_name) do
+  def trace_updates(
+        %{_param_dtype_modules: mods, option: opt} = _plot_map,
+        datapoints,
+        param_name
+      ) do
     dtype_mod = Map.get(mods, param_name, Scalar)
     series_upds = dtype_mod.series_updates(opt, datapoints, param_name)
     %{seriesUpdates: series_upds}

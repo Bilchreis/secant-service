@@ -54,14 +54,27 @@ defmodule SecantServiceWeb.ValueFormatTest do
              "struct{2}"
   end
 
-  test "spectrum/4 downsamples and keeps peaks" do
-    values = for i <- 0..9_999, do: if(i == 5_000, do: 10.0, else: 0.0)
-    {points, lo, hi} = ValueFormat.spectrum(values, 200, 50, 100)
+  test "spectrum/2 thins to min/max points and keeps peaks and dips" do
+    values =
+      for i <- 0..9_999 do
+        cond do
+          i == 5_000 -> 10.0
+          i == 7_000 -> -3.0
+          true -> 0.0
+        end
+      end
 
-    assert {lo, hi} == {0.0, 10.0}
-    assert length(String.split(points, " ")) == 100
-    # the single peak survives the downsampling (y close to the top)
-    assert points |> String.split(" ") |> Enum.any?(&String.ends_with?(&1, ",2.0"))
+    {points, lo, hi} = ValueFormat.spectrum(values, 100)
+
+    assert {lo, hi} == {-3.0, 10.0}
+    assert length(points) <= 100
+    assert [5_000, 10.0] in points
+    assert [7_000, -3.0] in points
+    assert points == Enum.sort(points)
+  end
+
+  test "spectrum/2 passes short arrays through" do
+    assert ValueFormat.spectrum([1, 2.5, nil, 3]) == {[[0, 1], [1, 2.5], [3, 3]], 1, 3}
   end
 
   test "display_name/1 keeps existing capitals" do

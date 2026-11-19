@@ -3,11 +3,11 @@ defmodule SecantService.PlotDB do
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.DTypePlot
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
+  alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
   alias SecantService.PlotDB.DTypes.Scalar
   alias SecantService.PlotDB.DTypes.Struct, as: StructDType
 
-  alias SecantService.SecNodes.ParameterValue
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.Module
   alias NodeTable
@@ -28,39 +28,74 @@ defmodule SecantService.PlotDB do
   }
 
   # ---------------------------------------------------------------------------
-  # Schema registry — add one clause per schema-specific plot module.
-  # The type checker will warn that the catch-all always returns nil until a
-  # real clause is added; that warning is intentional and will disappear then.
-  #
-  # Example:
-  #   defp schema_plot_module("https://example.org/schemas/HeliumLevel@v1.0"),
-  #     do: SecantService.PlotDB.Schemas.HeliumLevel
-  # ---------------------------------------------------------------------------
-
-  defp schema_plot_module(_schema_id), do: nil
-
-  # ---------------------------------------------------------------------------
   # Public API
   # ---------------------------------------------------------------------------
 
   def init(secop_obj, mode \\ :live) do
-    case secop_obj do
-      %Parameter{} = param -> parameter_plot(param, mode)
-      %Module{} = mod -> module_plot(mod, mode)
+    case long_array(secop_obj) do
+      {param, latest} ->
+        ArrayLatest.plot(param, latest)
+
+      nil ->
+        case secop_obj do
+          %Parameter{} = param -> parameter_plot(param, mode)
+          %Module{} = mod -> module_plot(mod, mode)
+        end
+    end
+  end
+
+  # Arrays longer than the heatmap can carry are plotted as their latest
+  # reading only. Checked before any history is loaded: a few minutes of a
+  # 350 000-element spectrum would be far too much to fetch.
+  defp long_array(%Module{} = module) do
+    case Builders.find_param(module, "value") do
+      nil -> nil
+      param -> long_array(param)
+    end
+  end
+
+  defp long_array(%Parameter{} = param) do
+    with true <- ArrayLatest.numeric_array?(param),
+         {arr, _ts} = latest <- ArrayLatest.fetch_latest(param),
+         true <- length(arr) > @max_array_len do
+      {param, latest}
+    else
+      _ -> nil
+    end
+  end
+
+  @doc """
+  When a live reading makes the plotted array longer than the heatmap can
+  carry (e.g. a spectrum that was 3 points at startup and 10 000 after an
+  acquisition), returns `{param, {array, ms}}` to rebuild the plot as the
+  latest-reading plot. Otherwise nil.
+  """
+  def outgrown(%{plot_type: :array_latest}, _secop_obj, _datapoints, _parameter), do: nil
+
+  def outgrown(_plot_map, secop_obj, datapoints, parameter) do
+    param =
+      case secop_obj do
+        %Module{} = module -> parameter == "value" && Builders.find_param(module, "value")
+        %Parameter{name: ^parameter} = param -> param
+        _ -> nil
+      end
+
+    # any long reading in the batch counts, not only the last one: it must
+    # not go into the heatmap. The new plot starts from the batch's final
+    # reading, long or not (the latest-reading plot shows short ones too).
+    long? = fn {arr, _ts} -> is_list(arr) and length(arr) > @max_array_len end
+
+    with %Parameter{} <- param,
+         true <- ArrayLatest.numeric_array?(param),
+         true <- Enum.any?(datapoints, long?) do
+      {param, datapoints |> Enum.filter(&is_list(elem(&1, 0))) |> List.last()}
+    else
+      _ -> nil
     end
   end
 
   def module_plot(module, mode \\ :live) do
-    schema_id = get_in(module.custom_properties || %{}, ["schema"])
-    iface_class = Util.get_highest_if_class(module.interface_classes)
-
-    plot_module =
-      case schema_plot_module(schema_id) do
-        nil -> Map.get(@class_registry, iface_class)
-        mod -> mod
-      end
-
-    case plot_module do
+    case plot_module_for(module) do
       nil ->
         not_plottable()
 
@@ -72,19 +107,18 @@ defmodule SecantService.PlotDB do
     end
   end
 
+  # Schema-specific plot modules aren't implemented yet. When the first one is
+  # added, look up `get_in(module.custom_properties || %{}, ["schema"])` in a
+  # schema registry first and fall back to the interface-class registry.
+  defp plot_module_for(module) do
+    iface_class = Util.get_highest_if_class(module.interface_classes)
+    Map.get(@class_registry, iface_class)
+  end
+
   def param_list(%Parameter{} = parameter), do: [parameter.name]
 
   def param_list(%Module{} = module) do
-    schema_id = get_in(module.custom_properties || %{}, ["schema"])
-    iface_class = Util.get_highest_if_class(module.interface_classes)
-
-    plot_module =
-      case schema_plot_module(schema_id) do
-        nil -> Map.get(@class_registry, iface_class)
-        mod -> mod
-      end
-
-    case plot_module do
+    case plot_module_for(module) do
       nil -> []
       mod -> mod.param_names()
     end
@@ -97,17 +131,19 @@ defmodule SecantService.PlotDB do
 
       case parameter.datainfo["type"] do
         "array" ->
-          array_len = val |> List.first([]) |> length()
+          array_len = ArrayHeatmap.max_len(val)
 
+          # a long reading inside the window: plot the latest reading instead
           if array_len > @max_array_len do
-            not_plottable()
+            ArrayLatest.plot(parameter, ArrayLatest.fetch_latest(parameter))
           else
             option =
               ArrayHeatmap.heatmap_option(
                 [ArrayHeatmap.heatmap_series(ts, val)],
                 array_len,
-                unit,
-                mode
+                ArrayHeatmap.unit(parameter.datainfo),
+                mode,
+                name: parameter.name
               )
 
             %{
@@ -122,7 +158,12 @@ defmodule SecantService.PlotDB do
           members = parameter.datainfo["members"]
           series = [EnumDType.enum_series("value", ts, val, members)]
           option = EnumDType.enum_timeseries_option(series, members, "value", mode)
-          %{plottable: true, plot_available: Builders.plot_available?(val, parameter, mode), option: option}
+
+          %{
+            plottable: true,
+            plot_available: Builders.plot_available?(val, parameter, mode),
+            option: option
+          }
 
         "struct" ->
           option = StructDType.build_struct_option("value", ts, val, parameter.datainfo, mode)
@@ -138,7 +179,12 @@ defmodule SecantService.PlotDB do
         _ ->
           series = [Scalar.scalar_line_series("value", ts, val)]
           option = Scalar.timeseries_option(series, unit, mode)
-          %{plottable: true, plot_available: Builders.plot_available?(val, parameter, mode), option: option}
+
+          %{
+            plottable: true,
+            plot_available: Builders.plot_available?(val, parameter, mode),
+            option: option
+          }
       end
     else
       not_plottable()
@@ -154,23 +200,10 @@ defmodule SecantService.PlotDB do
       %{"type" => numeric} when numeric in ["double", "int", "scaled", "enum"] ->
         true
 
+      # short arrays as a time × index heatmap, long ones as their latest reading
       %{"type" => "array", "members" => %{"type" => member_type}}
       when member_type in ["double", "int", "scaled"] ->
-        latest =
-          ParameterValue.get_resource_module(parameter)
-          |> Ash.Query.for_read(:for_parameter, %{
-            parameter_id: parameter.id,
-            limit: 1,
-            order: :desc
-          })
-          |> Ash.read_first()
-
-        case latest do
-          {:ok, nil} -> true
-          {:ok, record} when is_list(record.value) -> length(record.value) <= @max_array_len
-          {:ok, _} -> true
-          {:error, _} -> true
-        end
+        true
 
       %{"type" => "struct"} = datainfo ->
         StructDType.supported_type?(datainfo)
@@ -193,6 +226,10 @@ defmodule SecantService.PlotDB do
   # Live update formatting
   # ---------------------------------------------------------------------------
 
+  def get_trace_updates_batch(%{plot_type: :array_latest} = plot_map, datapoints, parameter) do
+    ArrayLatest.trace_updates(plot_map, datapoints, parameter)
+  end
+
   # Module plots (from PlotSpec implementations) carry _plot_spec_module for clean dispatch.
   def get_trace_updates_batch(%{_plot_spec_module: mod} = plot_map, datapoints, parameter) do
     mod.trace_updates(plot_map, datapoints, parameter)
@@ -210,7 +247,11 @@ defmodule SecantService.PlotDB do
     %{seriesUpdates: [%{seriesIndex: 0, data: data}], arrayLen: array_len}
   end
 
-  def get_trace_updates_batch(%{_param_dtype_modules: mods, option: opt} = _plot_map, datapoints, parameter) do
+  def get_trace_updates_batch(
+        %{_param_dtype_modules: mods, option: opt} = _plot_map,
+        datapoints,
+        parameter
+      ) do
     dtype_mod = Map.get(mods, parameter)
     series_upds = dtype_mod.series_updates(opt, datapoints, parameter)
     result = %{seriesUpdates: series_upds}
@@ -372,16 +413,68 @@ defmodule SecantService.PlotDB do
             %{left: "55%", top: "58%", width: "42%", height: "34%", containLabel: true}
           ],
           xAxis: [
-            %{gridIndex: 0, type: "value", name: "Setpoint#{unit_label}", nameLocation: "middle", nameGap: 25},
-            %{gridIndex: 1, type: "value", name: "Raw hardware value#{unit_label}", nameLocation: "middle", nameGap: 25},
-            %{gridIndex: 2, type: "value", name: "Setpoint#{unit_label}", nameLocation: "middle", nameGap: 25},
-            %{gridIndex: 3, type: "value", name: "Setpoint#{unit_label}", nameLocation: "middle", nameGap: 25}
+            %{
+              gridIndex: 0,
+              type: "value",
+              name: "Setpoint#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            },
+            %{
+              gridIndex: 1,
+              type: "value",
+              name: "Raw hardware value#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            },
+            %{
+              gridIndex: 2,
+              type: "value",
+              name: "Setpoint#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            },
+            %{
+              gridIndex: 3,
+              type: "value",
+              name: "Setpoint#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            }
           ],
           yAxis: [
-            %{gridIndex: 0, type: "value", name: "Hardware value#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50},
-            %{gridIndex: 1, type: "value", name: "Calibrated readback#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50},
-            %{gridIndex: 2, type: "value", name: "Calibrated readback#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50},
-            %{gridIndex: 3, type: "value", name: "Error#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50}
+            %{
+              gridIndex: 0,
+              type: "value",
+              name: "Hardware value#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            },
+            %{
+              gridIndex: 1,
+              type: "value",
+              name: "Calibrated readback#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            },
+            %{
+              gridIndex: 2,
+              type: "value",
+              name: "Calibrated readback#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            },
+            %{
+              gridIndex: 3,
+              type: "value",
+              name: "Error#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            }
           ],
           title: [
             %{
@@ -444,7 +537,10 @@ defmodule SecantService.PlotDB do
   defp lookup_calib_coeff(node_id, module_atom, names) do
     Enum.find_value(names, fn name ->
       try do
-        case NodeTable.lookup({:service, node_id}, {:data_report, module_atom, String.to_existing_atom(name)}) do
+        case NodeTable.lookup(
+               {:service, node_id},
+               {:data_report, module_atom, String.to_existing_atom(name)}
+             ) do
           {:ok, %{data_report: [value, _]}} -> value
           {:error, _} -> nil
         end

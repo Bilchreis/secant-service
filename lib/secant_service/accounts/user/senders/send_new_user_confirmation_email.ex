@@ -22,7 +22,9 @@ defmodule SecantService.Accounts.User.Senders.SendNewUserConfirmationEmail do
   end
 
   defp body(params) do
-    url = url(~p"/confirm_new_user/#{params[:token]}")
+    # The AshAuthentication confirm_new_user page isn't mounted in the router yet,
+    # so this can't be a verified ~p route.
+    url = SecantServiceWeb.Endpoint.url() <> "/confirm_new_user/#{params[:token]}"
 
     """
     <p>Click this link to confirm your email:</p>

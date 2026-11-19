@@ -330,6 +330,13 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     {:noreply, clear_flash(socket)}
   end
 
+  # a Set or command finished; release its lock even if the widget that
+  # sent it is no longer on screen
+  def handle_info({:in_flight_done, key}, socket) do
+    SecantServiceWeb.InFlight.release(key)
+    {:noreply, socket}
+  end
+
   @impl true
   def handle_info({:value_update, :updated, module, accessible, data_report}, socket) do
     values = socket.assigns.values
@@ -469,7 +476,9 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     node = socket.assigns.current_node
 
     {:noreply,
-     push_patch(socket, to: ~p"/dashboard?node=#{"#{node.host}:#{node.port}"}&module=#{module}")}
+     socket
+     |> push_patch(to: ~p"/dashboard?node=#{"#{node.host}:#{node.port}"}&module=#{module}")
+     |> push_event("reveal-panel", %{id: "inspector"})}
   end
 
   @impl true

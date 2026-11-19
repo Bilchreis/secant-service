@@ -53,6 +53,7 @@ defmodule SecantServiceWeb.Components.Sparkline do
         |> assign(:id, assigns.id)
         |> assign(:param_ids, ids)
         |> assign(:series, Enum.map(params, &elem(&1, 0)))
+        |> assign(:unit, ValueFormat.unit(value_param.datainfo))
         |> assign(:history, nil)
         |> assign(:client_ready, false)
         |> start_async(:history, fn -> load_history(params) end)
@@ -150,48 +151,21 @@ defmodule SecantServiceWeb.Components.Sparkline do
       id={@id}
       phx-hook="Sparkline"
       phx-update="ignore"
+      data-unit={@unit}
       class="relative h-8"
-      title={
-        if "target" in @series, do: "last 10 minutes · value and target", else: "last 10 minutes"
+      role="img"
+      aria-label={
+        if "target" in @series,
+          do: "trend of value and target over the last 10 minutes",
+          else: "trend over the last 10 minutes"
       }
     >
-      <svg
-        viewBox="0 0 200 32"
-        preserveAspectRatio="none"
-        class="block h-8 w-full overflow-visible"
-        role="img"
-        aria-label="trend of the last 10 minutes"
+      <div
+        data-role="empty"
+        class="absolute inset-x-0 top-1/2 border-t border-dashed border-line"
       >
-        <line
-          data-role="empty"
-          x1="0"
-          x2="200"
-          y1="16"
-          y2="16"
-          stroke="currentColor"
-          class="text-line"
-          stroke-dasharray="3 3"
-          vector-effect="non-scaling-stroke"
-        />
-        <polyline
-          data-role="target"
-          fill="none"
-          stroke="currentColor"
-          class="text-muted"
-          stroke-width="1"
-          stroke-dasharray="3 2"
-          vector-effect="non-scaling-stroke"
-        />
-        <polyline
-          data-role="value"
-          fill="none"
-          stroke="currentColor"
-          class="text-primary"
-          stroke-width="1.5"
-          stroke-linejoin="round"
-          vector-effect="non-scaling-stroke"
-        />
-      </svg>
+      </div>
+      <div data-role="chart" class="absolute inset-0"></div>
     </div>
     """
   end
