@@ -4,6 +4,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   require Logger
 
   alias SecantService.NodeControl
+  alias SecantServiceWeb.InFlight
   alias NodeTable
   import SecantServiceWeb.CoreComponents
 
@@ -210,13 +211,6 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     end
   end
 
-  def update(%{action: :clear_highlight} = _assigns, socket) do
-    Logger.info("reset change success")
-    socket = assign(socket, :change_success, nil)
-
-    {:ok, socket}
-  end
-
   @impl true
   def update(%{value_update: data_report} = _assigns, socket) do
     socket =
@@ -238,6 +232,9 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   end
 
   def update(%{control: :validate, unsigned_params: unsigned_params} = _assigns, socket) do
+    # the user is editing again; the pending Set's reply must not replace this draft
+    socket = if socket.assigns.set_pending, do: assign(socket, :draft_dirty, true), else: socket
+
     updated_socket =
       case unsigned_params["form_type"] do
         "simple" ->
@@ -252,7 +249,9 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
               socket.assigns.set_form
             )
 
-          assign(socket, :set_form, updated_set_form)
+          socket
+          |> assign(:set_form, updated_set_form)
+          |> assign(:set_feedback, nil)
 
         "modal" ->
           Logger.info(
@@ -266,99 +265,103 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
               socket.assigns.modal_form
             )
 
-          assign(socket, :modal_form, updated_modal_form)
+          socket
+          |> assign(:modal_form, updated_modal_form)
+          |> assign(:set_feedback, nil)
       end
 
     {:ok, updated_socket}
   end
 
-  def update(%{control: :set_parameter, unsigned_params: unsigned_params} = _assigns, socket) do
-    form =
-      case unsigned_params["form_type"] do
-        "simple" ->
-          socket.assigns.set_form
+  def update(%{control: :set_parameter} = _assigns, %{assigns: %{set_pending: true}} = socket) do
+    # a change for this parameter is still in flight; ignore double submits
+    {:ok, socket}
+  end
 
-        "modal" ->
-          socket.assigns.modal_form
-      end
+  def update(%{control: :set_parameter, unsigned_params: unsigned_params} = _assigns, socket) do
+    form_key = form_key(unsigned_params["form_type"])
+    form = Map.fetch!(socket.assigns, form_key)
 
     validated_form =
-      NodeControl.validate(
-        unsigned_params,
-        socket.assigns.parameter.datainfo,
-        form
-      )
+      if blank?(unsigned_params["value"]) do
+        %{form | errors: [value: {"Enter a value", []}]}
+      else
+        NodeControl.validate(unsigned_params, socket.assigns.parameter.datainfo, form)
+      end
 
     if validated_form.errors != [] do
-      updated_socket =
-        case unsigned_params["form_type"] do
-          "simple" ->
-            assign(socket, :set_form, validated_form)
-
-          "modal" ->
-            assign(socket, :modal_form, validated_form)
-        end
-
-      {:ok, updated_socket}
+      {:ok, socket |> assign(form_key, validated_form) |> assign(:set_feedback, nil)}
     else
-      # removce pretty formatting for sending to NodeControl.change
+      # remove pretty formatting for sending to NodeControl.change
       not_pretty_value = Jason.decode!(validated_form.params["value"]) |> Jason.encode!()
-
       unsigned_params = Map.put(unsigned_params, "value", not_pretty_value)
 
-      ret = NodeControl.change(unsigned_params)
-      send_update_after(__MODULE__, %{id: socket.assigns.id_str, action: :clear_highlight}, 1000)
-
-      updated_socket =
-        case ret do
-          {:changed, _module, _parameter, [value, _qualifiers]} ->
-            {:ok, str_value} = Jason.encode(value)
-
-            unsigned_params = Map.put(unsigned_params, "value", str_value)
-
-            updated_form =
-              NodeControl.validate(
-                unsigned_params,
-                socket.assigns.parameter.datainfo,
-                validated_form
-              )
-
-            socket = assign(socket, :change_success, "btn-success")
-
-            case unsigned_params["form_type"] do
-              "simple" ->
-                assign(socket, :set_form, updated_form)
-
-              "modal" ->
-                assign(socket, :modal_form, updated_form)
-            end
-
-          {:error, message_type, specifier, error_class, error_message, _} ->
-            Logger.error(
-              "Error setting parameter #{unsigned_params["parameter"]}: #{message_type}, #{specifier}, #{error_class}, #{error_message}"
-            )
-
-            updated_form = %{
-              validated_form
-              | errors: [value: {"#{error_class}, #{error_message}", []}]
-            }
-
-            socket = assign(socket, :change_success, "btn-error")
-
-            case unsigned_params["form_type"] do
-              "simple" ->
-                assign(socket, :set_form, updated_form)
-
-              "modal" ->
-                assign(socket, :modal_form, updated_form)
-            end
-        end
-
-      Logger.info("change_success: #{updated_socket.assigns.change_success}")
-
-      {:ok, updated_socket}
+      if InFlight.claim(op_key(unsigned_params)) do
+        start_change(socket, form_key, validated_form, unsigned_params)
+      else
+        {:ok,
+         assign(
+           socket,
+           :set_feedback,
+           {:error, "Another change to this parameter is still being sent"}
+         )}
+      end
     end
   end
+
+  def update(%{set_result: result, unsigned_params: unsigned_params}, socket) do
+    InFlight.release(op_key(unsigned_params))
+    form_key = form_key(unsigned_params["form_type"])
+    form = Map.fetch!(socket.assigns, form_key)
+    datainfo = socket.assigns.parameter.datainfo
+
+    socket =
+      case result do
+        {:changed, _module, _parameter, [value, _qualifiers]} ->
+          {:ok, str_value} = Jason.encode(value)
+          unsigned_params = Map.put(unsigned_params, "value", str_value)
+          updated_form = NodeControl.validate(unsigned_params, datainfo, form)
+
+          socket
+          |> then(&if(&1.assigns.draft_dirty, do: &1, else: assign(&1, form_key, updated_form)))
+          |> assign(:set_feedback, {:ok, set_summary(value, datainfo)})
+
+        {:error, message_type, specifier, error_class, error_message, _} ->
+          Logger.error(
+            "Error setting parameter #{unsigned_params["parameter"]}: #{message_type}, #{specifier}, #{error_class}, #{error_message}"
+          )
+
+          socket
+          |> assign(form_key, %{form | errors: [value: {"#{error_class}, #{error_message}", []}]})
+          |> assign(:set_feedback, {:error, "Rejected by node: #{error_class}"})
+
+        {:error, reason} when reason in [:disconnected, :uninitialized, :not_connected] ->
+          assign(socket, :set_feedback, {:error, "Not sent: node not connected"})
+
+        other ->
+          Logger.error(
+            "Setting parameter #{unsigned_params["parameter"]} failed: #{inspect(other)}"
+          )
+
+          assign(
+            socket,
+            :set_feedback,
+            {:error,
+             "No answer from node — the value may or may not have been applied; check the target"}
+          )
+      end
+
+    {:ok, assign(socket, :set_pending, false)}
+  end
+
+  defp form_key("modal"), do: :modal_form
+  defp form_key(_), do: :set_form
+
+  defp blank?(nil), do: true
+  defp blank?(value) when is_binary(value), do: String.trim(value) == ""
+  defp blank?(_), do: false
+
+  defp set_summary(value, datainfo), do: "Accepted: " <> ValueFormat.short(value, datainfo)
 
   @impl true
   def handle_event("close_parameter_value_modal", _params, socket) do
@@ -374,6 +377,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   # Value rendering, chosen from the datainfo only
   # ---------------------------------------------------------------------------
 
+  attr :id, :string, required: true
   attr :value, :any, required: true
   attr :datainfo, :map, required: true
   attr :size, :atom, default: :md
@@ -392,13 +396,13 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
         <span class={[
           "font-mono",
           if(@size == :lg,
-            do: "text-[26px] leading-tight font-medium tracking-tight",
+            do: "text-[32px] leading-tight font-medium tracking-tight",
             else: "text-sm"
           )
         ]}>
           {ValueFormat.number(@value)}<span
             :if={@unit != ""}
-            class={["ml-1.5 text-muted", if(@size == :lg, do: "text-xs", else: "text-[11px]")]}
+            class={["ml-1.5 text-muted", "text-xs"]}
           >{@unit}</span>
         </span>
       <% @type == "enum" -> %>
@@ -414,7 +418,9 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
       <% @type == "struct" -> %>
         <.struct_value value={@value} datainfo={@datainfo} size={@size} />
       <% @type == "array" -> %>
-        <.array_value value={@value} datainfo={@datainfo} size={@size} />
+        <.array_value id={@id} value={@value} datainfo={@datainfo} size={@size} />
+      <% @type == "string" and @value == "" -> %>
+        <span class="font-mono text-xs text-muted italic">"" (empty)</span>
       <% @type == "string" -> %>
         <span class="block max-h-32 overflow-y-auto font-mono text-xs break-words whitespace-pre-wrap">{@value}</span>
       <% true -> %>
@@ -442,8 +448,11 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
       ]}
       title={ValueFormat.enum_name(@value, @datainfo)}
     >
-      <span class="truncate">{ValueFormat.enum_name(@value, @datainfo)}</span>
-      <span class="shrink-0 rounded-full bg-white/70 px-1.5 text-[10px] font-normal dark:bg-black/30">
+      <span :if={@size == :sm} class="wrap-anywhere">
+        {ValueFormat.breakable(ValueFormat.enum_name(@value, @datainfo))}
+      </span>
+      <span :if={@size != :sm} class="truncate">{ValueFormat.enum_name(@value, @datainfo)}</span>
+      <span class="shrink-0 rounded-full bg-white/70 px-1.5 text-[11px] font-normal dark:bg-black/30">
         {@value}
       </span>
     </span>
@@ -458,14 +467,16 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     assigns = assign(assigns, :members, assigns.datainfo["members"] || %{})
 
     # field names right-aligned in one column, values (enums as coloured
-    # badges) in the other; long names and values are clipped
+    # badges) in the other; long names and enum values wrap
     ~H"""
     <dl class={[
       "grid grid-cols-[minmax(0,max-content)_minmax(7rem,1fr)] items-center gap-x-2 font-mono",
-      if(@size == :lg, do: "max-h-48 gap-y-1 overflow-y-auto text-[11px]", else: "gap-y-1.5 text-xs")
+      if(@size == :lg, do: "max-h-48 gap-y-1 overflow-y-auto text-xs", else: "gap-y-1.5 text-xs")
     ]}>
       <%= for {name, info} <- @members do %>
-        <dt class="truncate text-right text-muted" title={name}>{name}</dt>
+        <dt class="text-right text-muted wrap-anywhere" title={name}>
+          {ValueFormat.breakable(name)}
+        </dt>
         <dd class="min-w-0">
           <%= if ValueFormat.enum?(info) do %>
             <.enum_badge value={ValueFormat.member(@value, name)} datainfo={info} size={:sm} />
@@ -483,6 +494,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     """
   end
 
+  attr :id, :string, required: true
   attr :value, :any, required: true
   attr :datainfo, :map, required: true
   attr :size, :atom, default: :md
@@ -502,9 +514,14 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
 
     assigns =
       if assigns.as_spectrum do
-        {points, lo, hi} = ValueFormat.spectrum(values, 200, height)
+        {points, lo, hi} = ValueFormat.spectrum(values)
 
-        assign(assigns, points: points, lo: lo, hi: hi, unit: ValueFormat.unit(members))
+        assign(assigns,
+          points: Jason.encode!(points),
+          lo: lo,
+          hi: hi,
+          unit: SecantService.PlotDB.DTypes.ArrayHeatmap.unit(assigns.datainfo) || ""
+        )
       else
         assigns
       end
@@ -513,23 +530,21 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     <%= cond do %>
       <% @as_spectrum -> %>
         <div class="flex flex-col gap-1">
-          <svg
-            viewBox={"0 0 200 #{@height}"}
-            preserveAspectRatio="none"
-            class="block w-full border-b border-line"
+          <%!-- drawn by the ArraySpark hook; the points attribute updates with each reading --%>
+          <div
+            id={"spark-arr:" <> @id}
+            phx-hook="ArraySpark"
+            phx-update="ignore"
+            data-points={@points}
+            data-n={@count}
+            data-unit={@unit}
+            class="relative w-full border-b border-line"
             style={"height: #{@height}px"}
             role="img"
-            aria-label="Latest array value"
+            aria-label={"latest array value, #{@count} points"}
           >
-            <polyline
-              points={@points}
-              fill="none"
-              stroke="currentColor"
-              class="text-primary"
-              stroke-width="1.5"
-              vector-effect="non-scaling-stroke"
-            />
-          </svg>
+            <div data-role="chart" class="absolute inset-0"></div>
+          </div>
           <div class="flex justify-between gap-2 font-mono text-[11px] text-muted">
             <span>{@count} pts</span>
             <span>{ValueFormat.number(@lo)} … {ValueFormat.number(@hi)} {@unit}</span>
@@ -548,7 +563,10 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
               )
             ]}
           >
-            {ValueFormat.short(v, @members)}
+            {case ValueFormat.short(v, @members) do
+              "" -> "—"
+              s -> s
+            end}
           </span>
         </div>
       <% true -> %>
@@ -566,11 +584,40 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   # Render
   # ---------------------------------------------------------------------------
 
-  defp set_button_class("btn-success"), do: "border-st-idle text-st-idle"
-  defp set_button_class("btn-error"), do: "border-st-error text-st-error"
+  defp set_button_class({:ok, _}), do: "border-st-idle text-st-idle"
+  defp set_button_class({:error, _}), do: "border-st-error text-st-error"
 
   defp set_button_class(_),
     do: "border-primary text-ink hover:bg-primary hover:text-primary-content"
+
+  attr :feedback, :any, required: true
+  attr :pending, :boolean, required: true
+  attr :id, :string, required: true
+
+  # Result of the last Set, kept until the user edits the field again.
+  # Announced to screen readers; acceptance is not the same as the measured
+  # value reaching the target, so it says "Accepted", not "done".
+  defp set_feedback(assigns) do
+    ~H"""
+    <div id={@id} role="status" aria-live="polite" class="min-h-0 font-mono text-xs">
+      <%= cond do %>
+        <% @pending -> %>
+          <span class="inline-flex items-center gap-1.5 text-muted">
+            <span class="loading loading-spinner loading-xs"></span> Sending to node…
+          </span>
+        <% match?({:ok, _}, @feedback) -> %>
+          <span class="inline-flex items-center gap-1 text-st-idle">
+            <.icon name="hero-check-micro" class="size-3.5" />{elem(@feedback, 1)}
+          </span>
+        <% match?({:error, _}, @feedback) -> %>
+          <span class="inline-flex items-center gap-1 text-st-error">
+            <.icon name="hero-exclamation-triangle-micro" class="size-3.5" />{elem(@feedback, 1)}
+          </span>
+        <% true -> %>
+      <% end %>
+    </div>
+    """
+  end
 
   @impl true
   def render(assigns) do
@@ -582,19 +629,24 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     ~H"""
     <div class={["min-w-0", @class]}>
       <%= if @variant == :target do %>
-        <div class="flex items-baseline justify-between gap-2 text-[11px] text-muted">
+        <div class="flex items-baseline justify-between gap-2 text-xs text-muted">
           <span>target</span>
           <span class="truncate font-mono" title="current target">
             {ValueFormat.short(@parameter_value, @parameter.datainfo)}
           </span>
         </div>
       <% else %>
-        <.value_block value={@parameter_value} datainfo={@parameter.datainfo} size={@size} />
+        <.value_block
+          id={"value:" <> @id_str}
+          value={@parameter_value}
+          datainfo={@parameter.datainfo}
+          size={@size}
+        />
       <% end %>
 
       <div
         :if={@parameter_error != nil}
-        class="mt-1 rounded border border-st-error/50 px-2 py-1 font-mono text-[11px] text-st-error"
+        class="mt-1 rounded border border-st-error/50 px-2 py-1 font-mono text-xs text-st-error"
       >
         {Enum.at(@parameter_error, 0)}: {Enum.at(@parameter_error, 1)}
       </div>
@@ -637,20 +689,24 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
             type="text"
             field={@set_form[:value]}
             placeholder={set_placeholder(@parameter.datainfo)}
+            aria-label={"New #{@parameter.name} for #{@module_name}"}
+            readonly={@set_pending}
             phx-debounce="400"
             autocomplete="off"
             id={"form:" <> to_string(@parameter.id) <> @location}
-            class="input input-sm w-full font-mono text-xs"
+            class="input input-sm w-full font-mono text-xs placeholder:text-muted"
           />
         <% end %>
         <button
           type="submit"
+          disabled={@set_pending}
+          aria-label={"Set #{@parameter.name} of #{@module_name}"}
           class={[
             "btn btn-sm shrink-0 border bg-transparent font-semibold",
-            set_button_class(@change_success)
+            set_button_class(@set_feedback)
           ]}
         >
-          Set
+          {if @set_pending, do: "Setting…", else: "Set"}
         </button>
         <button
           :if={@is_composite}
@@ -664,6 +720,12 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
           Edit…
         </button>
       </.form>
+      <.set_feedback
+        :if={@writable and @variant != :hero}
+        id={"set-feedback:" <> @id_str}
+        feedback={@set_feedback}
+        pending={@set_pending}
+      />
 
       <.modal
         :if={@writable and @is_composite and @variant != :hero}
@@ -690,12 +752,14 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
             value={Phoenix.HTML.Form.input_value(@modal_form, :module)}
           />
 
-          <.input_parameter
-            datainfo={@parameter.datainfo}
-            modal_form={@modal_form}
-            parameter_id={to_string(@parameter.id)}
-            location={@location}
-          />
+          <div class="max-h-[50vh] overflow-y-auto">
+            <.input_parameter
+              datainfo={@parameter.datainfo}
+              modal_form={@modal_form}
+              parameter_id={to_string(@parameter.id)}
+              location={@location}
+            />
+          </div>
 
           <input type="hidden" name="parameter" value={@parameter.name} />
           <div class="mt-2 text-xs text-muted">JSON preview</div>
@@ -705,12 +769,19 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
             type="textarea"
             field={@modal_form[:value]}
             value={Phoenix.HTML.Form.input_value(@modal_form, :value)}
-            rows="14"
+            rows="6"
             class="textarea w-full font-mono text-xs"
           />
-          <button type="submit" class={["btn btn-primary mt-2", @change_success]}>
-            Set
-          </button>
+          <div class="mt-2 flex items-center gap-3">
+            <button type="submit" class="btn btn-sm btn-primary" disabled={@set_pending}>
+              {if @set_pending, do: "Setting…", else: "Set"}
+            </button>
+            <.set_feedback
+              id={"set-feedback-modal:" <> @id_str}
+              feedback={@set_feedback}
+              pending={@set_pending}
+            />
+          </div>
         </.form>
       </.modal>
     </div>
@@ -777,15 +848,52 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     |> assign(:location, location)
     |> assign(:show_parameter_value_modal, false)
     |> assign(:is_composite, parameter.datainfo["type"] in ["struct", "tuple"])
-    |> assign(:change_success, nil)
+    |> assign(:set_pending, false)
+    |> assign(:draft_dirty, false)
+    |> assign(:set_feedback, nil)
     |> assign(:id_str, id_str)
   end
 
   defp set_placeholder(datainfo) do
     case {ValueFormat.limits(datainfo), ValueFormat.unit(datainfo)} do
+      {nil, ""} when is_map_key(datainfo, "members") -> "new value"
       {nil, ""} -> "new value (#{ValueFormat.type_label(datainfo)})"
       {nil, unit} -> "new value [#{unit}]"
       {limits, unit} -> String.trim("#{limits} #{unit}")
     end
+  end
+
+  defp op_key(params),
+    do: {:set, params["host"], params["port"], params["module"], params["parameter"]}
+
+  defp start_change(socket, form_key, validated_form, unsigned_params) do
+    # The node may take a while to answer (or not answer at all); never
+    # block the dashboard process on it.
+    pid = self()
+    id = socket.assigns.id_str
+
+    Task.start(fn ->
+      result =
+        try do
+          NodeControl.change(unsigned_params)
+        catch
+          kind, reason -> {:exception, Exception.format_banner(kind, reason)}
+        end
+
+      send(pid, {:in_flight_done, op_key(unsigned_params)})
+
+      send_update(pid, __MODULE__,
+        id: id,
+        set_result: result,
+        unsigned_params: unsigned_params
+      )
+    end)
+
+    {:ok,
+     socket
+     |> assign(form_key, validated_form)
+     |> assign(:set_pending, true)
+     |> assign(:draft_dirty, false)
+     |> assign(:set_feedback, nil)}
   end
 end

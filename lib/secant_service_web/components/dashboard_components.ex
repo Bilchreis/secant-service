@@ -233,38 +233,45 @@ defmodule SecantServiceWeb.DashboardComponents do
         </div>
       </div>
 
-      <dl class="grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 border-line text-xs sm:border-l sm:pl-8">
-        <dt class="text-muted">URI</dt>
-        <dd class="font-mono">{node_id_str(@node)}</dd>
-        <dt class="text-muted">UUID</dt>
-        <dd
-          class="cursor-pointer font-mono"
-          id={"uuid-" <> to_string(@node.uuid)}
-          phx-hook="CopyToClipboard"
-          data-copy={@node.uuid}
-          data-tip={@node.uuid}
-          title="Click to copy"
-        >
-          {String.slice(to_string(@node.uuid), 0, 8)}…
-        </dd>
-      </dl>
-      <dl class="grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 text-xs">
-        <dt :if={@node.firmware} class="text-muted">Firmware</dt>
-        <dd :if={@node.firmware}>{@node.firmware}</dd>
-        <dt class="text-muted">{if @state_map, do: "Connected", else: "Recorded"}</dt>
-        <dd>
-          {@node.inserted_at
-          |> DateTime.from_naive!("Etc/UTC")
-          |> DateTime.shift_zone!("Europe/Berlin")
-          |> Calendar.strftime("%d.%m.%Y %H:%M")}
-        </dd>
-      </dl>
+      <div class="flex shrink-0 flex-wrap gap-x-8 gap-y-1">
+        <dl class="grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 text-xs">
+          <dt class="text-muted">URI</dt>
+          <dd class="font-mono">{node_id_str(@node)}</dd>
+          <dt class="text-muted">UUID</dt>
+          <dd
+            class="cursor-pointer font-mono"
+            id={"uuid-" <> to_string(@node.uuid)}
+            phx-hook="CopyToClipboard"
+            data-copy={@node.uuid}
+            data-tip={@node.uuid}
+            title="Click to copy"
+          >
+            {String.slice(to_string(@node.uuid), 0, 8)}…
+          </dd>
+        </dl>
+        <dl class="grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 text-xs">
+          <dt :if={@node.firmware} class="text-muted">Firmware</dt>
+          <dd :if={@node.firmware}>{@node.firmware}</dd>
+          <dt class="text-muted">{if @state_map, do: "Connected", else: "Recorded"}</dt>
+          <dd class="tabular-nums">
+            {@node.inserted_at
+            |> DateTime.from_naive!("Etc/UTC")
+            |> DateTime.shift_zone!("Europe/Berlin")
+            |> Calendar.strftime("%d.%m.%Y %H:%M")}
+          </dd>
+        </dl>
+      </div>
 
       <div class="flex flex-wrap items-center gap-2">
         <button
           :if={@state_map}
           id="live-updates-toggle"
           phx-click="toggle-conn-state"
+          disabled={@state_map.state != :initialized}
+          data-confirm={
+            @state_map.active &&
+              "Pause live updates for this node? This stops updates for every viewer and pauses recording until resumed."
+          }
           aria-pressed={to_string(@state_map.active)}
           class="btn btn-sm gap-2 border-line bg-transparent font-normal"
           title="Asynchronous update messages from the node"
@@ -293,6 +300,49 @@ defmodule SecantServiceWeb.DashboardComponents do
     """
   end
 
+  @doc "Combined connection state: :initialized (live), :paused or the raw disconnected state."
+  def conn_state(%{state: :initialized, active: false}), do: :paused
+  def conn_state(%{state: state}), do: state
+  def conn_state(_), do: :disconnected
+
+  attr :conn_state, :atom, required: true
+
+  @doc "Warns that the values on screen are not live."
+  def stale_banner(assigns) do
+    ~H"""
+    <div
+      :if={@conn_state != :initialized}
+      id="stale-banner"
+      role="alert"
+      class={[
+        "flex items-center gap-2.5 rounded-box border px-4 py-2.5 text-sm",
+        if(@conn_state == :paused,
+          do: "border-st-busy/50 bg-st-busy/10",
+          else: "border-st-error/50 bg-st-error/10"
+        )
+      ]}
+    >
+      <.icon
+        name={if(@conn_state == :paused, do: "hero-pause-circle", else: "hero-signal-slash")}
+        class={"size-5 shrink-0 " <> if(@conn_state == :paused, do: "text-st-busy", else: "text-st-error")}
+      />
+      <%= if @conn_state == :paused do %>
+        <span>
+          <strong>Live updates paused.</strong>
+          Values below are the last received and are not updating; nothing is recorded while paused.
+        </span>
+      <% else %>
+        <span>
+          <strong>{if @conn_state == :connected,
+            do: "Reconnecting to the node.",
+            else: "Node disconnected."}</strong>
+          Values below are the last received before the connection was lost and may be stale.
+        </span>
+      <% end %>
+    </div>
+    """
+  end
+
   # ---------------------------------------------------------------------------
   # Module rail (live and historical)
   # ---------------------------------------------------------------------------
@@ -301,6 +351,8 @@ defmodule SecantServiceWeb.DashboardComponents do
   attr :selected, :string, default: nil
   attr :mode, :atom, default: :live
   attr :node_state, :atom, default: :initialized
+
+  attr :class, :any, default: nil
 
   def module_rail(assigns) do
     assigns =
@@ -311,14 +363,17 @@ defmodule SecantServiceWeb.DashboardComponents do
     ~H"""
     <aside
       id="module-rail"
-      class="sticky top-[4.25rem] max-h-[calc(100vh-5.5rem)] w-full overflow-y-auto rounded-box border border-line bg-base-100 p-2 lg:w-60 lg:shrink-0"
+      class={[
+        "w-full rounded-box border border-line bg-base-100 p-2 max-lg:columns-2 max-lg:gap-x-4 sm:max-lg:columns-3 lg:sticky lg:top-[4.25rem] lg:z-[1] lg:max-h-[calc(100vh-5.5rem)] lg:w-60 lg:shrink-0 lg:overflow-y-auto",
+        @class
+      ]}
       aria-label="Modules"
     >
-      <div class="px-1.5 pt-1 pb-1 text-[11px] font-semibold tracking-wider text-muted uppercase">
+      <div class="px-1.5 pt-1 pb-1 text-[11px] font-semibold tracking-wider text-muted uppercase [column-span:all]">
         Modules · {length(@node.modules)}
       </div>
       <div :for={{label, modules} <- @groups} class="mt-2">
-        <div :if={label} class="px-1.5 pb-1 text-[11px] text-muted">{label}</div>
+        <div :if={label} class="break-after-avoid px-1.5 pb-1 text-xs text-muted">{label}</div>
         <button
           :for={module <- modules}
           id={"rail-" <> module.name}
@@ -326,7 +381,7 @@ defmodule SecantServiceWeb.DashboardComponents do
           phx-value-module={module.name}
           aria-current={if(module.name == @selected, do: "true")}
           class={[
-            "flex min-h-8 w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors",
+            "flex min-h-8 w-full break-inside-avoid items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors",
             if(module.name == @selected,
               do: "bg-base-300 font-semibold",
               else: "hover:bg-base-200"
@@ -347,7 +402,7 @@ defmodule SecantServiceWeb.DashboardComponents do
             />
           <% else %>
             <span class="min-w-0 flex-1 truncate">{Util.display_name(module.name)}</span>
-            <span class="shrink-0 font-mono text-[10px] text-muted">
+            <span class="shrink-0 font-mono text-[11px] text-muted">
               {class_label(module.highest_interface_class)}
             </span>
           <% end %>
@@ -363,6 +418,11 @@ defmodule SecantServiceWeb.DashboardComponents do
 
   attr :node, :map, required: true
   attr :selected, :string, default: nil
+  attr :status_map, :map, default: %{}, doc: "module name → status, for the card tint"
+
+  attr :node_state, :atom,
+    default: :initialized,
+    doc: ":initialized, :paused or a disconnected state"
 
   def module_grid(assigns) do
     assigns = assign(assigns, :groups, group_modules(assigns.node.modules))
@@ -379,6 +439,8 @@ defmodule SecantServiceWeb.DashboardComponents do
             module={module}
             node={@node}
             selected={module.name == @selected}
+            node_state={@node_state}
+            status={Map.get(@status_map, module.name)}
           />
         </div>
       </section>
@@ -389,6 +451,8 @@ defmodule SecantServiceWeb.DashboardComponents do
   attr :module, :map, required: true
   attr :node, :map, required: true
   attr :selected, :boolean, default: false
+  attr :node_state, :atom, default: :initialized
+  attr :status, :atom, default: nil, doc: "SECoP status range: :idle, :busy, :warning, :error"
 
   def module_card(assigns) do
     module = assigns.module
@@ -415,10 +479,19 @@ defmodule SecantServiceWeb.DashboardComponents do
     <article
       id={"card-" <> @module.name}
       class={[
-        "flex min-w-0 flex-col gap-2 rounded-box border bg-base-100 p-3 transition-colors",
-        if(@selected, do: "border-primary", else: "border-line")
+        "relative flex min-w-0 flex-col gap-2 overflow-hidden rounded-box border p-3 transition-[color,background-color,border-color,opacity]",
+        if(@selected, do: "border-primary", else: "border-line"),
+        card_tint(@node_state == :initialized && @status),
+        @node_state != :initialized && "border-dashed opacity-75"
       ]}
+      data-stale={to_string(@node_state != :initialized)}
+      data-status={@status}
     >
+      <span
+        :if={@node_state == :initialized && @status in [:busy, :warning, :error]}
+        class={["absolute inset-y-0 left-0 w-1", card_edge(@status)]}
+        aria-hidden="true"
+      ></span>
       <header class="flex items-start gap-2">
         <button
           phx-click="select_module"
@@ -429,7 +502,7 @@ defmodule SecantServiceWeb.DashboardComponents do
           <span class="block truncate text-[14px] font-semibold hover:underline">
             {Util.display_name(@module.name)}
           </span>
-          <span class="block font-mono text-[10.5px] text-muted">
+          <span class="block font-mono text-[11px] text-muted">
             {class_label(@module.highest_interface_class)}
           </span>
         </button>
@@ -444,7 +517,7 @@ defmodule SecantServiceWeb.DashboardComponents do
         module_name={@module.name}
         highest_if_class={@module.highest_interface_class}
         status_param={Module.get_parameter(@module, "status")}
-        node_state={:initialized}
+        node_state={@node_state}
         indicator_select={:inner}
       />
 
@@ -502,9 +575,14 @@ defmodule SecantServiceWeb.DashboardComponents do
         <button
           phx-click="select_module"
           phx-value-module={@module.name}
-          class="rounded px-1 py-0.5 text-[11.5px] text-muted hover:bg-base-200 hover:text-base-content"
+          class="rounded px-1 py-0.5 text-xs text-muted hover:bg-base-200 hover:text-base-content"
         >
-          {length(@module.parameters)} params<span :if={@other_commands > 0}> · {@other_commands} cmds</span>
+          {length(@module.parameters)} params<span :if={@other_commands > 0}> · {@other_commands} {if @other_commands ==
+                                                                                                        1,
+                                                                                                      do:
+                                                                                                        "cmd",
+                                                                                                      else:
+                                                                                                        "cmds"}</span>
           ›
         </button>
       </footer>
@@ -522,6 +600,7 @@ defmodule SecantServiceWeb.DashboardComponents do
   attr :plot_param, :string, default: nil
   attr :plot_id, :string, required: true
   attr :chart_height, :integer, default: 260
+  attr :node_state, :atom, default: :initialized
 
   def module_detail(assigns) do
     module = assigns.module
@@ -548,7 +627,7 @@ defmodule SecantServiceWeb.DashboardComponents do
       <header>
         <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <h2 class="text-lg font-bold tracking-tight">{Util.display_name(@module.name)}</h2>
-          <span class="rounded bg-base-300 px-1.5 py-0.5 font-mono text-[10.5px] text-muted">
+          <span class="rounded bg-base-300 px-1.5 py-0.5 font-mono text-[11px] text-muted">
             {class_label(@module.highest_interface_class)}
           </span>
           <span class="flex-1"></span>
@@ -561,11 +640,11 @@ defmodule SecantServiceWeb.DashboardComponents do
             module_name={@module.name}
             highest_if_class={@module.highest_interface_class}
             status_param={Module.get_parameter(@module, "status")}
-            node_state={:initialized}
+            node_state={@node_state}
             indicator_select={:compact}
           />
         </div>
-        <div class="font-mono text-[11px] text-muted">{@node_id_str} · {@module.name}</div>
+        <div class="font-mono text-xs text-muted">{@node_id_str} · {@module.name}</div>
         <p :if={@module.description} class="mt-1 whitespace-pre-line text-muted">
           {String.trim(@module.description)}
         </p>
@@ -651,11 +730,11 @@ defmodule SecantServiceWeb.DashboardComponents do
           />
         <% else %>
           <div :for={command <- commands} class="border-t border-line py-2 first:border-t-0">
-            <div class="font-mono text-[12.5px] font-semibold">{command.name}</div>
-            <div :if={command.description} class="text-[11.5px] text-muted">
+            <div class="font-mono text-[13px] font-semibold">{command.name}</div>
+            <div :if={command.description} class="text-xs text-muted">
               {command.description}
             </div>
-            <div :if={command.datainfo["argument"]} class="font-mono text-[10.5px] text-muted">
+            <div :if={command.datainfo["argument"]} class="font-mono text-xs text-muted">
               argument: {ValueFormat.type_label(command.datainfo["argument"])}
             </div>
           </div>
@@ -667,7 +746,7 @@ defmodule SecantServiceWeb.DashboardComponents do
           Module properties
         </h3>
         <dl class="text-xs">
-          <.property prop_key="interface classes" value_class="font-mono text-[11px]">
+          <.property prop_key="interface classes" value_class="font-mono text-xs">
             {Enum.join(@module.interface_classes || [], ", ")}
           </.property>
           <.property :if={@module.group} prop_key="group">{@module.group}</.property>
@@ -675,11 +754,11 @@ defmodule SecantServiceWeb.DashboardComponents do
           <.property
             :if={@module.implementor}
             prop_key="implementor"
-            value_class="font-mono text-[11px] break-all"
+            value_class="font-mono text-xs break-all"
           >
             {@module.implementor}
           </.property>
-          <.property :if={@module.meaning} prop_key="meaning" value_class="font-mono text-[11px]">
+          <.property :if={@module.meaning} prop_key="meaning" value_class="font-mono text-xs">
             {Util.short_inspect(@module.meaning)}
           </.property>
           <.custom_properties properties={@module.custom_properties} />
@@ -688,7 +767,7 @@ defmodule SecantServiceWeb.DashboardComponents do
           <summary class="cursor-pointer px-2 py-1 text-xs text-muted hover:bg-base-200">
             Description JSON
           </summary>
-          <pre class="max-h-96 overflow-auto border-t border-line bg-base-200 p-2 font-mono text-[11px]">{@module_json}</pre>
+          <pre class="max-h-96 overflow-auto border-t border-line bg-base-200 p-2 font-mono text-xs">{@module_json}</pre>
         </details>
       </section>
     </div>
@@ -718,12 +797,12 @@ defmodule SecantServiceWeb.DashboardComponents do
     ~H"""
     <div class="border-t border-line py-2.5 first:border-t-0" id={"param-row-" <> @parameter.name}>
       <div class="flex items-baseline gap-2">
-        <span class="min-w-0 flex-1 font-mono text-[12.5px] font-semibold break-all">
+        <span class="min-w-0 flex-1 font-mono text-[13px] font-semibold break-all">
           {@parameter.name}
         </span>
-        <span class="font-mono text-[10.5px] text-muted">{@type_label}</span>
-        <span :if={@unit != ""} class="font-mono text-[10.5px] text-muted">[{@unit}]</span>
-        <span class="rounded border border-line px-1 font-mono text-[10px] text-muted">
+        <span class="font-mono text-xs text-muted">{@type_label}</span>
+        <span :if={@unit != ""} class="font-mono text-xs text-muted">[{@unit}]</span>
+        <span class="rounded border border-line px-1 font-mono text-[11px] text-muted">
           {if @parameter.readonly, do: "r", else: "r/w"}
         </span>
         <button
@@ -740,14 +819,14 @@ defmodule SecantServiceWeb.DashboardComponents do
           <.icon name="hero-chart-bar-micro" class="size-4" />
         </button>
       </div>
-      <div :if={@parameter.description} class="mt-0.5 text-[11.5px] text-muted">
+      <div :if={@parameter.description} class="mt-0.5 text-xs text-muted">
         {@parameter.description}
       </div>
-      <div :if={@limits} class="font-mono text-[10.5px] text-muted">range {@limits}</div>
+      <div :if={@limits} class="font-mono text-xs text-muted">range {@limits}</div>
       <div :if={@enum_members != []} class="mt-1 flex flex-wrap gap-1">
         <span
           :for={{name, code} <- @enum_members}
-          class={["rounded border px-1.5 font-mono text-[10.5px]", ValueFormat.enum_class(code)]}
+          class={["rounded border px-1.5 font-mono text-[11px]", ValueFormat.enum_class(code)]}
         >
           {name} <span class="opacity-70">{code}</span>
         </span>
@@ -772,7 +851,7 @@ defmodule SecantServiceWeb.DashboardComponents do
     ~H"""
     <aside
       id={@id}
-      class="sticky top-[4.25rem] flex max-h-[calc(100vh-5.5rem)] w-full shrink-0 overflow-hidden rounded-box border border-line bg-base-100 xl:w-(--inspector-w) xl:max-w-[calc(100vw-34rem)]"
+      class="flex max-h-[calc(100vh-5.5rem)] w-full shrink-0 scroll-mt-[4.25rem] overflow-hidden rounded-box border border-line bg-base-100 lg:sticky lg:top-[4.25rem] lg:w-(--inspector-w) lg:max-w-[calc(100vw-18rem)] xl:max-w-[calc(100vw-34rem)]"
       aria-label="Selected module"
     >
       <div
@@ -793,4 +872,13 @@ defmodule SecantServiceWeb.DashboardComponents do
     </aside>
     """
   end
+
+  # warn and error tint the whole card; busy only gets the edge
+  defp card_tint(:error), do: "bg-st-error/8"
+  defp card_tint(:warning), do: "bg-st-warn/8"
+  defp card_tint(_), do: "bg-base-100"
+
+  defp card_edge(:error), do: "bg-st-error"
+  defp card_edge(:warning), do: "bg-st-warn"
+  defp card_edge(_), do: "bg-st-busy"
 end

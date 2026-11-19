@@ -17,17 +17,30 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
       symbol: "circle",
       symbolSize: @markersize,
       large: true,
-      largeThreshold: 2000
+      largeThreshold: 2000,
+      # thin out long recordings to what the chart can show
+      sampling: "lttb"
     }
   end
 
   def timeseries_option(series, unit, mode, legend_selected \\ %{}) do
     base = %{
       backgroundColor: "transparent",
-      legend: %{orient: "vertical", right: 0, top: "center"},
-      grid: %{top: 10, bottom: 40, left: 60, right: 80},
+      # legend on top so it never covers the data in the narrow inspector
+      legend: %{type: "scroll", orient: "horizontal", left: 0, right: 64, top: 0},
+      # top leaves room for the legend and the unit above the y axis
+      grid: %{top: 44, bottom: 40, left: 60, right: 24},
+      tooltip: %{trigger: "axis"},
       xAxis: %{type: "time"},
-      yAxis: %{type: "value", name: unit || ""},
+      # scale: don't force 0 into the range, so drift around a setpoint is visible
+      yAxis: %{
+        type: "value",
+        name: unit || "",
+        nameLocation: "end",
+        nameGap: 12,
+        nameTextStyle: %{align: "left"},
+        scale: true
+      },
       series: series
     }
 
@@ -39,7 +52,14 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
       end
 
     if mode == :historical do
+      # mouse-wheel / drag zoom, a box-zoom tool and a reset
       base
+      |> Map.put(:dataZoom, [%{type: "inside", xAxisIndex: 0}])
+      |> Map.put(:toolbox, %{
+        right: 8,
+        top: 0,
+        feature: %{dataZoom: %{yAxisIndex: "none"}, restore: %{}}
+      })
     else
       {x_min, x_max, buttons, active} = Builders.default_live_range_ms()
 

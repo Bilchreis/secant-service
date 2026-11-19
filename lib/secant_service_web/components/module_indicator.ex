@@ -7,6 +7,7 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
   alias SecantService.Util
   alias SecantService.NodeValues
   alias SecantServiceWeb.SECoPComponents
+  import SecantServiceWeb.CoreComponents, only: [icon: 1]
 
   @impl true
   def mount(socket) do
@@ -73,6 +74,11 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
     {:ok, assign(socket, :status_value, processed_value_update)}
   end
 
+  # Live values are only trustworthy while the node is connected and sending
+  # updates; otherwise every status shows how stale it is instead.
+  defp offline_parts(:paused), do: {"bg-st-off", "text-muted", "paused"}
+  defp offline_parts(_), do: {"bg-st-off", "text-muted", "offline"}
+
   defp status_parts(nil), do: {"bg-st-off", "text-muted", nil, nil}
 
   defp status_parts(%{data_report: nil}), do: {"bg-st-off", "text-muted", nil, nil}
@@ -95,7 +101,7 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
     {dot, text, code} =
       cond do
         not assigns.has_status -> {"bg-st-off/50", "text-muted", ""}
-        assigns.node_state != :initialized -> {"bg-st-off", "text-muted", "offline"}
+        assigns.node_state != :initialized -> offline_parts(assigns.node_state)
         true -> {dot, text, code}
       end
 
@@ -107,28 +113,55 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
     <span class="flex min-w-0 flex-1 items-center gap-2" title={@string}>
       <span class={["size-2 shrink-0 rounded-full", @dot]}></span>
       <span class="min-w-0 flex-1 truncate">{Util.display_name(@module_name)}</span>
-      <span :if={@code} class={["shrink-0 font-mono text-[10.5px] font-semibold", @text]}>{@code}</span>
+      <span :if={@code} class={["shrink-0 font-mono text-xs font-semibold", @text]}>{@code}</span>
     </span>
     """
   end
 
   attr :status_value, :map, default: nil
+  attr :node_state, :atom, default: :initialized
   attr :layout, :atom, default: :stacked
 
   # Status chip for cards and the inspector: dot + code, then the status text.
   defp status_chip(assigns) do
     {dot, text, code, string} = status_parts(assigns.status_value)
-    assigns = assign(assigns, dot: dot, text: text, code: code, string: string)
+
+    {dot, text, code, string} =
+      if assigns.node_state == :initialized do
+        {dot, text, code, string}
+      else
+        {dot, text, code} = offline_parts(assigns.node_state)
+        {dot, text, code, string && "last known: " <> string}
+      end
+
+    alarm =
+      assigns.node_state == :initialized and
+        match?(%{stat_color: c} when c in [:warning, :error], assigns.status_value)
+
+    assigns = assign(assigns, dot: dot, text: text, code: code, string: string, alarm: alarm)
 
     ~H"""
     <div class="min-w-0">
-      <span class={["inline-flex items-center gap-1.5 font-mono text-[11px] font-semibold", @text]}>
+      <span
+        :if={@alarm}
+        class={[
+          "inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs font-semibold text-base-100",
+          @dot
+        ]}
+      >
+        <.icon name="hero-exclamation-triangle-micro" class="size-3.5" />
+        {@code}
+      </span>
+      <span
+        :if={!@alarm}
+        class={["inline-flex items-center gap-1.5 font-mono text-xs font-semibold", @text]}
+      >
         <span class={["size-2 rounded-full", @dot]}></span>
         {@code || "no data"}
       </span>
       <div
         :if={@layout == :stacked}
-        class="mt-0.5 min-h-4 truncate text-[11.5px] text-muted"
+        class="mt-0.5 min-h-4 truncate text-xs text-muted"
         title={@string}
       >
         {@string}
@@ -150,9 +183,9 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
             has_status={@status_param != nil}
           />
         <% :inner -> %>
-          <.status_chip status_value={@status_value} layout={:stacked} />
+          <.status_chip status_value={@status_value} node_state={@node_state} layout={:stacked} />
         <% :compact -> %>
-          <.status_chip status_value={@status_value} layout={:inline} />
+          <.status_chip status_value={@status_value} node_state={@node_state} layout={:inline} />
       <% end %>
     </div>
     """

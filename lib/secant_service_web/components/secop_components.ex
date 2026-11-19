@@ -94,8 +94,12 @@ defmodule SecantServiceWeb.SECoPComponents do
 
     summary =
       case severity_counts do
-        [] -> "SECoP check passed"
-        counts -> Enum.map_join(counts, " · ", fn {s, c} -> "#{c} #{String.downcase(s)}" end)
+        [] ->
+          "SECoP check passed"
+
+        counts ->
+          "SECoP check: " <>
+            Enum.map_join(counts, " · ", fn {s, c} -> "#{c} #{String.downcase(s)}" end)
       end
 
     assigns =
@@ -110,11 +114,10 @@ defmodule SecantServiceWeb.SECoPComponents do
         id={@id}
         type="button"
         tabindex="0"
-        class={[
-          "h-6 rounded-full border px-2.5 text-[11px] font-semibold transition-colors hover:bg-base-300",
-          severity_class(@worst)
-        ]}
+        title="Conformance of the node's self-description to the SECoP standard (not a hardware status)"
+        class="inline-flex h-6 items-center gap-1.5 rounded-full border border-line px-2.5 text-[11px] font-medium text-muted transition-colors hover:bg-base-300"
       >
+        <span class={["size-1.5 rounded-full border-2", severity_class(@worst)]}></span>
         {@summary}
       </button>
       <div
@@ -163,7 +166,7 @@ defmodule SecantServiceWeb.SECoPComponents do
     <.property
       :for={{name, value} <- @properties || %{}}
       prop_key={String.replace_prefix(name, "_", "")}
-      value_class="font-mono text-[11px]"
+      value_class="font-mono text-xs"
     >
       {Util.short_inspect(value)}
     </.property>

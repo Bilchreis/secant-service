@@ -93,7 +93,7 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
      assign(socket,
        show_json_modal: true,
        json_content: formatted_json,
-       json_title: "JSON Description: #{node.equipment_id} #{node.host}:#{}"
+       json_title: "JSON Description: #{node.equipment_id} #{node.host}:#{node.port}"
      )}
   end
 
@@ -177,4 +177,27 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
     state = socket.assigns[:state_filter] || :active
     ~p"/browse?state_filter=#{state}"
   end
+
+  @doc "Datapoint counts with thousands separators, e.g. 47 500."
+  def format_count(nil), do: "—"
+
+  def format_count(n) when is_integer(n) do
+    n
+    |> Integer.to_string()
+    |> String.reverse()
+    |> String.replace(~r/(\d{3})(?=\d)/, "\\1\u202F")
+    |> String.reverse()
+  end
+
+  def format_count(n), do: to_string(n)
+
+  defp filter_tab_class(true), do: "bg-base-300 font-semibold text-base-content"
+  defp filter_tab_class(false), do: "text-muted hover:bg-base-200 hover:text-base-content"
+
+  defp state_dot_class(:active), do: "bg-st-idle"
+  defp state_dot_class(:archived), do: "bg-st-off"
+  defp state_dot_class(:trashed), do: "bg-st-warn"
+  defp state_dot_class(_), do: "bg-st-off"
+
+  defp state_label(state), do: state |> to_string() |> String.capitalize()
 end

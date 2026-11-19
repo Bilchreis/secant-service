@@ -76,7 +76,7 @@ defmodule SecantServiceWeb.CoreComponents do
         >
           ✕
         </button>
-        <div :if={@title} class="modal-header mb-4">
+        <div :if={@title not in [nil, ""]} class="modal-header mb-4">
           <h3 class="text-lg font-bold">{@title}</h3>
         </div>
         {render_slot(@inner_block, @show)}
@@ -643,48 +643,56 @@ defmodule SecantServiceWeb.CoreComponents do
   def table_opts do
     [
       table_attrs: [
-        class:
-          "w-full border-collapse border bg-base-100/50 border-neutral rounded-lg" <>
-            "text-neutral-content table-fixed"
+        class: "w-full table-fixed border-collapse"
       ],
       thead_th_attrs: [
-        class: "p-2 bg-base-100 border border-base-200 text-neutral-content"
+        class:
+          "border-b border-line px-3 py-2 text-left text-[11px] font-semibold tracking-wider text-muted uppercase"
       ],
       tbody_td_attrs: [
-        class: "p-2 border border-base-200 text-neutral-content"
+        class: "border-b border-line px-3 py-2 align-middle"
       ]
     ]
+  end
+
+  # the node list has many columns: keep them readable and scroll sideways on
+  # narrow screens instead of letting cells overlap
+  def browse_table_opts do
+    Keyword.update!(table_opts(), :table_attrs, fn attrs ->
+      Keyword.update!(attrs, :class, &(&1 <> " min-w-[57rem] xl:min-w-[72rem]"))
+    end)
+    |> Keyword.put(
+      :no_results_content,
+      Phoenix.HTML.raw(
+        ~s(<p class="px-3 py-10 text-center text-xs text-muted">No nodes here.</p>)
+      )
+    )
   end
 
   def node_browser_pagination_opts do
     [
       page_links: {:ellipsis, 7},
       wrapper_attrs: [
-        class:
-          " flex flex-wrap items-center justify-center gap-y-5 gap-x-2 p-4 " <>
-            "bg-white dark:bg-gray-700 shadow-md text-gray-700 dark:text-gray-200 z-50"
+        class: "flex flex-wrap items-center justify-center gap-2 p-3 text-xs"
       ],
       # “Prev” and “Next” have order 1
       previous_link_attrs: [
-        class:
-          "order-2 p-2 border rounded border-gray-400 dark:border-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600"
+        class: "rounded-md border border-line px-2.5 py-1 hover:bg-base-200"
       ],
       next_link_attrs: [
-        class:
-          "order-2 p-2 border rounded border-gray-400 dark:border-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600"
+        class: "rounded-md border border-line px-2.5 py-1 hover:bg-base-200"
       ],
       # Page links become order 2 and occupy a full row (basis-full)
       pagination_list_attrs: [
-        class: "order-1 flex gap-2 basis-full justify-center"
+        class: "flex flex-wrap justify-center gap-1"
       ],
       previous_link_content: Phoenix.HTML.raw("Prev"),
       next_link_content: Phoenix.HTML.raw("Next"),
       current_link_attrs: [
-        class: "p-2 border rounded bg-purple-500 text-white"
+        class: "rounded-md border border-primary bg-primary px-2.5 py-1 text-primary-content"
       ],
       pagination_link_attrs: [
-        class:
-          "p-2 border rounded border-gray-400 dark:border-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600"
+        class: "rounded-md border border-line px-2.5 py-1 hover:bg-base-200"
       ]
     ]
   end
@@ -693,31 +701,26 @@ defmodule SecantServiceWeb.CoreComponents do
     [
       page_links: {:ellipsis, 7},
       wrapper_attrs: [
-        class:
-          " flex flex-wrap items-center justify-center gap-y-5 gap-x-2 p-4 " <>
-            "bg-white dark:bg-gray-700 shadow-md text-gray-700 dark:text-gray-200 z-50"
+        class: "flex flex-wrap items-center justify-center gap-2 p-3 text-xs"
       ],
       # “Prev” and “Next” have order 1
       previous_link_attrs: [
-        class:
-          "order-2 p-2 border rounded border-gray-400 dark:border-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600"
+        class: "rounded-md border border-line px-2.5 py-1 hover:bg-base-200"
       ],
       next_link_attrs: [
-        class:
-          "order-2 p-2 border rounded border-gray-400 dark:border-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600"
+        class: "rounded-md border border-line px-2.5 py-1 hover:bg-base-200"
       ],
       # Page links become order 2 and occupy a full row (basis-full)
       pagination_list_attrs: [
-        class: "order-1 flex gap-2 basis-full justify-center"
+        class: "flex flex-wrap justify-center gap-1"
       ],
       previous_link_content: Phoenix.HTML.raw("Prev"),
       next_link_content: Phoenix.HTML.raw("Next"),
       current_link_attrs: [
-        class: "p-2 border rounded bg-purple-500 text-white"
+        class: "rounded-md border border-primary bg-primary px-2.5 py-1 text-primary-content"
       ],
       pagination_link_attrs: [
-        class:
-          "p-2 border rounded border-gray-400 dark:border-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600"
+        class: "rounded-md border border-line px-2.5 py-1 hover:bg-base-200"
       ]
     ]
   end
