@@ -302,7 +302,9 @@ defmodule SecantServiceWeb.DashboardComponents do
           class="btn btn-sm border-line bg-transparent font-normal"
           title="Download everything recorded for this node as a NeXus (HDF5) file"
         >
-          <.icon name="hero-arrow-down-tray-micro" class="size-4" /> NeXus
+          <.icon name="hero-arrow-down-tray-micro" class="size-4" />
+          <%!-- the purple of the NeXus logo; lightened on dark for contrast --%>
+          <span class="font-semibold text-[#7a1192] dark:text-[#cf9be3]">NeXus</span>
         </a>
       </div>
     </section>
