@@ -33,7 +33,14 @@ defmodule SecantService.PlotDB.Readable do
           if array_len > @max_array_len do
             {:ok, ArrayLatest.plot(value_param, ArrayLatest.fetch_latest(value_param))}
           else
-            option = ArrayHeatmap.heatmap_option([ArrayHeatmap.heatmap_series(ts, val)], array_len, ArrayHeatmap.unit(value_param.datainfo), mode, name: value_param.name)
+            option =
+              ArrayHeatmap.heatmap_option(
+                [ArrayHeatmap.heatmap_series(ts, val)],
+                array_len,
+                ArrayHeatmap.unit(value_param.datainfo),
+                mode,
+                name: value_param.name
+              )
 
             {:ok,
              %{
@@ -77,7 +84,11 @@ defmodule SecantService.PlotDB.Readable do
   end
 
   @impl true
-  def trace_updates(%{_param_dtype_modules: mods, option: opt} = _plot_map, datapoints, param_name) do
+  def trace_updates(
+        %{_param_dtype_modules: mods, option: opt} = _plot_map,
+        datapoints,
+        param_name
+      ) do
     dtype_mod = Map.get(mods, param_name)
     series_upds = dtype_mod.series_updates(opt, datapoints, param_name)
     result = %{seriesUpdates: series_upds}

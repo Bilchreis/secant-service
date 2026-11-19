@@ -1,0 +1,30 @@
+name: Set up Elixir
+description: Install Erlang/Elixir from .tool-versions, restore caches and fetch deps.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Erlang/OTP and Elixir
+      id: beam
+      uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+      with:
+        version-file: .tool-versions
+        version-type: strict
+
+    # deps/ and _build/ are tied to the exact OTP/Elixir versions and mix.lock.
+    # ~/.cache/pythonx holds the Python env pythonx builds at compile time from
+    # the uv_init config in config/config.exs.
+    - name: Restore build cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          deps
+          _build
+          ~/.cache/pythonx
+        key: mix-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('mix.lock', 'config/config.exs') }}
+        restore-keys: |
+          mix-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-
+
+    - name: Fetch dependencies
+      shell: bash
+      run: mix deps.get

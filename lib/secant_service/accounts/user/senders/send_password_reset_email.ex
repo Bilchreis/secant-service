@@ -22,7 +22,9 @@ defmodule SecantService.Accounts.User.Senders.SendPasswordResetEmail do
   end
 
   defp body(params) do
-    url = url(~p"/password-reset/#{params[:token]}")
+    # The AshAuthentication password-reset page isn't mounted in the router yet,
+    # so this can't be a verified ~p route.
+    url = SecantServiceWeb.Endpoint.url() <> "/password-reset/#{params[:token]}"
 
     """
     <p>Click this link to reset your password:</p>

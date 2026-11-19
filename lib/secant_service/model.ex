@@ -17,7 +17,7 @@ defmodule SecantService.Model do
           values: map() | nil
         }
 
-  @spec from_socket(Phoenix.LiveView.Socket.t()) :: %Model{}
+  @spec from_socket(Phoenix.LiveView.Socket.t()) :: t()
   def from_socket(socket) do
     %Model{
       active_nodes: socket.assigns.active_nodes,
@@ -26,7 +26,7 @@ defmodule SecantService.Model do
     }
   end
 
-  @spec to_socket(Phoenix.LiveView.Socket.t(), %Model{}) :: Phoenix.LiveView.Socket.t()
+  @spec to_socket(Phoenix.LiveView.Socket.t(), t()) :: Phoenix.LiveView.Socket.t()
   def to_socket(socket, model) do
     socket
     |> assign(:active_nodes, model.active_nodes)
@@ -34,7 +34,7 @@ defmodule SecantService.Model do
     |> assign(:values, model.values)
   end
 
-  @spec get_initial_model() :: %Model{}
+  @spec get_initial_model() :: t()
   def get_initial_model() do
     active_nodes = SEC_Node_Supervisor.get_active_nodes()
 
@@ -64,7 +64,7 @@ defmodule SecantService.Model do
     }
   end
 
-  @spec get_default_node_id(%Model{}) :: {String.t(), integer()} | nil
+  @spec get_default_node_id(t()) :: {String.t(), integer()} | nil
   def get_default_node_id(model) do
     if model.active_nodes == %{} do
       nil
@@ -75,12 +75,12 @@ defmodule SecantService.Model do
     end
   end
 
-  @spec set_current_node(%Model{}, nil | {String.t(), integer()}) :: %Model{}
+  @spec set_current_node(t(), nil | {String.t(), integer()}) :: t()
   def set_current_node(model, nil) do
     model
   end
 
-  @spec set_current_node(%Model{}, {String.t(), integer()}) :: %Model{}
+  @spec set_current_node(t(), {String.t(), integer()}) :: t()
   def set_current_node(model, node_id) do
     current_node = Map.get(model.active_nodes, node_id)
 

@@ -1,0 +1,33 @@
+# Weekly dependency update PRs. Minor/patch bumps are grouped per ecosystem to
+# keep the PR count down; major bumps get their own PR. Security updates are
+# raised immediately regardless of this schedule (enable "Dependabot security
+# updates" in the repo settings).
+version: 2
+updates:
+  - package-ecosystem: mix
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      mix-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /assets
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]

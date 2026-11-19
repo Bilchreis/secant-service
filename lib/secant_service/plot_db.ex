@@ -28,18 +28,6 @@ defmodule SecantService.PlotDB do
   }
 
   # ---------------------------------------------------------------------------
-  # Schema registry — add one clause per schema-specific plot module.
-  # The type checker will warn that the catch-all always returns nil until a
-  # real clause is added; that warning is intentional and will disappear then.
-  #
-  # Example:
-  #   defp schema_plot_module("https://example.org/schemas/HeliumLevel@v1.0"),
-  #     do: SecantService.PlotDB.Schemas.HeliumLevel
-  # ---------------------------------------------------------------------------
-
-  defp schema_plot_module(_schema_id), do: nil
-
-  # ---------------------------------------------------------------------------
   # Public API
   # ---------------------------------------------------------------------------
 
@@ -107,16 +95,7 @@ defmodule SecantService.PlotDB do
   end
 
   def module_plot(module, mode \\ :live) do
-    schema_id = get_in(module.custom_properties || %{}, ["schema"])
-    iface_class = Util.get_highest_if_class(module.interface_classes)
-
-    plot_module =
-      case schema_plot_module(schema_id) do
-        nil -> Map.get(@class_registry, iface_class)
-        mod -> mod
-      end
-
-    case plot_module do
+    case plot_module_for(module) do
       nil ->
         not_plottable()
 
@@ -128,19 +107,18 @@ defmodule SecantService.PlotDB do
     end
   end
 
+  # Schema-specific plot modules aren't implemented yet. When the first one is
+  # added, look up `get_in(module.custom_properties || %{}, ["schema"])` in a
+  # schema registry first and fall back to the interface-class registry.
+  defp plot_module_for(module) do
+    iface_class = Util.get_highest_if_class(module.interface_classes)
+    Map.get(@class_registry, iface_class)
+  end
+
   def param_list(%Parameter{} = parameter), do: [parameter.name]
 
   def param_list(%Module{} = module) do
-    schema_id = get_in(module.custom_properties || %{}, ["schema"])
-    iface_class = Util.get_highest_if_class(module.interface_classes)
-
-    plot_module =
-      case schema_plot_module(schema_id) do
-        nil -> Map.get(@class_registry, iface_class)
-        mod -> mod
-      end
-
-    case plot_module do
+    case plot_module_for(module) do
       nil -> []
       mod -> mod.param_names()
     end
@@ -180,7 +158,12 @@ defmodule SecantService.PlotDB do
           members = parameter.datainfo["members"]
           series = [EnumDType.enum_series("value", ts, val, members)]
           option = EnumDType.enum_timeseries_option(series, members, "value", mode)
-          %{plottable: true, plot_available: Builders.plot_available?(val, parameter, mode), option: option}
+
+          %{
+            plottable: true,
+            plot_available: Builders.plot_available?(val, parameter, mode),
+            option: option
+          }
 
         "struct" ->
           option = StructDType.build_struct_option("value", ts, val, parameter.datainfo, mode)
@@ -196,7 +179,12 @@ defmodule SecantService.PlotDB do
         _ ->
           series = [Scalar.scalar_line_series("value", ts, val)]
           option = Scalar.timeseries_option(series, unit, mode)
-          %{plottable: true, plot_available: Builders.plot_available?(val, parameter, mode), option: option}
+
+          %{
+            plottable: true,
+            plot_available: Builders.plot_available?(val, parameter, mode),
+            option: option
+          }
       end
     else
       not_plottable()
@@ -259,7 +247,11 @@ defmodule SecantService.PlotDB do
     %{seriesUpdates: [%{seriesIndex: 0, data: data}], arrayLen: array_len}
   end
 
-  def get_trace_updates_batch(%{_param_dtype_modules: mods, option: opt} = _plot_map, datapoints, parameter) do
+  def get_trace_updates_batch(
+        %{_param_dtype_modules: mods, option: opt} = _plot_map,
+        datapoints,
+        parameter
+      ) do
     dtype_mod = Map.get(mods, parameter)
     series_upds = dtype_mod.series_updates(opt, datapoints, parameter)
     result = %{seriesUpdates: series_upds}
@@ -421,16 +413,68 @@ defmodule SecantService.PlotDB do
             %{left: "55%", top: "58%", width: "42%", height: "34%", containLabel: true}
           ],
           xAxis: [
-            %{gridIndex: 0, type: "value", name: "Setpoint#{unit_label}", nameLocation: "middle", nameGap: 25},
-            %{gridIndex: 1, type: "value", name: "Raw hardware value#{unit_label}", nameLocation: "middle", nameGap: 25},
-            %{gridIndex: 2, type: "value", name: "Setpoint#{unit_label}", nameLocation: "middle", nameGap: 25},
-            %{gridIndex: 3, type: "value", name: "Setpoint#{unit_label}", nameLocation: "middle", nameGap: 25}
+            %{
+              gridIndex: 0,
+              type: "value",
+              name: "Setpoint#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            },
+            %{
+              gridIndex: 1,
+              type: "value",
+              name: "Raw hardware value#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            },
+            %{
+              gridIndex: 2,
+              type: "value",
+              name: "Setpoint#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            },
+            %{
+              gridIndex: 3,
+              type: "value",
+              name: "Setpoint#{unit_label}",
+              nameLocation: "middle",
+              nameGap: 25
+            }
           ],
           yAxis: [
-            %{gridIndex: 0, type: "value", name: "Hardware value#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50},
-            %{gridIndex: 1, type: "value", name: "Calibrated readback#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50},
-            %{gridIndex: 2, type: "value", name: "Calibrated readback#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50},
-            %{gridIndex: 3, type: "value", name: "Error#{unit_label}", nameLocation: "middle", nameRotate: 90, nameGap: 50}
+            %{
+              gridIndex: 0,
+              type: "value",
+              name: "Hardware value#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            },
+            %{
+              gridIndex: 1,
+              type: "value",
+              name: "Calibrated readback#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            },
+            %{
+              gridIndex: 2,
+              type: "value",
+              name: "Calibrated readback#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            },
+            %{
+              gridIndex: 3,
+              type: "value",
+              name: "Error#{unit_label}",
+              nameLocation: "middle",
+              nameRotate: 90,
+              nameGap: 50
+            }
           ],
           title: [
             %{
@@ -493,7 +537,10 @@ defmodule SecantService.PlotDB do
   defp lookup_calib_coeff(node_id, module_atom, names) do
     Enum.find_value(names, fn name ->
       try do
-        case NodeTable.lookup({:service, node_id}, {:data_report, module_atom, String.to_existing_atom(name)}) do
+        case NodeTable.lookup(
+               {:service, node_id},
+               {:data_report, module_atom, String.to_existing_atom(name)}
+             ) do
           {:ok, %{data_report: [value, _]}} -> value
           {:error, _} -> nil
         end
