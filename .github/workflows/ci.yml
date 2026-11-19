@@ -24,22 +24,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
-    services:
-      postgres:
-        image: postgres:17.4
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same image as docker-compose's db service (Postgres + TimescaleDB). It's
+      # built here rather than used as a job service because services can't be
+      # built from a Dockerfile. Started now, waited for before the tests.
+      - name: Start Postgres with TimescaleDB
+        run: |
+          docker build -t secant-postgres docker/postgres
+          docker run -d --name postgres \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+            -p 5432:5432 secant-postgres
 
       - uses: ./.github/actions/setup-elixir
 
@@ -59,6 +55,16 @@ jobs:
 
       - name: Check for missing Ash migrations
         run: mix ash.codegen --check
+
+      - name: Wait for Postgres
+        run: |
+          for _ in $(seq 60); do
+            # over TCP: the entrypoint's init-time server only listens on the socket
+            docker exec postgres pg_isready -h 127.0.0.1 -U postgres -q && exit 0
+            sleep 1
+          done
+          docker logs postgres
+          exit 1
 
       - name: Test
         run: mix test

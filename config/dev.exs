@@ -6,6 +6,8 @@ config :secant_service, SecantService.Repo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
+  # PGPORT lets you point at a TimescaleDB server on another port
+  port: String.to_integer(System.get_env("PGPORT", "5432")),
   database: "secant_service_dev",
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,

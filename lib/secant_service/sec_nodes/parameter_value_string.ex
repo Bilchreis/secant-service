@@ -108,7 +108,12 @@ defmodule SecantService.SecNodes.ParameterValueString do
       ]
     end
 
+    # Part of the primary key because the table is a TimescaleDB hypertable
+    # partitioned on `timestamp`, and every unique index on a hypertable must
+    # include that column (see the convert_parameter_values_to_hypertables
+    # migration).
     attribute :timestamp, :utc_datetime_usec do
+      primary_key? true
       allow_nil? false
       public? true
     end

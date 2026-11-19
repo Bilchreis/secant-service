@@ -15,6 +15,8 @@ config :secant_service, SecantService.Repo,
   username: "postgres",
   password: "postgres",
   hostname: "localhost",
+  # PGPORT lets you point at a TimescaleDB server on another port
+  port: String.to_integer(System.get_env("PGPORT", "5432")),
   database: "secant_service_test#{System.get_env("MIX_TEST_PARTITION")}",
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2

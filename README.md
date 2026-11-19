@@ -7,6 +7,26 @@ To start your Phoenix server:
 
 Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
 
+## Database
+
+Parameter values are stored in [TimescaleDB](https://docs.tigerdata.com/)
+hypertables with compression, so Postgres needs the `timescaledb` extension
+installed and preloaded (`shared_preload_libraries = 'timescaledb'`). The
+migrations fail on a plain Postgres.
+
+The easiest way to get one for development is the image in `docker/postgres`
+(Postgres 17 + TimescaleDB, telemetry off):
+
+    docker build -t secant-postgres docker/postgres
+    docker run -d --name secant-postgres -e POSTGRES_PASSWORD=postgres \
+      -p 127.0.0.1:5434:5432 secant-postgres
+
+    export PGPORT=5434   # dev and test read the port from PGPORT (default 5432)
+    mix setup
+
+`docker compose up -d --build db` builds the same image for the production
+setup in `docker-compose.yml`.
+
 Ready to run in production? Please [check our deployment guides](https://hexdocs.pm/phoenix/deployment.html).
 
 ## Learn more
