@@ -7,6 +7,7 @@ defmodule SecantService.PlotDB do
   alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
   alias SecantService.PlotDB.DTypes.Scalar
   alias SecantService.PlotDB.DTypes.Struct, as: StructDType
+  alias SecantService.PlotDB.History
 
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.Module
@@ -41,8 +42,37 @@ defmodule SecantService.PlotDB do
           %Parameter{} = param -> parameter_plot(param, mode)
           %Module{} = mod -> module_plot(mod, mode)
         end
+        |> put_history_resolution(secop_obj)
     end
   end
+
+  @doc """
+  The parameters of a plot whose readings are thinned out in the database for
+  the historical view (see `History`).
+  """
+  def history_params(secop_obj) do
+    secop_obj
+    |> param_list()
+    |> Enum.map(&resolve_param(secop_obj, &1))
+    |> Enum.filter(&History.numeric?/1)
+  end
+
+  defp resolve_param(%Parameter{} = param, _name), do: param
+  defp resolve_param(%Module{} = module, name), do: Builders.find_param(module, name)
+
+  # Historical plots that load more detail on zoom start with thinned-out
+  # readings when the recording is long: tell the chart, so it can say so.
+  defp put_history_resolution(%{option: %{_windowFetch: _}} = plot, secop_obj) do
+    resolution =
+      secop_obj
+      |> history_params()
+      |> Enum.map(&Parameter.history_resolution!(&1.id, nil, nil))
+      |> History.coarsest()
+
+    put_in(plot, [:option, :_windowFetch], resolution)
+  end
+
+  defp put_history_resolution(plot, _secop_obj), do: plot
 
   # Arrays longer than the heatmap can carry are plotted as their latest
   # reading only. Checked before any history is loaded: a few minutes of a

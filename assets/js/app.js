@@ -224,6 +224,15 @@ Hooks.ResizablePanel = {
   },
 };
 
+// Width of a time bucket for the resolution label: 900000 → "15 min"
+const formatBucket = (ms) => {
+  const units = [[86_400_000, "d"], [3_600_000, "h"], [60_000, "min"], [1_000, "s"]];
+  for (const [size, unit] of units) {
+    if (ms >= size) return `${+(ms / size).toFixed(1)} ${unit}`;
+  }
+  return `${ms} ms`;
+};
+
 Hooks.EChartsChart = {
   mounted() {
     // seriesIndex → [[ts, val], ...]  — maintained across flushes for windowing
@@ -249,7 +258,15 @@ Hooks.EChartsChart = {
 
     // Register handlers immediately — server may send data before rAF fires (eager push)
     this.handleEvent(`echarts-data-${this.el.id}`, ({ option }) => {
-      const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, ...echartsOption } = option;
+      const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, _windowFetch, ...echartsOption } = option;
+      // historical numeric plots: the server thins out long recordings and
+      // sends more detail for the window the chart is zoomed to
+      this._windowFetch = !!_windowFetch;
+      this._resolution = _windowFetch || null;
+      this._overview = null;
+      this._detail = null;
+      this._windowReq = 0;
+      clearTimeout(this._windowTimer);
       this._rangeButtons = _rangeButtons || null;
       this._activeButton = _activeButton != null ? _activeButton : null;
       this._arrayLen = _arrayLen != null ? _arrayLen : null;
@@ -274,6 +291,7 @@ Hooks.EChartsChart = {
       (echartsOption.series || []).forEach((s, i) => {
         this._seriesData[i] = s.data || [];
       });
+      if (this._windowFetch) this._overview = { ...this._seriesData };
       // Seed min/max from initial data and bake into the option (visualMap present = heatmap)
       if (echartsOption.visualMap) {
         for (const p of (this._seriesData[0] || [])) {
@@ -310,7 +328,7 @@ Hooks.EChartsChart = {
     });
 
     this.handleEvent("chart-update", ({ option }) => {
-      const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, ...echartsOption } = option;
+      const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, _windowFetch, ...echartsOption } = option;
       this._lastOption = echartsOption;
       this._chart && this._chart.setOption(this._themed(echartsOption), { notMerge: true });
     });
@@ -324,6 +342,8 @@ Hooks.EChartsChart = {
       this._growArrayLen(arrayLen);
       this._dataDirty = true;
     });
+
+    this.handleEvent(`window-chart-data-${this.el.id}`, (reply) => this._applyWindow(reply));
 
     this.handleEvent(`extend-chart-${this.el.id}`, ({ seriesUpdates, arrayLen, snapshot }) => {
       if (snapshot) {
@@ -409,7 +429,121 @@ Hooks.EChartsChart = {
   },
 
   _initChart() {
-    return echarts.init(this.el, isDarkTheme() ? "dark" : null, { renderer: "canvas" });
+    const chart = echarts.init(this.el, isDarkTheme() ? "dark" : null, { renderer: "canvas" });
+    // zooming and panning (wheel, drag, box zoom, slider) and the reset tool
+    chart.on("datazoom", () => this._scheduleWindowFetch());
+    chart.on("restore", () => this._scheduleWindowFetch());
+    return chart;
+  },
+
+  // --- Detail on zoom (historical numeric plots) ---------------------------
+  // The first load covers the whole recording, thinned out by the server
+  // (`_overview`). After a zoom or pan the visible window is requested again;
+  // the reply (`_detail`) replaces the overview inside that window, so the
+  // time axis keeps its full extent and zooming out works without waiting.
+
+  // [min, max] of the time axis as currently shown
+  _visibleWindow() {
+    const axis = this._chart?.getModel().getComponent("xAxis", 0)?.axis;
+    const extent = axis?.scale.getExtent();
+    return extent && extent.every(Number.isFinite) ? extent : null;
+  },
+
+  // [first, last] timestamp of the overview
+  _overviewExtent() {
+    let lo = null;
+    let hi = null;
+    Object.values(this._overview || {}).forEach((d) => {
+      if (!d.length) return;
+      const a = this._pointTs(d[0]);
+      const b = this._pointTs(d[d.length - 1]);
+      if (lo === null || a < lo) lo = a;
+      if (hi === null || b > hi) hi = b;
+    });
+    return lo === null ? null : [lo, hi];
+  },
+
+  _scheduleWindowFetch() {
+    if (!this._windowFetch) return;
+    clearTimeout(this._windowTimer);
+    this._windowTimer = setTimeout(() => this._fetchWindow(), 250);
+  },
+
+  _fetchWindow() {
+    if (!this._chart || !this._windowFetch) return;
+    const visible = this._visibleWindow();
+    const full = this._overviewExtent();
+    if (!visible || !full) return;
+    const [from, to] = visible;
+
+    // zoomed all the way out: the overview is all there is to show
+    if (from <= full[0] && to >= full[1]) {
+      this._windowReq++; // a reply still on its way is outdated
+      this._detail = null;
+      this._drawWindowData();
+      return;
+    }
+    // every reading of this window is already loaded
+    const d = this._detail;
+    if (d && !d.aggregated && from >= d.from && to <= d.to) return;
+
+    // some margin on both sides, so that short pans stay inside the detail
+    const pad = (to - from) / 2;
+    this.pushEventTo(this.el, "fetch-chart-window", {
+      from: Math.floor(Math.max(from - pad, full[0])),
+      to: Math.ceil(Math.min(to + pad, full[1])),
+      req: ++this._windowReq,
+    });
+  },
+
+  _applyWindow({ req, from, to, aggregated, bucket_ms, seriesUpdates }) {
+    // only the answer to the latest request (the chart may have moved on)
+    if (!this._windowFetch || req !== this._windowReq) return;
+    const series = {};
+    (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
+      series[seriesIndex] = data;
+    });
+    this._detail = { from, to, aggregated, bucket_ms, series };
+    this._drawWindowData();
+  },
+
+  // overview outside the detail window, detail inside
+  _drawWindowData() {
+    if (!this._chart || !this._overview) return;
+    const d = this._detail;
+    Object.keys(this._overview).forEach((idx) => {
+      const overview = this._overview[idx];
+      const detail = d && d.series[idx];
+      this._seriesData[idx] = detail
+        ? [
+            ...overview.filter((p) => this._pointTs(p) < d.from),
+            ...detail,
+            ...overview.filter((p) => this._pointTs(p) > d.to),
+          ]
+        : overview;
+    });
+    this._chart.setOption({
+      series: Object.keys(this._seriesData).map((idx) => ({ data: this._seriesData[idx] })),
+    });
+    this._renderResolution();
+  },
+
+  // "min/max per 15 min" while readings are thinned out, "every reading" once
+  // the zoomed window shows all of them
+  _renderResolution() {
+    const el = document.getElementById(`resolution-${this.el.id}`);
+    if (!el) return;
+    const r = this._detail || this._resolution;
+    if (!this._windowFetch || !r) {
+      el.textContent = "";
+      el.removeAttribute("title");
+    } else if (r.aggregated) {
+      el.textContent = `min/max per ${formatBucket(r.bucket_ms)}`;
+      el.title = "Long recordings are thinned out: each interval shows its first, last, lowest and highest reading. Zoom in to see every reading.";
+    } else {
+      el.textContent = "every reading";
+      el.title = "Every recorded reading in this time range is shown.";
+    }
   },
 
   // Page colours on top of the server-built option: transparent background,
@@ -927,6 +1061,10 @@ Hooks.EChartsChart = {
     this._heatCache = {};
     this._chart.setOption(this._themed(this._composeOption(this._lastOption)), { notMerge: true });
     this._bindHeatTooltip();
+    // the rebuilt chart is zoomed out again and shows the overview
+    this._windowReq = (this._windowReq || 0) + 1;
+    this._detail = null;
+    this._renderResolution();
     this._dataDirty = true;
     this._flushBuffer();
   },
@@ -956,6 +1094,7 @@ Hooks.EChartsChart = {
     const loadingEl = document.getElementById(this.el.dataset.loadingId);
     if (loadingEl) loadingEl.style.display = "none";
     this._renderRangeButtons();
+    this._renderResolution();
   },
 
   _disposeChart() {
@@ -1134,6 +1273,7 @@ Hooks.EChartsChart = {
   },
 
   destroyed() {
+    clearTimeout(this._windowTimer);
     ThemeWatch.remove(this._onThemeChange);
     ChartFlushDriver.unregister(this);
     ChartVisibilityObserver.unobserve(this.el);
