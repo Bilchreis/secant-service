@@ -25,7 +25,9 @@ defmodule SecantServiceWeb.LiveUserAuth do
     if socket.assigns[:current_user] do
       {:cont, socket}
     else
-      {:halt, Phoenix.LiveView.redirect(socket, to: ~p"/sign-in")}
+      # The AshAuthentication sign-in page isn't mounted in the router yet,
+      # so this can't be a verified ~p route.
+      {:halt, Phoenix.LiveView.redirect(socket, to: "/sign-in")}
     end
   end
 

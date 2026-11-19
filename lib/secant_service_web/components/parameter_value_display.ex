@@ -224,7 +224,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
           |> assign(:parameter_error, nil)
 
         _ ->
-          Logger.warning("Malformed datareport received: #{IO.inspect(data_report)}")
+          Logger.warning("Malformed datareport received: #{inspect(data_report)}")
           socket
       end
 
