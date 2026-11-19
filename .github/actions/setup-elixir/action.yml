@@ -15,6 +15,7 @@ runs:
     # ~/.cache/pythonx holds the Python env pythonx builds at compile time from
     # the uv_init config in config/config.exs.
     - name: Restore build cache
+      id: cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -28,3 +29,10 @@ runs:
     - name: Fetch dependencies
       shell: bash
       run: mix deps.get
+
+    # pythonx bakes the uv_init config in at compile time, and Mix refuses to
+    # run with a build from a different config. A fallback cache may hold one.
+    - name: Drop a stale pythonx build
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: mix deps.clean pythonx --build
