@@ -133,9 +133,9 @@ function isDarkTheme() {
   return prefersDark.matches;
 }
 
-// Series palette: violet accent first, then colours that stay apart in both
+// Series palette: HZB light blue first, then colours that stay apart in both
 // themes (and differ in lightness, not only hue).
-const CHART_PALETTE = ["#8b5cf6", "#38bdf8", "#f59e0b", "#10b981", "#f43f5e", "#a3a3a8", "#ec4899", "#84cc16"];
+const CHART_PALETTE = ["#009ee0", "#8b5cf6", "#f59e0b", "#10b981", "#f43f5e", "#a3a3a8", "#ec4899", "#84cc16"];
 
 // Notify mounted charts when the theme changes (theme toggle or OS setting).
 const ThemeWatch = {
