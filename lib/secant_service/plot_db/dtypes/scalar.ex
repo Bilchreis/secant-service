@@ -52,8 +52,11 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
       end
 
     if mode == :historical do
-      # mouse-wheel / drag zoom, a box-zoom tool and a reset
+      # mouse-wheel / drag zoom, a box-zoom tool and a reset. `_windowFetch`
+      # makes the chart ask for the readings of the window it is zoomed to;
+      # `PlotDB.init/2` replaces it with the resolution of the first load.
       base
+      |> Map.put(:_windowFetch, %{aggregated: false, bucket_ms: nil})
       |> Map.put(:dataZoom, [%{type: "inside", xAxisIndex: 0}])
       |> Map.put(:toolbox, %{
         right: 8,

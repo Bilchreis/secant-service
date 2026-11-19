@@ -4,6 +4,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   require Logger
   alias SecantService.PlotDB
   alias SecantService.PlotDB.Builders
+  alias SecantService.PlotDB.History
   alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.SecNodes.ParameterValue
   alias Phoenix.LiveView.JS
@@ -303,6 +304,42 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     {:noreply, socket}
   end
 
+  # A zoomed historical chart asks for the readings of the window it shows.
+  # Long windows come back thinned out, short ones with every reading.
+  def handle_event(
+        "fetch-chart-window",
+        %{"from" => from_ms, "to" => to_ms, "req" => req},
+        %{assigns: %{plot: %AsyncResult{ok?: true, result: %{option: %{_windowFetch: _}} = plot}}} =
+          socket
+      )
+      when is_number(from_ms) and is_number(to_ms) and from_ms <= to_ms do
+    secop_obj = socket.assigns.secop_obj
+
+    socket =
+      start_async(socket, :fetch_chart_window, fn ->
+        windows =
+          for param <- PlotDB.history_params(secop_obj) do
+            {param, History.window(param, from_ms, to_ms)}
+          end
+
+        updates =
+          Enum.map(windows, fn {param, window} ->
+            datapoints = Enum.zip(window.values, window.timestamps)
+            PlotDB.get_trace_updates_batch(plot, datapoints, param.name)
+          end)
+
+        windows
+        |> Enum.map(&elem(&1, 1))
+        |> History.coarsest()
+        |> Map.merge(merge_trace_updates(updates))
+        |> Map.merge(%{from: from_ms, to: to_ms, req: req})
+      end)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("fetch-chart-window", _params, socket), do: {:noreply, socket}
+
   @impl true
   def handle_event("request-chart-data", %{"id" => chart_id}, %{assigns: assigns} = socket) do
     # Only push when a chart option actually exists — a plot result may be a
@@ -479,6 +516,15 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     {:noreply, socket}
   end
 
+  def handle_async(:fetch_chart_window, {:ok, window}, socket) do
+    {:noreply, push_event(socket, "window-chart-data-#{socket.assigns.id}", window)}
+  end
+
+  def handle_async(:fetch_chart_window, {:exit, reason}, socket) do
+    Logger.error("Chart window fetch failed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
   def handle_async(:reload_calibration_plot, {:ok, calib}, socket) do
     socket =
       assign(socket, :calibration_plot, AsyncResult.ok(socket.assigns.calibration_plot, calib))
@@ -544,6 +590,13 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         >
         </div>
         <span class="flex-1"></span>
+        <%!-- "min/max per 15 min" or "every reading", filled by the chart hook --%>
+        <span
+          :if={@display_mode == :graph}
+          id={"resolution-#{@id}"}
+          phx-update="ignore"
+          class="mr-1 font-mono text-[11px] text-muted empty:hidden"
+        ></span>
         <div
           :if={@display_mode == :graph}
           id={"range-buttons-#{@id}"}

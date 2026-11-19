@@ -1,4 +1,5 @@
 defmodule SecantService.PlotDB.Builders do
+  alias SecantService.PlotDB.History
   alias SecantService.SecNodes.ParameterValue
   alias SecantService.SecNodes.Parameter
   alias SEC_Node_Statem
@@ -16,9 +17,15 @@ defmodule SecantService.PlotDB.Builders do
   # Data fetching
   # ---------------------------------------------------------------------------
 
+  # Numeric parameters: the whole recording, thinned out in the database
+  # (see `History`). The chart asks for more detail when it is zoomed in.
   def fetch_param_data(param, :historical) do
-    get_values(param)
-    |> ParameterValue.extract_value_timestamp_lists(param)
+    if History.numeric?(param) do
+      %{values: values, timestamps: timestamps} = History.window(param, nil, nil)
+      {values, timestamps}
+    else
+      get_values(param) |> ParameterValue.extract_value_timestamp_lists(param)
+    end
     |> read_from_device_if_empty(param.id)
   end
 
