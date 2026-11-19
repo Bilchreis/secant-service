@@ -162,7 +162,7 @@ config :pythonx, :uv_init,
   dependencies = [
     "secop_check @ git+https://github.com/Bilchreis/secop_check.git",
     "secop-ophyd",
-    "secop-to-nexus @ git+https://github.com/Bilchreis/secop-to-nexus.git@ad99c04c30a5af612d07d905b84f0450b4caae93"
+    "secop-to-nexus @ git+https://github.com/Bilchreis/secop-to-nexus.git@9da442f15a26f5d852324220a9dbfff93f6b9c8c"
   ]
   """
 
