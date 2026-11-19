@@ -12,8 +12,20 @@ defmodule SecantService.MixProject do
       deps: deps(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader],
-      consolidate_protocols: Mix.env() != :dev
+      consolidate_protocols: Mix.env() != :dev,
+      hex: [
+        # assent 0.2.x: Sign in with Apple callback claims override
+        # (GHSA-9fr5-g44g-9526). We only use the password and API key
+        # strategies, so it doesn't apply. The fix is in assent 0.3+, but
+        # ash_authentication 4.15 still requires < 0.3. Remove once it allows
+        # the upgrade; `mix hex.audit --check-unused-ignores` flags it then.
+        ignore_advisories: ["EEF-CVE-2026-117656"]
+      ]
     ]
+  end
+
+  def cli do
+    [preferred_envs: [precommit: :test]]
   end
 
   # Configuration for the OTP application.
@@ -79,6 +91,7 @@ defmodule SecantService.MixProject do
       {:bandit, "~> 1.5"},
       {:secant_client, git: "https://github.com/Bilchreis/secant-client.git", tag: "v0.3.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:sobelow, "~> 0.19", only: [:dev, :test], runtime: false},
       {:tzdata, "~> 1.1"},
       {:exprintf, "~> 0.2.1"},
       {:pythonx, "~> 0.4.4"},
@@ -102,6 +115,15 @@ defmodule SecantService.MixProject do
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ash.setup --quiet", "test"],
+      # Run before committing. CI runs the same checks in check-only mode.
+      precommit: [
+        "compile --warnings-as-errors",
+        "deps.unlock --unused",
+        "format",
+        "credo --only warning --strict",
+        "ash.codegen --check",
+        "test"
+      ],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["tailwind secant_service", "esbuild secant_service"],
       "assets.deploy": [
