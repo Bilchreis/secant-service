@@ -6,9 +6,12 @@ defmodule SecantService.NodeManager do
   Invariant: for every node that `secant_client` has described, the running
   NodeServices were started from the `SecNode` record whose uuid equals the
   client's *current* uuid for that node. `secant_client` issues a new uuid
-  whenever the description of a node changes (or its state machine restarts),
-  so a uuid mismatch means the services hold an outdated description and are
-  restarted from the new record. The record they replace is archived.
+  whenever the description of a node changes, so a uuid mismatch means the
+  services hold an outdated description and are restarted from the new record.
+  The record they replace is archived.
+
+  When this fails (e.g. the database is briefly unavailable), all nodes are
+  synced again after a short delay, backing off up to a minute between tries.
 
   The running services are the source of truth for "which uuid is live", so no
   separate bookkeeping is kept here that could drift out of sync.
@@ -32,6 +35,7 @@ defmodule SecantService.NodeManager do
   @services_topic "node_services"
   # Periodic safety-net sync; events (new node, description change) are the primary trigger
   @check_interval :timer.minutes(10)
+  @max_retry_interval :timer.minutes(1)
 
   # Client API
 
@@ -63,25 +67,39 @@ defmodule SecantService.NodeManager do
       send(self(), :periodic_sync)
     end
 
-    {:ok, %{}}
+    # retry_delay: delay of the pending retry, nil when none is pending
+    {:ok, %{retry_delay: nil}}
   end
 
   @impl true
   def handle_call(:sync_nodes, _from, state) do
-    {:reply, guarded(&sync_all/0), state}
+    result = guarded(&sync_all/0)
+    {:reply, result, maybe_retry(result, state)}
   end
 
   @impl true
   def handle_cast(:sync_nodes, state) do
-    guarded(&sync_all/0)
-    {:noreply, state}
+    {:noreply, attempt(&sync_all/0, state)}
   end
 
   @impl true
   def handle_info(:periodic_sync, state) do
-    guarded(&sync_all/0)
+    state = attempt(&sync_all/0, state)
     Process.send_after(self(), :periodic_sync, @check_interval)
     {:noreply, state}
+  end
+
+  def handle_info(:retry_sync, %{retry_delay: delay} = state) do
+    case guarded(&sync_all/0) do
+      :ok ->
+        {:noreply, %{state | retry_delay: nil}}
+
+      _error ->
+        next = min(delay * 2, @max_retry_interval)
+        Logger.info("NodeManager: sync still failing, retrying in #{next} ms")
+        Process.send_after(self(), :retry_sync, next)
+        {:noreply, %{state | retry_delay: next}}
+    end
   end
 
   def handle_info({:new_node, _pubsub_topic, :connection_failed}, state) do
@@ -90,8 +108,7 @@ defmodule SecantService.NodeManager do
 
   def handle_info({:new_node, _pubsub_topic, node_state}, state) do
     Logger.info("New node: #{node_state.equipment_id} #{node_state.host} (#{node_state.port})")
-    guarded(&sync_all/0)
-    {:noreply, state}
+    {:noreply, attempt(&sync_all/0, state)}
   end
 
   def handle_info({:description_change, _pubsub_topic, node_state}, state) do
@@ -105,8 +122,8 @@ defmodule SecantService.NodeManager do
         :error -> node_state
       end
 
-    guarded(fn -> if described?(current), do: ensure_services(current), else: :ok end)
-    {:noreply, state}
+    {:noreply,
+     attempt(fn -> if described?(current), do: ensure_services(current), else: :ok end, state)}
   end
 
   # Late replies of timed out get_state calls, and anything else
@@ -115,6 +132,21 @@ defmodule SecantService.NodeManager do
   end
 
   # Private functions
+
+  defp attempt(fun, state), do: maybe_retry(guarded(fun), state)
+
+  # Schedules a full sync after a failed attempt, unless one is pending already.
+  # The sync compares uuids of all nodes, so it also completes a failed
+  # description change.
+  defp maybe_retry(:ok, state), do: state
+  defp maybe_retry(_error, %{retry_delay: delay} = state) when delay != nil, do: state
+
+  defp maybe_retry(_error, state) do
+    delay = Application.get_env(:secant_service, :node_retry_interval, 2_000)
+    Logger.info("NodeManager: retrying sync in #{delay} ms")
+    Process.send_after(self(), :retry_sync, delay)
+    %{state | retry_delay: delay}
+  end
 
   defp guarded(fun) do
     fun.()
@@ -137,10 +169,11 @@ defmodule SecantService.NodeManager do
     Logger.info("Syncing nodes with database...")
     {node_states, unreachable} = fetch_node_states()
 
-    node_states
-    |> Map.values()
-    |> Enum.filter(&described?/1)
-    |> Enum.each(&ensure_services/1)
+    results =
+      node_states
+      |> Map.values()
+      |> Enum.filter(&described?/1)
+      |> Enum.map(&ensure_services/1)
 
     # Stop services of nodes secant_client no longer knows about. Nodes whose
     # state machine did not answer in time are kept; they are still there.
@@ -150,7 +183,7 @@ defmodule SecantService.NodeManager do
     |> Enum.reject(&MapSet.member?(known, &1))
     |> Enum.each(&retire_services/1)
 
-    :ok
+    if Enum.all?(results, &(&1 == :ok)), do: :ok, else: {:error, :incomplete}
   end
 
   # Only nodes that completed a describe can be stored and served.

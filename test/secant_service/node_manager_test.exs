@@ -171,7 +171,8 @@ defmodule SecantService.NodeManagerTest do
     test "restarts services when the state machine restarted (new uuid)", %{node_id: node_id} do
       old = connect(node_id, @desc_a)
 
-      # A restarted SEC_Node_Statem issues a fresh uuid even for the same description
+      # A fresh uuid for the same description, e.g. after secant_client
+      # restarted and lost its node table
       restarted = node_state(node_id, raw_description("eq-#{elem(node_id, 1)}", @desc_a))
       FakeNodeStatem.put_state(node_id, restarted)
       assert :ok = NodeManager.sync_nodes!()
@@ -222,6 +223,32 @@ defmodule SecantService.NodeManagerTest do
       assert NodeSupervisor.running_uuid(node_id) == slow.uuid
       assert NodeSupervisor.running_uuid(other_id) == other.uuid
       refute_received {:node_services_stopped, _}
+    end
+
+    test "a failed restart is retried until the new services run", %{node_id: node_id} do
+      connect(node_id, @desc_a)
+
+      # Something still holds the name of a plot cache of the new description,
+      # so starting the new services fails...
+      test_pid = self()
+
+      blocker =
+        spawn(fn ->
+          Registry.register(Registry.PlotCache, {node_id, "flow", "value"}, nil)
+          send(test_pid, :registered)
+          Process.sleep(:infinity)
+        end)
+
+      assert_receive :registered
+      new = change_description(node_id, raw_description("eq-b", @desc_b))
+      flush_node_manager()
+      refute_received {:node_services_ready, ^node_id, _}
+
+      # ...until it is gone: a retry completes the change
+      Process.exit(blocker, :kill)
+      assert_receive {:node_services_ready, ^node_id, uuid}, 5_000
+      assert uuid == new.uuid
+      assert served_modules(node_id) == sorted(@desc_b)
     end
 
     test "lookups on a node without services return errors instead of crashing",

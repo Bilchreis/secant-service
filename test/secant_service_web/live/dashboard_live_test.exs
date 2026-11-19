@@ -20,13 +20,21 @@ defmodule SecantServiceWeb.DashboardLiveTest do
     state
   end
 
+  # Waits for the history queries of the page: a reload cancels unfinished
+  # ones, and a query killed mid-flight breaks the shared sandbox connection.
+  defp open_dashboard(conn, path) do
+    {:ok, view, _html} = live(conn, path)
+    render_async(view)
+    view
+  end
+
   # The view handles messages in order, so a render after the broadcast has
   # seen everything broadcast before it.
   defp rerender(view), do: render(view) && view
 
   test "shows the modules of the node", %{conn: conn, node_id: node_id, path: path} do
     state = connect_and_wait(node_id, @desc_a)
-    {:ok, view, _html} = live(conn, path)
+    view = open_dashboard(conn, path)
 
     assert has_element?(view, "#rail-temp")
     assert has_element?(view, "#rail-press")
@@ -36,7 +44,7 @@ defmodule SecantServiceWeb.DashboardLiveTest do
   test "follows a reconnect with a changed description",
        %{conn: conn, node_id: node_id, path: path} do
     old = connect_and_wait(node_id, @desc_a)
-    {:ok, view, _html} = live(conn, path)
+    view = open_dashboard(conn, path)
 
     new = change_description(node_id, raw_description("eq-b", @desc_b))
     assert_receive {:node_services_ready, ^node_id, _}, 5_000
@@ -53,7 +61,7 @@ defmodule SecantServiceWeb.DashboardLiveTest do
   test "keeps receiving live values after the services restarted",
        %{conn: conn, node_id: node_id, path: path} do
     connect_and_wait(node_id, @desc_a)
-    {:ok, view, _html} = live(conn, path)
+    view = open_dashboard(conn, path)
 
     change_description(node_id, raw_description("eq-b", @desc_b))
     assert_receive {:node_services_ready, ^node_id, _}, 5_000
@@ -74,7 +82,7 @@ defmodule SecantServiceWeb.DashboardLiveTest do
     state = node_state(node_id, raw)
     start_supervised!({FakeNodeStatem, {node_id, state, []}})
 
-    {:ok, view, _html} = live(conn, path)
+    view = open_dashboard(conn, path)
     refute has_element?(view, "#rail-temp")
 
     broadcast("new_node", {:new_node, topic(node_id), state})
@@ -86,8 +94,9 @@ defmodule SecantServiceWeb.DashboardLiveTest do
   test "stays usable when a plotted parameter disappears",
        %{conn: conn, node_id: node_id, path: path} do
     connect_and_wait(node_id, @desc_a)
-    {:ok, view, _html} = live(conn, path <> "&module=press")
+    view = open_dashboard(conn, path <> "&module=press")
     render_hook(view, "plot_parameter", %{"param" => "value"})
+    render_async(view)
 
     change_description(node_id, raw_description("eq-b", @desc_b))
     assert_receive {:node_services_ready, ^node_id, _}, 5_000
