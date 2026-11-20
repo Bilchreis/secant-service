@@ -1,6 +1,15 @@
 import Config
 config :secant_service, Oban, testing: :manual
 config :secant_service, token_signing_secret: "aAAT96csYVHMuEPfYDoDI3pDRgj7THhG"
+# Node handling is driven by the tests: no UDP discovery of real SEC nodes and
+# no NodeManager started with the application (see test/support/node_case.ex)
+config :secant_client, start_node_discover: false
+
+config :secant_service,
+  start_node_manager: false,
+  node_state_timeout: 200,
+  node_retry_interval: 100
+
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
 # Only in tests, remove the complexity from the password hashing algorithm
@@ -27,10 +36,6 @@ config :secant_service, SecantServiceWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
   secret_key_base: "ifnc2osJzplwUj7akmZBq522GurBJer7DXPeyAVt2Ks8MD6dxsmP6vjcip0//TIa",
   server: false
-
-# Tests connect to the nodes they need themselves, so don't pick up whatever
-# SEC nodes happen to be on the network
-config :secant_client, start_node_discover: false
 
 # In test we don't send emails
 config :secant_service, SecantService.Mailer, adapter: Swoosh.Adapters.Test

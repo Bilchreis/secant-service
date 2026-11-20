@@ -1,48 +1,33 @@
 defmodule SecantService.PlotCacheSupervisor do
-  use DynamicSupervisor
-  require Logger
+  @moduledoc """
+  Supervises one `SecantService.PlotCache` per parameter of a node.
+
+  The caches are derived from the node description, so they are started as
+  static children: they come back with the rest of the node services after a
+  restart instead of depending on someone calling a start function afterwards.
+  """
+  use Supervisor
   alias SecantService.PlotCache
 
   def start_link(node_db) do
-    DynamicSupervisor.start_link(__MODULE__, node_db,
+    Supervisor.start_link(__MODULE__, node_db,
       name: {:via, Registry, {Registry.PlotCacheSupervisor, node_db.node_id}}
     )
   end
 
   @impl true
-  def init(_init_arg) do
-    DynamicSupervisor.init(strategy: :one_for_one)
-  end
-
-  def start_plot_cache(node_db) do
+  def init(node_db) do
     node_id = node_db.node_id
 
-    case Registry.lookup(Registry.PlotCacheSupervisor, node_id) do
-      [{cache_supervisor, _value}] ->
-        count =
-          Enum.reduce(node_db.modules, 0, fn module, acc ->
-            Enum.reduce(module.parameters, acc, fn parameter, inner_acc ->
-              opts = %{
-                node_id: node_id,
-                module: module.name,
-                parameter: parameter.name
-              }
-
-              DynamicSupervisor.start_child(cache_supervisor, {PlotCache, opts})
-              inner_acc + 1
-            end)
-          end)
-
-        Logger.info("Started #{count} plot cache(s) for node #{inspect(node_id)}")
-        :ok
-
-      [] ->
-        Logger.error(
-          "PlotCacheSupervisor not found for node #{inspect(node_id)}, skipping plot cache start"
+    children =
+      for module <- node_db.modules, parameter <- module.parameters do
+        Supervisor.child_spec(
+          {PlotCache, %{node_id: node_id, module: module.name, parameter: parameter.name}},
+          id: {module.name, parameter.name}
         )
+      end
 
-        {:error, :supervisor_not_found}
-    end
+    Supervisor.init(children, strategy: :one_for_one)
   end
 end
 

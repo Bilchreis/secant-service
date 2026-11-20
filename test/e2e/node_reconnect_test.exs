@@ -3,20 +3,12 @@ defmodule SecantService.E2E.NodeReconnectTest do
   End to end: a real SEC node (the frappy demo cryostat) goes away and comes
   back, and the service and dashboard have to follow.
   """
-  use SecantService.DataCase, async: false
-
-  import Phoenix.ConnTest
-  import Phoenix.LiveViewTest
+  use SecantServiceWeb.ConnCase, node: true, async: false
 
   alias SecantService.FrappyServer
-  alias SecantService.NodeManager
-  alias SecantService.NodeSupervisor
-  alias SecantService.NodeValues
   alias SecantService.SecNodes.SecNode
 
   require Ash.Query
-
-  @endpoint SecantServiceWeb.Endpoint
 
   @moduletag :frappy
   @moduletag :tmp_dir
@@ -35,13 +27,7 @@ defmodule SecantService.E2E.NodeReconnectTest do
     # there when on_exit runs after the test process died
     {:ok, agent} = Agent.start(fn -> frappy end)
 
-    # Runs before the DataCase hands back the database connection
-    on_exit(fn ->
-      stop_client(node_id)
-      NodeSupervisor.stop_node_services(node_id)
-      # Lets the manager finish any sync still using the database
-      :sys.get_state(NodeManager)
-    end)
+    on_exit(fn -> stop_client(node_id) end)
 
     on_exit(fn ->
       FrappyServer.stop(Agent.get(agent, & &1))
@@ -64,7 +50,7 @@ defmodule SecantService.E2E.NodeReconnectTest do
   test "a node that returns with a changed description is served as a new node", ctx do
     assert %SecNode{state: :active, equipment_id: "cryo_before"} = Ash.get!(SecNode, ctx.uuid)
 
-    {:ok, view, _html} = live(build_conn(), "/dashboard?node=127.0.0.1:#{ctx.tcp_port}")
+    {:ok, view, _html} = live(ctx.conn, "/dashboard?node=127.0.0.1:#{ctx.tcp_port}")
     assert has_element?(view, "#uuid-#{ctx.uuid}")
 
     restart_frappy(ctx, equipment_id: "cryo_after", description: "a changed description")
@@ -95,8 +81,7 @@ defmodule SecantService.E2E.NodeReconnectTest do
     wait_for_client_state(ctx.node_id, :disconnected)
 
     # a sync during the outage must leave the node alone
-    NodeManager.sync_nodes()
-    :sys.get_state(NodeManager)
+    NodeManager.sync_nodes!()
 
     assert NodeSupervisor.get_services_pid(ctx.node_id) == services_pid
     assert Ash.get!(SecNode, ctx.uuid).state == :active
@@ -105,8 +90,7 @@ defmodule SecantService.E2E.NodeReconnectTest do
     Agent.update(ctx.agent, fn _ -> frappy end)
 
     wait_for_client_state(ctx.node_id, :initialized)
-    NodeManager.sync_nodes()
-    :sys.get_state(NodeManager)
+    NodeManager.sync_nodes!()
 
     assert client_state(ctx.node_id).uuid == ctx.uuid
     assert NodeSupervisor.get_services_pid(ctx.node_id) == services_pid
@@ -125,18 +109,17 @@ defmodule SecantService.E2E.NodeReconnectTest do
     on_exit(fn -> stop_client(dead_id) end)
     wait_for_client_state(dead_id, :disconnected)
 
-    NodeManager.sync_nodes()
-    :sys.get_state(NodeManager)
+    NodeManager.sync_nodes!()
 
     refute NodeSupervisor.services_running?(dead_id)
     assert [] = SecNode |> Ash.Query.filter(port == ^dead_port) |> Ash.read!()
 
     # the dashboard opens on the node that has data
-    {:ok, view, _html} = live(build_conn(), "/dashboard")
+    {:ok, view, _html} = live(ctx.conn, "/dashboard")
     assert has_element?(view, "#uuid-#{ctx.uuid}")
 
     # the dead node's tab shows a notice and keeps the other tabs reachable
-    {:ok, view, _html} = live(build_conn(), "/dashboard?node=127.0.0.1:#{dead_port}")
+    {:ok, view, _html} = live(ctx.conn, "/dashboard?node=127.0.0.1:#{dead_port}")
     assert has_element?(view, "#node-unavailable")
     assert has_element?(view, ~s(#handshake-step-discover[data-status="done"]))
     assert has_element?(view, ~s(#handshake-step-connect[data-status="failed"]))

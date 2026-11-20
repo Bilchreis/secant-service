@@ -6,8 +6,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   alias NodeDiscover
   alias SEC_Node_Supervisor
 
-  alias SecantService.NodeValues
-  alias SecantService.NodeSupervisor
+  alias SecantService.NodeManager
   alias SecantServiceWeb.DashboardComponents
   alias SecantServiceWeb.SECoPComponents
   require Logger
@@ -40,9 +39,6 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     )
   end
 
-  # 500 ms apart, so node services get ~30 s to come up
-  @max_description_retries 60
-
   @impl true
   def mount(_params, _session, socket) do
     model = Model.get_initial_model()
@@ -55,6 +51,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     Phoenix.PubSub.subscribe(:secant_client_pubsub, "state_change")
     Phoenix.PubSub.subscribe(:secant_client_pubsub, "secop_conn_state")
     Phoenix.PubSub.subscribe(:secant_client_pubsub, "new_node")
+    Phoenix.PubSub.subscribe(SecantService.PubSub, NodeManager.services_topic())
 
     socket =
       socket
@@ -68,6 +65,46 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       |> assign(:page_title, "Dashboard")
 
     {:ok, socket}
+  end
+
+  # (Re)load description and values of `node_id` from its running services and
+  # point the value subscriptions at it.
+  defp load_node(socket, node_id) do
+    if current = socket.assigns.current_node, do: unsubscribe_from_node(current.node_id)
+
+    # Subscribe before taking the snapshot so no update falls in between.
+    subscribe_to_node(node_id)
+
+    model =
+      socket
+      |> Model.from_socket()
+      |> Model.set_current_node(node_id)
+
+    if model.current_node == nil or model.current_node.node_id != node_id do
+      unsubscribe_from_node(node_id)
+      if model.current_node, do: subscribe_to_node(model.current_node.node_id)
+    end
+
+    socket
+    |> Model.to_socket(model)
+    |> assign(:status_map, status_map(model.values))
+    |> assign_selected_module(socket.assigns.selected_module)
+    |> drop_stale_plot_param()
+  end
+
+  # The plotted parameter may be gone after a description change.
+  defp drop_stale_plot_param(%{assigns: %{plot_param: nil}} = socket), do: socket
+
+  defp drop_stale_plot_param(socket) do
+    %{current_node: node, selected_module: selected, plot_param: plot_param} = socket.assigns
+
+    exists? =
+      case selected_module(node, selected) do
+        nil -> false
+        module -> Enum.any?(module.parameters, &(&1.name == plot_param))
+      end
+
+    if exists?, do: socket, else: assign(socket, :plot_param, nil)
   end
 
   defp parse_node_param(node_param) do
@@ -173,33 +210,51 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   def selected_module(%{modules: modules}, name), do: Enum.find(modules, &(&1.name == name))
   def selected_module(_, _), do: nil
 
+  # Includes the uuid so a description change gives the history plot a fresh
+  # component instead of one initialised for the old parameter records.
   def plot_id(node, module_name, plot_param) do
-    "plot:#{node.host}:#{node.port}:#{module_name}:#{plot_param || "module"}"
+    "plot:#{node.uuid}:#{node.host}:#{node.port}:#{module_name}:#{plot_param || "module"}"
   end
 
   ### New Values Map Update
 
   @impl true
   def handle_info({:description_change, pubsub_topic, state}, socket) do
-    handle_description_change(pubsub_topic, state, 0, socket)
+    Logger.info("node description change: #{pubsub_topic}")
+
+    # Only the node list is updated here. The NodeManager restarts the node
+    # services from the new description and then broadcasts
+    # :node_services_ready, which is where the page reloads the node.
+    node_id = pubsubtopic_to_node_id(pubsub_topic)
+    active_nodes = Map.put(socket.assigns.active_nodes, node_id, Model.node_summary(state))
+
+    {:noreply, assign(socket, active_nodes: active_nodes)}
   end
 
-  # Retry of a description change whose node services were not up yet. Dropped
-  # once a newer description has arrived or the services never came up.
-  def handle_info({:description_change_retry, pubsub_topic, state, attempt}, socket) do
-    current = socket.assigns.active_nodes[pubsubtopic_to_node_id(pubsub_topic)]
+  def handle_info({:node_services_ready, node_id, uuid}, socket) do
+    current_node = socket.assigns.current_node
 
     cond do
-      current == nil or current[:uuid] != state[:uuid] ->
+      # another node is selected and still waiting for its own services
+      current_node == nil and socket.assigns.selected_node_id not in [nil, node_id] ->
         {:noreply, socket}
 
-      attempt > @max_description_retries ->
-        Logger.error("Services for node #{pubsub_topic} (#{state[:uuid]}) did not start")
-        {:noreply, socket}
+      current_node == nil ->
+        Logger.info("Services for #{inspect(node_id)} ready (#{uuid}), showing node")
+        {:noreply, socket |> load_node(node_id) |> assign(:selected_node_id, node_id)}
+
+      current_node.node_id == node_id and current_node.uuid != uuid ->
+        Logger.info("Services for #{inspect(node_id)} restarted (#{uuid}), reloading node")
+        {:noreply, load_node(socket, node_id)}
 
       true ->
-        handle_description_change(pubsub_topic, state, attempt, socket)
+        {:noreply, socket}
     end
+  end
+
+  def handle_info({:node_services_stopped, _node_id}, socket) do
+    # The node tab shows the connection state; keep the last known data.
+    {:noreply, socket}
   end
 
   def handle_info({:conn_state, pubsub_topic, active}, socket) do
@@ -207,11 +262,11 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
     active_nodes = socket.assigns.active_nodes
 
-    updated_node =
-      socket.assigns.active_nodes[pubsubtopic_to_node_id(pubsub_topic)]
-      |> Map.put(:active, active)
-
-    new_active_nodes = Map.put(active_nodes, pubsubtopic_to_node_id(pubsub_topic), updated_node)
+    new_active_nodes =
+      case Map.fetch(active_nodes, pubsubtopic_to_node_id(pubsub_topic)) do
+        {:ok, node} -> Map.put(active_nodes, node.node_id, Map.put(node, :active, active))
+        :error -> active_nodes
+      end
 
     socket =
       socket
@@ -227,7 +282,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     Logger.info("node state change: #{pubsub_topic} #{state.state}")
 
     node_id = pubsubtopic_to_node_id(pubsub_topic)
-    active_nodes = socket.assigns.active_nodes |> Map.put(node_id, state)
+    active_nodes = socket.assigns.active_nodes |> Map.put(node_id, Model.node_summary(state))
 
     {:noreply, assign(socket, active_nodes: active_nodes)}
   end
@@ -243,7 +298,8 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     Logger.info("new node discovered: #{pubsub_topic} #{inspect(state)}")
 
     active_nodes =
-      socket.assigns.active_nodes |> Map.put(pubsubtopic_to_node_id(pubsub_topic), state)
+      socket.assigns.active_nodes
+      |> Map.put(pubsubtopic_to_node_id(pubsub_topic), Model.node_summary(state))
 
     socket =
       if socket.assigns.show_connect_modal do
@@ -285,7 +341,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   def handle_info({:value_update, :updated, module, accessible, data_report}, socket) do
     values = socket.assigns.values
 
-    if Map.has_key?(values, module) do
+    if is_map(values) and Map.has_key?(values, module) do
       node_id_str =
         "#{to_string(socket.assigns.current_node.host)}:#{socket.assigns.current_node.port}"
 
@@ -460,104 +516,6 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
     SEC_Node_Supervisor.start_child(opts)
     {:noreply, socket}
-  end
-
-  defp handle_description_change(pubsub_topic, state, attempt, socket) do
-    Logger.info("description change: #{pubsub_topic} #{state.state}")
-
-    node_id = pubsubtopic_to_node_id(pubsub_topic)
-
-    updated_node =
-      (socket.assigns.active_nodes[node_id] || state)
-      |> Map.put(:description, state.description)
-      |> Map.put(:equipment_id, state.equipment_id)
-      |> Map.put(:raw_description, state.raw_description)
-      |> Map.put(:uuid, state.uuid)
-
-    active_nodes = socket.assigns.active_nodes |> Map.put(node_id, updated_node)
-    current_node = socket.assigns.current_node
-    values = socket.assigns.values
-
-    socket =
-      cond do
-        # another node is selected and waiting for its own description
-        current_node == nil and socket.assigns.selected_node_id not in [nil, node_id] ->
-          socket
-
-        current_node == nil ->
-          Logger.info("No current node set, yet (possibly first node connected)")
-
-          {values, current_node} =
-            if NodeSupervisor.services_running?(state[:uuid]) do
-              {:ok, current_node} = NodeValues.get_node_db(node_id)
-              {:ok, values} = NodeValues.get_values(node_id)
-
-              subscribe_to_node(node_id)
-
-              Logger.info("Current node updated #{inspect(node_id)}")
-              {values, current_node}
-            else
-              Logger.warning(
-                "Services for node with UUID #{state[:uuid]} have not started yet, retrying..."
-              )
-
-              retry_description_change(pubsub_topic, state, attempt)
-              {values, current_node}
-            end
-
-          socket
-          |> assign(current_node: current_node)
-          |> assign(values: values)
-          |> assign(:status_map, status_map(values))
-          |> assign(:selected_node_id, node_id)
-
-        state.node_id == current_node.node_id ->
-          {values, current_node} =
-            if NodeSupervisor.services_running?(state[:uuid]) do
-              # unsubscribe from all subs (prevents double updates)
-              unsubscribe_from_node(current_node.node_id)
-              {:ok, current_node} = NodeValues.get_node_db(node_id)
-              {:ok, values} = NodeValues.get_values(node_id)
-
-              subscribe_to_node(node_id)
-
-              Logger.info("Current node updated #{inspect(node_id)}")
-              {values, current_node}
-            else
-              unsubscribe_from_node(current_node.node_id)
-
-              Logger.warning(
-                "Services for node with UUID #{state[:uuid]} have not started yet, retrying..."
-              )
-
-              retry_description_change(pubsub_topic, state, attempt)
-              {values, current_node}
-            end
-
-          socket
-          |> assign(current_node: current_node)
-          |> assign(values: values)
-          |> assign(:status_map, status_map(values))
-
-        true ->
-          Logger.info("Current node not updated #{inspect(node_id)}")
-          socket
-      end
-
-    socket =
-      socket
-      |> assign(active_nodes: active_nodes)
-      |> assign_selected_module(socket.assigns.selected_module)
-
-    {:noreply, socket}
-  end
-
-  defp retry_description_change(pubsub_topic, state, attempt) do
-    Process.send_after(
-      self(),
-      {:description_change_retry, pubsub_topic, state, attempt + 1},
-      500
-    )
   end
 
   defp pubsubtopic_to_node_id(pubsub_topic) do

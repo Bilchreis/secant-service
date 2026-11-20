@@ -89,7 +89,7 @@ defmodule SecantService.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.3.1"},
       {:bandit, "~> 1.5"},
-      {:secant_client, git: "https://github.com/Bilchreis/secant-client.git", tag: "v0.3.0"},
+      {:secant_client, git: "https://github.com/Bilchreis/secant-client.git", tag: "v0.3.1"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.19", only: [:dev, :test], runtime: false},
       {:tzdata, "~> 1.1"},

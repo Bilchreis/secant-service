@@ -90,7 +90,10 @@ defmodule SecantServiceWeb.DashboardComponents do
   def node_id_str(node), do: "#{node.host}:#{node.port}"
 
   @doc "DOM/component id of a card's sparkline; the dashboard routes plot data to it."
-  def sparkline_id(node, module_name), do: "spark:#{node.host}:#{node.port}:#{module_name}"
+  # The uuid changes with the description; a new id makes LiveView start the
+  # component from scratch instead of keeping state for the old description.
+  def sparkline_id(node, module_name),
+    do: "spark:#{node.uuid}:#{node.host}:#{node.port}:#{module_name}"
 
   # descriptions often contain blank lines; keep line breaks, drop the gaps
   defp compact_text(text) do
@@ -105,7 +108,7 @@ defmodule SecantServiceWeb.DashboardComponents do
 
   attr :active_nodes, :map, required: true
   attr :hidden_node_ids, :any, required: true
-  attr :current_uuid, :string, default: nil
+  attr :current_node_id, :any, default: nil, doc: "node_id of the node shown on the page"
 
   def node_tabs(assigns) do
     visible =
@@ -130,7 +133,7 @@ defmodule SecantServiceWeb.DashboardComponents do
           title={node_state_label(node.state, node.active)}
           class={[
             "flex min-h-11 items-center gap-2.5 rounded-lg border py-1.5 pr-8 pl-3 text-left transition-colors",
-            if(node.uuid == @current_uuid,
+            if(node.node_id == @current_node_id,
               do: "border-primary bg-base-100",
               else: "border-line hover:bg-base-100"
             )
