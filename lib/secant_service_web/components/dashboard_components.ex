@@ -225,25 +225,25 @@ defmodule SecantServiceWeb.DashboardComponents do
           <span
             aria-hidden="true"
             class={[
-              "absolute top-6 bottom-0 left-3 w-0.5 -translate-x-1/2 transition-colors group-last:hidden",
-              "sm:top-3 sm:right-0 sm:bottom-auto sm:left-6 sm:h-0.5 sm:w-auto sm:translate-x-0 sm:-translate-y-1/2",
+              "absolute top-5 bottom-0 left-2.5 w-0.5 -translate-x-1/2 transition-colors group-last:hidden",
+              "sm:top-2.5 sm:right-0 sm:bottom-auto sm:left-5 sm:h-0.5 sm:w-auto sm:translate-x-0 sm:-translate-y-1/2",
               if(step.status == :done, do: "bg-st-idle", else: "bg-line")
             ]}
           ></span>
           <span class={[
-            "relative z-10 flex size-6 shrink-0 items-center justify-center rounded-full border-2 bg-base-100 transition-colors",
+            "relative z-10 flex size-5 shrink-0 items-center justify-center rounded-full border-2 bg-base-100 transition-colors",
             step_bobble_class(step.status)
           ]}>
-            <.icon :if={step.status == :done} name="hero-check-micro" class="size-4" />
-            <.icon :if={step.status == :failed} name="hero-x-mark-micro" class="size-4" />
+            <.icon :if={step.status == :done} name="hero-check-micro" class="size-3.5" />
+            <.icon :if={step.status == :failed} name="hero-x-mark-micro" class="size-3.5" />
             <span
               :if={step.status == :current}
-              class="loading loading-spinner size-3.5 text-primary"
+              class="loading loading-spinner size-3 text-primary"
             ></span>
           </span>
           <div class="flex min-w-0 flex-col gap-0.5">
             <span class={[
-              "leading-6 font-semibold",
+              "leading-5 font-semibold",
               step.status == :pending && "text-muted",
               step.status == :failed && "text-st-error"
             ]}>
