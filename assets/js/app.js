@@ -1352,6 +1352,33 @@ function sparkRange(lo, hi) {
   return { min: lo - pad, max: hi + pad };
 }
 
+// Smallest y span a card trend shows: 2 % of the datainfo range, or 1 % of
+// the reading's size when the range is unknown. Changes smaller than that
+// (usually noise) stay small instead of being zoomed to full height.
+const SPARK_SPAN_OF_LIMITS = 0.02;
+const SPARK_SPAN_OF_VALUE = 0.01;
+
+function sparkFloorRange(lo, hi, limMin, limMax) {
+  const hasLimits = limMin !== null && limMax !== null && limMax > limMin;
+  const floor = hasLimits
+    ? (limMax - limMin) * SPARK_SPAN_OF_LIMITS
+    : Math.max(Math.abs(lo), Math.abs(hi)) * SPARK_SPAN_OF_VALUE;
+  if (!(floor > 0) || hi - lo >= floor) return sparkRange(lo, hi);
+
+  // widen around the data, but stay inside the limits so a reading resting
+  // at a bound (e.g. 0 flow) draws along the edge, not mid-card
+  let min = (lo + hi - floor) / 2;
+  let max = min + floor;
+  if (limMin !== null && min < limMin && lo >= limMin) {
+    min = limMin;
+    max = limMin + floor;
+  } else if (limMax !== null && max > limMax && hi <= limMax) {
+    max = limMax;
+    min = limMax - floor;
+  }
+  return { min, max };
+}
+
 function sparkTime(ms) {
   const d = new Date(ms);
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -1363,6 +1390,9 @@ Hooks.Sparkline = {
     this.skew = 0; // node clock minus browser clock, from the newest readings
     this._visible = true;
     this.unit = this.el.dataset.unit || "";
+    const lim = (k) => (this.el.dataset[k] === undefined || this.el.dataset[k] === "" ? null : Number(this.el.dataset[k]));
+    this.limMin = lim("min");
+    this.limMax = lim("max");
     this.box = this.el.querySelector("[data-role=chart]");
     this.empty = this.el.querySelector("[data-role=empty]");
 
@@ -1507,7 +1537,8 @@ Hooks.Sparkline = {
     // each reading holds until the next one, the last one until now
     const held = (points) => (points.length ? points.concat([[now, points[points.length - 1][1]]]) : []);
     // tight y range from the data (ECharts' own range rounds outward and
-    // leaves a flat line at the bottom); a flat line sits in the middle
+    // leaves a flat line at the bottom), but never narrower than a floor, so
+    // a steady reading with noise draws as a nearly flat line
     let lo = Infinity;
     let hi = -Infinity;
     for (const p of value.concat(target)) {
@@ -1518,7 +1549,7 @@ Hooks.Sparkline = {
 
     chart.setOption({
       xAxis: { min: start, max: now },
-      yAxis: sparkRange(lo, hi),
+      yAxis: sparkFloorRange(lo, hi, this.limMin, this.limMax),
       series: [
         { data: held(value), lineStyle: { opacity: flat ? 0.4 : 1 } },
         { data: held(target) },

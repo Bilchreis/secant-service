@@ -54,6 +54,7 @@ defmodule SecantServiceWeb.Components.Sparkline do
         |> assign(:param_ids, ids)
         |> assign(:series, Enum.map(params, &elem(&1, 0)))
         |> assign(:unit, ValueFormat.unit(value_param.datainfo))
+        |> assign(:limits, limits(value_param.datainfo))
         |> assign(:history, nil)
         |> assign(:client_ready, false)
         |> start_async(:history, fn -> load_history(params) end)
@@ -61,6 +62,19 @@ defmodule SecantServiceWeb.Components.Sparkline do
       {:ok, socket}
     end
   end
+
+  @doc """
+  The value's datainfo `min`/`max` as `{min, max}` (either may be nil), in the
+  same units as the plotted readings. The hook uses them to keep noise from
+  filling the whole card. Placeholder bounds like ±2^31 or ±1e308 say nothing
+  about the expected range and are dropped.
+  """
+  def limits(datainfo) do
+    {bound(datainfo["min"]), bound(datainfo["max"])}
+  end
+
+  defp bound(v) when is_number(v) and abs(v) < 1.0e9, do: v
+  defp bound(_), do: nil
 
   # [[value, %{t: seconds}], ...] -> [[ms, value], ...]
   defp to_points(reports) do
@@ -152,6 +166,8 @@ defmodule SecantServiceWeb.Components.Sparkline do
       phx-hook="Sparkline"
       phx-update="ignore"
       data-unit={@unit}
+      data-min={elem(@limits, 0)}
+      data-max={elem(@limits, 1)}
       class="relative h-8"
       role="img"
       aria-label={

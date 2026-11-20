@@ -17,4 +17,16 @@ defmodule SecantServiceWeb.SparklineTest do
     # still in time order
     assert thinned == Enum.sort_by(thinned, &elem(&1, 0))
   end
+
+  test "limits come from datainfo; placeholder bounds are dropped" do
+    assert Sparkline.limits(%{"type" => "double", "min" => 0.0, "max" => 200.0}) == {0.0, 200.0}
+    assert Sparkline.limits(%{"type" => "double", "min" => 0}) == {0, nil}
+    assert Sparkline.limits(%{"type" => "double"}) == {nil, nil}
+
+    assert Sparkline.limits(%{"type" => "int", "min" => -2_147_483_648, "max" => 2_147_483_647}) ==
+             {nil, nil}
+
+    assert Sparkline.limits(%{"type" => "double", "min" => -1.0e308, "max" => 1.0e308}) ==
+             {nil, nil}
+  end
 end
