@@ -98,7 +98,14 @@ defmodule SecantServiceWeb.Components.Sparkline do
     now = System.os_time(:millisecond)
 
     Map.new(params, fn {series, param} ->
-      {values, timestamps} = Builders.fetch_param_data_in_range(param, now - @window_ms, now)
+      from = now - @window_ms
+      {values, timestamps} = Builders.fetch_param_data_in_range(param, from, now)
+
+      # a setpoint is only recorded when it changes: start with the one in force
+      {values, timestamps} =
+        if series == "target",
+          do: Builders.hold_from(param, from, values, timestamps),
+          else: {values, timestamps}
 
       points =
         timestamps

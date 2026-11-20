@@ -43,6 +43,51 @@ defmodule SecantService.PlotDB.Builders do
   end
 
   @doc """
+  Like `fetch_param_data/2`, for a setpoint (`target`). A setpoint is only
+  recorded when it changes, so a live window often holds no reading of it at
+  all. The last reading before the window is added, pinned to the window
+  start, so the plot shows the setpoint in force since then.
+  """
+  def fetch_held_param_data(param, :live) do
+    {from_ms, _to_ms, _buttons, _active} = default_live_range_ms()
+    {values, timestamps} = fetch_param_data(param, :live)
+    hold_from(param, from_ms, values, timestamps)
+  end
+
+  def fetch_held_param_data(param, mode), do: fetch_param_data(param, mode)
+
+  @doc """
+  Puts the last reading before `from_ms` in front of `values`/`timestamps`,
+  at `from_ms`. Unchanged when there is no window start or earlier reading.
+  """
+  def hold_from(_param, nil, values, timestamps), do: {values, timestamps}
+
+  def hold_from(param, from_ms, values, timestamps) do
+    case last_before(param, from_ms) do
+      nil -> {values, timestamps}
+      value -> {[value | values], [trunc(from_ms) | timestamps]}
+    end
+  end
+
+  defp last_before(param, from_ms) do
+    end_ts = DateTime.from_unix!(trunc(from_ms) - 1, :millisecond)
+
+    ParameterValue.get_resource_module(param)
+    |> Ash.Query.for_read(:for_parameter, %{
+      parameter_id: param.id,
+      end_timestamp: end_ts,
+      limit: 1,
+      order: :desc
+    })
+    |> Ash.read!()
+    |> ParameterValue.extract_value_timestamp_lists(param)
+    |> case do
+      {[value | _], _} -> value
+      _ -> nil
+    end
+  end
+
+  @doc """
   True if a parameter has at least one stored value, regardless of time range.
   Used to distinguish "empty because the live window has no recent data" from
   "empty because nothing has ever been recorded" without re-fetching full history.
