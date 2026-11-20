@@ -18,6 +18,19 @@
     </button>
   </:actions>
 
+  <%= if @active_nodes != %{} and @current_node == nil do %>
+    <%!-- the selected node has no data (yet): keep the tabs so the others
+         stay reachable --%>
+    <div class="flex flex-col gap-3">
+      <.node_tabs
+        active_nodes={@active_nodes}
+        hidden_node_ids={@hidden_node_ids}
+        current_node_id={@selected_node_id}
+      />
+      <.node_unavailable node={@active_nodes[@selected_node_id]} />
+    </div>
+  <% end %>
+
   <%= if @active_nodes != %{} and @current_node != nil do %>
     <div class="flex flex-col gap-3">
       <.node_tabs
@@ -83,7 +96,9 @@
         </.inspector_panel>
       </div>
     </div>
-  <% else %>
+  <% end %>
+
+  <%= if @active_nodes == %{} do %>
     <div class="mx-auto mt-16 flex max-w-2xl flex-col gap-4">
       <div class="flex items-center gap-3 text-muted">
         <span class="loading loading-ring loading-sm"></span>

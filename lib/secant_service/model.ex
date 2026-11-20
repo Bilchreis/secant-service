@@ -6,6 +6,7 @@ defmodule SecantService.Model do
 
   alias NodeTable
   alias SecantService.NodeValues
+  alias SecantService.NodeSupervisor
 
   # Define the struct at the top of the module
   defstruct [:active_nodes, :current_node, :values]
@@ -55,7 +56,11 @@ defmodule SecantService.Model do
     :state,
     :active,
     :uuid,
-    :error
+    :error,
+    # how far the handshake got and where the node came from, for nodes
+    # without data yet
+    :idn,
+    :manual
   ]
 
   @doc "The part of a SEC_Node_Statem state the node list needs."
@@ -67,9 +72,11 @@ defmodule SecantService.Model do
     if model.active_nodes == %{} do
       nil
     else
-      # Get an arbitrary entry from the active_nodes map
-      {_current_node_key, default_node_state} = Map.to_list(model.active_nodes) |> List.first()
-      default_node_state[:node_id]
+      # Any node with running services, so the dashboard doesn't open on a
+      # node that never answered; otherwise an arbitrary one
+      node_ids = Map.keys(model.active_nodes)
+
+      Enum.find(node_ids, &NodeSupervisor.services_running?/1) || List.first(node_ids)
     end
   end
 
