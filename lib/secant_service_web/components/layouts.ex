@@ -12,6 +12,27 @@ defmodule SecantServiceWeb.Layouts do
   embed_templates "layouts/*"
 
   @doc """
+  Renders the secant mark: a disc cut by a secant line.
+
+  It is inline SVG rather than an `<img>` so its colours follow the app's
+  theme toggle; `priv/static/images/logo.svg` can only follow the OS setting.
+  """
+  attr :class, :any, default: nil
+  attr :rest, :global
+
+  def logo(assigns) do
+    ~H"""
+    <svg viewBox="0 0 100 100" class={@class} aria-hidden="true" {@rest}>
+      <g transform="rotate(-30 50 50)">
+        <path class="fill-accent" d="M15.77 33.5A38 38 0 0 1 84.23 33.5Z" />
+        <path class="fill-primary" d="M87.25 42.5A38 38 0 1 1 12.75 42.5Z" />
+        <path class="stroke-current" stroke-width="4" stroke-linecap="round" d="M5 38H95" />
+      </g>
+    </svg>
+    """
+  end
+
+  @doc """
   Renders your app layout.
 
   This function is typically invoked from every template,
@@ -41,7 +62,7 @@ defmodule SecantServiceWeb.Layouts do
     <header class="sticky top-0 z-30 border-b border-line bg-base-100/95 backdrop-blur">
       <div class="mx-auto flex max-w-[2560px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2">
         <a href="/" class="flex items-center gap-2" id="home-link">
-          <img src={~p"/images/logo.svg"} width="26" height="26" alt="" />
+          <.logo class="size-[26px]" />
           <span class="text-[15px] font-bold tracking-wide">secant</span>
           <span class="font-mono text-[11px] text-muted">
             v{Application.spec(:secant_service, :vsn)}

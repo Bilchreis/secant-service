@@ -1,150 +1,18 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<!-- Created with Inkscape (http://www.inkscape.org/) -->
-
-<svg
-   width="100mm"
-   height="100mm"
-   viewBox="0 0 100 100"
-   version="1.1"
-   id="svg2268"
-   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
-   sodipodi:docname="secant_base.svg"
-   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
-   xmlns:xlink="http://www.w3.org/1999/xlink"
-   xmlns="http://www.w3.org/2000/svg"
-   xmlns:svg="http://www.w3.org/2000/svg">
-  <sodipodi:namedview
-     id="namedview2270"
-     pagecolor="#ffffff"
-     bordercolor="#000000"
-     borderopacity="0.25"
-     inkscape:showpageshadow="2"
-     inkscape:pageopacity="0.0"
-     inkscape:pagecheckerboard="0"
-     inkscape:deskcolor="#d1d1d1"
-     inkscape:document-units="mm"
-     showgrid="false"
-     showguides="false"
-     inkscape:zoom="1.204675"
-     inkscape:cx="39.429723"
-     inkscape:cy="350.71701"
-     inkscape:window-width="2494"
-     inkscape:window-height="1531"
-     inkscape:window-x="0"
-     inkscape:window-y="0"
-     inkscape:window-maximized="1"
-     inkscape:current-layer="layer1" />
-  <defs
-     id="defs2265">
-    <style>
-      @media (prefers-color-scheme: light) {
-        #path5025 { fill: #8f8f8f !important; }
-      }
-    </style>
-    <linearGradient
-       inkscape:collect="always"
-       id="linearGradient5227">
-      <stop
-         style="stop-color:#fefeff;stop-opacity:1;"
-         offset="0.51558542"
-         id="stop5223" />
-      <stop
-         style="stop-color:#2d2d2d;stop-opacity:1;"
-         offset="1"
-         id="stop5225" />
-    </linearGradient>
-    <linearGradient
-       inkscape:collect="always"
-       id="linearGradient4965">
-      <stop
-         style="stop-color:#ffffff;stop-opacity:1;"
-         offset="0.19735958"
-         id="stop4961" />
-      <stop
-         style="stop-color:#00589c;stop-opacity:1;"
-         offset="1"
-         id="stop4963" />
-    </linearGradient>
-    <linearGradient
-       inkscape:collect="always"
-       id="linearGradient4943">
-      <stop
-         style="stop-color:#ffffff;stop-opacity:1;"
-         offset="0"
-         id="stop4939" />
-      <stop
-         style="stop-color:#00589c;stop-opacity:1;"
-         offset="1"
-         id="stop4941" />
-    </linearGradient>
-    <radialGradient
-       inkscape:collect="always"
-       xlink:href="#linearGradient4943"
-       id="radialGradient4945"
-       cx="36.270851"
-       cy="39.564423"
-       fx="36.270851"
-       fy="39.564423"
-       r="34.719462"
-       gradientTransform="matrix(0.96212178,0,0,0.82405884,3.6035827,10.640265)"
-       gradientUnits="userSpaceOnUse" />
-    <radialGradient
-       inkscape:collect="always"
-       xlink:href="#linearGradient4965"
-       id="radialGradient4967"
-       cx="36.912567"
-       cy="44.011578"
-       fx="36.912567"
-       fy="44.011578"
-       r="33.149191"
-       gradientTransform="matrix(0.96212178,0,0,0.75494853,3.6035827,10.260128)"
-       gradientUnits="userSpaceOnUse" />
-    <radialGradient
-       inkscape:collect="always"
-       xlink:href="#linearGradient5227"
-       id="radialGradient5231"
-       cx="49.973167"
-       cy="44.814556"
-       fx="49.973167"
-       fy="44.814556"
-       r="49.36306"
-       gradientTransform="matrix(0.96212178,0,0,0.63270637,3.6035827,17.454369)"
-       gradientUnits="userSpaceOnUse" />
-  </defs>
-  <g
-     inkscape:label="Ebene 1"
-     inkscape:groupmode="layer"
-     id="layer1">
-    <path
-       style="fill:#3a3a3a;fill-opacity:1;stroke:#383b9d;stroke-width:0"
-       id="path5025"
-       sodipodi:type="arc"
-       sodipodi:cx="49.198662"
-       sodipodi:cy="49.796726"
-       sodipodi:rx="48.149944"
-       sodipodi:ry="48.148914"
-       sodipodi:start="0"
-       sodipodi:end="6.2823239"
-       sodipodi:open="true"
-       sodipodi:arc-type="arc"
-       d="M 97.348606,49.796726 A 48.149944,48.148914 0 0 1 49.209031,97.945639 48.149944,48.148914 0 0 1 1.048722,49.817464 48.149944,48.148914 0 0 1 49.167554,1.6478219 48.149944,48.148914 0 0 1 97.348588,49.75525" />
-    <path
-       style="display:inline;fill:url(#radialGradient4967);fill-opacity:1;stroke:#000000;stroke-width:0;stroke-dasharray:none;stroke-opacity:1"
-       d="m 26.375523,27.5801 52.171988,33.664594 c 0,0 5.521168,4.381311 7.279421,-1.26289 C 87.585177,54.337597 93.78116,34.276018 69.377291,18.704992 47.049603,4.4586866 26.03539,21.681597 26.03539,21.681597 c 0,0 -5.500071,2.826931 0.340133,5.898503 z"
-       id="path2178"
-       inkscape:label="tophalf"
-       sodipodi:nodetypes="ccsscc" />
-    <path
-       style="display:inline;fill:url(#radialGradient4945);fill-opacity:1;stroke:#383b9d;stroke-width:0;stroke-dasharray:none;stroke-opacity:1"
-       d="m 24.512481,30.494298 52.728073,34.195738 c 0,0 6.002519,3.725688 0.215937,9.99071 C 71.669902,80.945769 55.260716,94.357031 30.392206,80.93397 5.5236933,67.510927 14.407033,37.616214 16.034098,34.995732 c 1.627066,-2.620478 3.700331,-7.696067 8.478383,-4.501434 z"
-       id="path2209"
-       inkscape:label="bottomhalf" />
-    <path
-       style="display:inline;fill:url(#radialGradient5231);fill-opacity:1;stroke:#383b9d;stroke-width:0"
-       d="m 23.847879,29.116449 64.609225,41.843598 c 0,0 10.061308,6.932718 10.692332,5.993634 0.631034,-0.939085 -9.733735,-7.350125 -9.733735,-7.350125 L 12.570155,19.348018 c 0,0 -7.5923683,-5.506311 -8.3309479,-4.688708 -0.7385795,0.817602 7.1811889,5.871582 7.1811889,5.871582 z"
-       id="path5213"
-       sodipodi:nodetypes="cczcczcc"
-       inkscape:label="path5213" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="secant">
+  <style>
+    .ink { fill: #303030; stroke: #303030; }
+    .deep { fill: #00589c; }
+    .light { fill: #009ee0; }
+    .muted { fill: #5f6670; }
+    @media (prefers-color-scheme: dark) {
+      .ink { fill: #ededed; stroke: #ededed; }
+      .deep { fill: #0078c8; }
+      .muted { fill: #a3a9b2; }
+    }
+  </style>
+  <g transform="rotate(-30 50 50)">
+    <path class="light" d="M15.77 33.5A38 38 0 0 1 84.23 33.5Z"/>
+    <path class="deep" d="M87.25 42.5A38 38 0 1 1 12.75 42.5Z"/>
+    <path class="ink" fill="none" stroke-width="4" stroke-linecap="round" d="M5 38H95"/>
   </g>
 </svg>
