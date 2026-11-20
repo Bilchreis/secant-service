@@ -56,12 +56,6 @@ defmodule SecantServiceWeb.Components.AcquisitionGoal do
   end
 
   @impl true
-  def render(%{params: %{"goal" => nil}} = assigns) do
-    ~H"""
-    <div id={@id} class="hidden"></div>
-    """
-  end
-
   def render(assigns) do
     %{"value" => value, "goal" => goal} =
       Map.merge(%{"value" => nil, "goal" => nil}, assigns.values)
@@ -75,8 +69,7 @@ defmodule SecantServiceWeb.Components.AcquisitionGoal do
         enabled: enabled,
         progress: Acquisition.goal_progress(value, goal, enabled),
         value_text: ValueFormat.short(value, (assigns.params["value"] || goal_param).datainfo),
-        goal_text: ValueFormat.short(goal, goal_param.datainfo),
-        unit: ValueFormat.unit(goal_param.datainfo)
+        goal_text: ValueFormat.short(goal, goal_param.datainfo)
       )
 
     ~H"""
@@ -90,7 +83,7 @@ defmodule SecantServiceWeb.Components.AcquisitionGoal do
       <div class="flex items-baseline gap-1.5 text-muted">
         <span class="font-semibold tracking-wider uppercase text-[10px]">Goal</span>
         <span class="min-w-0 flex-1 truncate text-right font-mono">
-          <span :if={@progress}>{@value_text} / </span>{@goal_text}<span :if={@unit != ""}>{@unit}</span>
+          <span :if={@progress}>{@value_text} / </span>{@goal_text}
           <span :if={not @enabled}> · off</span>
         </span>
       </div>

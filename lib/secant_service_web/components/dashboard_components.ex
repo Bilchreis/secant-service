@@ -716,7 +716,10 @@ defmodule SecantServiceWeb.DashboardComponents do
             {Util.display_name(@module.name)}
           </span>
           <span class="block font-mono text-[11px] text-muted">
-            {class_label(@module.highest_interface_class)} · {length(@channels)} channels
+            {class_label(@module.highest_interface_class)} · {length(@channels)} {if length(@channels) ==
+                                                                                       1,
+                                                                                     do: "channel",
+                                                                                     else: "channels"}
           </span>
         </button>
         <div :if={Module.has_status?(@module)} class="min-w-0 flex-1 basis-40">
@@ -751,7 +754,12 @@ defmodule SecantServiceWeb.DashboardComponents do
             phx-value-module={@module.name}
             class="rounded px-1 py-0.5 text-xs text-muted hover:bg-base-200 hover:text-base-content"
           >
-            {length(@module.parameters)} params<span :if={@other_commands > 0}> · {@other_commands} cmds</span>
+            {length(@module.parameters)} params<span :if={@other_commands > 0}> · {@other_commands} {if @other_commands ==
+                                                                                                          1,
+                                                                                                        do:
+                                                                                                          "cmd",
+                                                                                                        else:
+                                                                                                          "cmds"}</span>
             ›
           </button>
         </div>

@@ -27,6 +27,11 @@ defmodule SecantServiceWeb.AcquisitionCardTest do
       |> put_module("counts", %{interface_classes: ["AcquisitionChannel", "Readable"]})
       |> put_accessible("ctrl", :go, %{datainfo: %{type: "command"}, description: "go"})
       |> put_accessible("ctrl", :stop, %{datainfo: %{type: "command"}, description: "stop"})
+      |> put_accessible("timer", :goal, %{
+        datainfo: %{type: "double", unit: "s"},
+        readonly: false,
+        description: "goal"
+      })
       |> put_accessible("timer", :goal_enable, %{
         datainfo: %{type: "bool"},
         readonly: false,
@@ -74,6 +79,15 @@ defmodule SecantServiceWeb.AcquisitionCardTest do
     send_value_update(node_id, "timer", "value", [2.5, %{t: @t}])
 
     eventually(fn -> has_element?(view, "#acq-channel-timer [data-progress='0.25']") end)
+    # the unit appears once per number
+    goal_text =
+      view
+      |> element("#acq-channel-timer [data-progress] .font-mono")
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.text()
+
+    assert goal_text |> String.split() |> Enum.join(" ") == "2.5 / 10.0 s"
     refute has_element?(view, "#acq-channel-counts [data-progress]")
 
     send_value_update(node_id, "timer", "goal_enable", [false, %{t: @t}])
