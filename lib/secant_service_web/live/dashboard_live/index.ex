@@ -546,6 +546,8 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   end
 
   def update_components(node_id_str, module, "value", data_report) do
+    update_acquisition_goal(node_id_str, module, "value", data_report)
+
     send_update(SecantServiceWeb.Components.ParameterValueDisplay,
       id: "module_dash:" <> node_id_str <> ":" <> module <> ":" <> "value",
       value_update: data_report
@@ -569,9 +571,28 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     )
   end
 
+  def update_components(node_id_str, module, accessible, data_report)
+      when accessible in ["goal", "goal_enable"] do
+    update_acquisition_goal(node_id_str, module, accessible, data_report)
+
+    send_update(SecantServiceWeb.Components.ParameterValueDisplay,
+      id: "parameter_value:" <> node_id_str <> ":" <> module <> ":" <> accessible,
+      value_update: data_report
+    )
+  end
+
   def update_components(node_id_str, module, accessible, data_report) do
     send_update(SecantServiceWeb.Components.ParameterValueDisplay,
       id: "parameter_value:" <> node_id_str <> ":" <> module <> ":" <> accessible,
+      value_update: data_report
+    )
+  end
+
+  # goal progress on the acquisition channel tiles
+  defp update_acquisition_goal(node_id_str, module, param, data_report) do
+    send_update(SecantServiceWeb.Components.AcquisitionGoal,
+      id: SecantServiceWeb.Components.AcquisitionGoal.id(node_id_str, module),
+      param: param,
       value_update: data_report
     )
   end
