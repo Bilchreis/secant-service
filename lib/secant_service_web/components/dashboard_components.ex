@@ -191,31 +191,151 @@ defmodule SecantServiceWeb.DashboardComponents do
 
   attr :node, :map, default: nil
 
-  @doc "Shown instead of the node view while the selected node has no data."
+  @doc """
+  Shown instead of the node view while the selected node has no data: how far
+  the handshake with the node got and where it hangs.
+  """
   def node_unavailable(assigns) do
+    assigns = assign(assigns, :steps, handshake_steps(assigns.node))
+
     ~H"""
     <div
       id="node-unavailable"
       role="status"
-      class="flex items-start gap-3 rounded-box border border-line bg-base-100 px-4 py-4 text-sm"
+      class="flex flex-col gap-5 rounded-box border border-line bg-base-100 px-5 py-5 text-sm"
     >
-      <.icon name="hero-signal-slash" class="mt-0.5 size-5 shrink-0 text-muted" />
       <div class="flex flex-col gap-1">
         <strong>
           No data from <span :if={@node} class="font-mono">{@node.pubsub_topic}</span>
           <span :if={!@node}>this node</span> yet.
         </strong>
         <span class="text-muted">
-          <%= if @node && @node.state in [:connected, :initialized] do %>
-            The node is connected and its data is being set up.
-          <% else %>
-            The node has not answered. It shows up here once the connection is established.
-          <% end %>
+          The node shows up here once every step below is done.
         </span>
       </div>
+
+      <ol id="handshake-steps" class="flex flex-col sm:flex-row">
+        <li
+          :for={step <- @steps}
+          id={"handshake-step-#{step.id}"}
+          data-status={step.status}
+          class="group relative flex flex-1 gap-3 pb-5 last:pb-0 sm:flex-col sm:gap-2 sm:pr-5 sm:pb-0"
+        >
+          <%!-- the line to the next bobble: vertical on phones, horizontal from sm --%>
+          <span
+            aria-hidden="true"
+            class={[
+              "absolute top-6 bottom-0 left-3 w-0.5 -translate-x-1/2 transition-colors group-last:hidden",
+              "sm:top-3 sm:right-0 sm:bottom-auto sm:left-6 sm:h-0.5 sm:w-auto sm:translate-x-0 sm:-translate-y-1/2",
+              if(step.status == :done, do: "bg-st-idle", else: "bg-line")
+            ]}
+          ></span>
+          <span class={[
+            "relative z-10 flex size-6 shrink-0 items-center justify-center rounded-full border-2 bg-base-100 transition-colors",
+            step_bobble_class(step.status)
+          ]}>
+            <.icon :if={step.status == :done} name="hero-check-micro" class="size-4" />
+            <.icon :if={step.status == :failed} name="hero-x-mark-micro" class="size-4" />
+            <span
+              :if={step.status == :current}
+              class="loading loading-spinner size-3.5 text-primary"
+            ></span>
+          </span>
+          <div class="flex min-w-0 flex-col gap-0.5">
+            <span class={[
+              "leading-6 font-semibold",
+              step.status == :pending && "text-muted",
+              step.status == :failed && "text-st-error"
+            ]}>
+              {step.title}
+            </span>
+            <span class="text-xs text-muted">{step.detail}</span>
+          </div>
+        </li>
+      </ol>
     </div>
     """
   end
+
+  defp step_bobble_class(:done), do: "border-st-idle bg-st-idle text-base-100"
+  defp step_bobble_class(:failed), do: "border-st-error bg-st-error text-base-100"
+  defp step_bobble_class(:current), do: "border-primary"
+  defp step_bobble_class(:pending), do: "border-line"
+
+  @handshake_steps [
+    connect: "Connect",
+    identify: "Identify",
+    describe: "Describe",
+    record: "Record"
+  ]
+
+  @doc """
+  The steps from finding a node to showing its data, each with a status:
+  `:done`, `:current` (in progress), `:failed` (it hangs here) or `:pending`.
+
+  `node` is the client's state of the node.
+  """
+  def handshake_steps(node) do
+    {at, status, note} = handshake_position(node)
+    ids = Keyword.keys(@handshake_steps)
+    at_index = Enum.find_index(ids, &(&1 == at))
+
+    for {{id, title}, index} <- Enum.with_index(@handshake_steps) do
+      cond do
+        index < at_index ->
+          %{id: id, title: title, status: :done, detail: step_done_detail(id, node)}
+
+        index == at_index ->
+          %{id: id, title: title, status: status, detail: note}
+
+        true ->
+          %{id: id, title: title, status: :pending, detail: step_pending_detail(id)}
+      end
+    end
+  end
+
+  # {step the node is at, status of that step, what is going on}
+  defp handshake_position(%{state: :connecting}),
+    do: {:connect, :current, "Opening the TCP connection."}
+
+  defp handshake_position(%{state: :connected} = node) do
+    if node[:idn],
+      do: {:describe, :current, "Waiting for the node's description."},
+      else: {:identify, :current, "Waiting for the answer to *IDN?."}
+  end
+
+  defp handshake_position(%{state: :could_not_initialize} = node) do
+    if node[:idn],
+      do: {:describe, :failed, "The node did not answer the describe request."},
+      else: {:identify, :failed, "The node did not answer *IDN?."}
+  end
+
+  defp handshake_position(%{state: :initialized}),
+    do: {:record, :current, "Storing the node and starting to record."}
+
+  defp handshake_position(_node),
+    do:
+      {:connect, :failed, "The node does not accept the connection. Retrying every few seconds."}
+
+  defp step_done_detail(:connect, _node), do: "TCP connection is open."
+
+  defp step_done_detail(:identify, node) do
+    case node[:idn] do
+      %{version: version} when is_binary(version) -> "Speaks SECoP #{version}."
+      _ -> "The node identified itself."
+    end
+  end
+
+  defp step_done_detail(:describe, node) do
+    case node[:equipment_id] do
+      id when is_binary(id) -> "Description of #{Util.display_name(id)} received."
+      _ -> "Description received."
+    end
+  end
+
+  defp step_pending_detail(:identify), do: "Ask the node which SECoP version it speaks."
+  defp step_pending_detail(:describe), do: "Read the node's modules and parameters."
+  defp step_pending_detail(:record), do: "Store the node and start recording."
 
   defp display_node_name(%{equipment_id: id}) when is_binary(id), do: Util.display_name(id)
 

@@ -14,4 +14,10 @@ exclude =
   end
 
 ExUnit.start(exclude: exclude)
+
+# The startup triggers use the database without the sandbox. Let them finish
+# first: once the mode is :manual they crash, and a few crashes in a row take
+# the whole application down.
+:sys.get_state(SecantService.StartupTriggerRunner, 60_000)
+
 Ecto.Adapters.SQL.Sandbox.mode(SecantService.Repo, :manual)

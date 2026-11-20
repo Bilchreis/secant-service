@@ -51,7 +51,9 @@ defmodule SecantService.Model do
             :state,
             :active,
             :uuid,
-            :error
+            :error,
+            # how far the handshake got, for nodes without data yet
+            :idn
           ])
 
         Map.put(acc, node_id, node)
