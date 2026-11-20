@@ -138,6 +138,7 @@ defmodule SecantService.E2E.NodeReconnectTest do
     # the dead node's tab shows a notice and keeps the other tabs reachable
     {:ok, view, _html} = live(build_conn(), "/dashboard?node=127.0.0.1:#{dead_port}")
     assert has_element?(view, "#node-unavailable")
+    assert has_element?(view, ~s(#handshake-step-discover[data-status="done"]))
     assert has_element?(view, ~s(#handshake-step-connect[data-status="failed"]))
     assert has_element?(view, ~s(#handshake-step-identify[data-status="pending"]))
     assert has_element?(view, ~s([id="node-tab-127.0.0.1:#{ctx.tcp_port}"]))

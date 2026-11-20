@@ -273,26 +273,44 @@ defmodule SecantServiceWeb.DashboardComponents do
   The steps from finding a node to showing its data, each with a status:
   `:done`, `:current` (in progress), `:failed` (it hangs here) or `:pending`.
 
-  `node` is the client's state of the node.
+  `node` is the client's state of the node. A discovered node has a leading
+  `:discover` step.
   """
   def handshake_steps(node) do
     {at, status, note} = handshake_position(node)
     ids = Keyword.keys(@handshake_steps)
     at_index = Enum.find_index(ids, &(&1 == at))
 
-    for {{id, title}, index} <- Enum.with_index(@handshake_steps) do
-      cond do
-        index < at_index ->
-          %{id: id, title: title, status: :done, detail: step_done_detail(id, node)}
+    steps =
+      for {{id, title}, index} <- Enum.with_index(@handshake_steps) do
+        cond do
+          index < at_index ->
+            %{id: id, title: title, status: :done, detail: step_done_detail(id, node)}
 
-        index == at_index ->
-          %{id: id, title: title, status: status, detail: note}
+          index == at_index ->
+            %{id: id, title: title, status: status, detail: note}
 
-        true ->
-          %{id: id, title: title, status: :pending, detail: step_pending_detail(id)}
+          true ->
+            %{id: id, title: title, status: :pending, detail: step_pending_detail(id)}
+        end
       end
-    end
+
+    discover_step(node) ++ steps
   end
+
+  # Nodes found by a discovery scan (not entered by hand) start one step earlier
+  defp discover_step(%{manual: false}) do
+    [
+      %{
+        id: :discover,
+        title: "Discover",
+        status: :done,
+        detail: "The node answered a discovery scan."
+      }
+    ]
+  end
+
+  defp discover_step(_node), do: []
 
   # {step the node is at, status of that step, what is going on}
   defp handshake_position(%{state: :connecting}),

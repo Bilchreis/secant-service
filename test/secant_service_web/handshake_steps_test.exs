@@ -33,6 +33,19 @@ defmodule SecantServiceWeb.HandshakeStepsTest do
              [connect: :done, identify: :done, describe: :done, record: :current]
   end
 
+  test "a discovered node starts with a done discover step" do
+    assert statuses(%{state: :disconnected, idn: nil, manual: false}) ==
+             [
+               discover: :done,
+               connect: :failed,
+               identify: :pending,
+               describe: :pending,
+               record: :pending
+             ]
+
+    refute {:discover, :done} in statuses(%{state: :disconnected, idn: nil, manual: true})
+  end
+
   test "an unknown node hangs at connect" do
     assert [{:connect, :failed} | _] = statuses(nil)
   end
