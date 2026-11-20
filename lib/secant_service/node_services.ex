@@ -44,11 +44,7 @@ defmodule SecantService.NodeSupervisor do
 
   # uuid
   def services_running?(uuid) do
-    list_node_id_services()
-    |> Enum.any?(fn node_id ->
-      {:ok, node_db} = NodeValues.get_node_db(node_id)
-      node_db.uuid == uuid
-    end)
+    MapSet.member?(list_uuid_services(), uuid)
   end
 
   def get_services_pid(node_id) do

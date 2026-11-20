@@ -40,6 +40,9 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     )
   end
 
+  # 500 ms apart, so node services get ~30 s to come up
+  @max_description_retries 60
+
   @impl true
   def mount(_params, _session, socket) do
     model = Model.get_initial_model()
@@ -174,88 +177,25 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
   @impl true
   def handle_info({:description_change, pubsub_topic, state}, socket) do
-    Logger.info("node state change: #{pubsub_topic} #{state.state}")
+    handle_description_change(pubsub_topic, state, 0, socket)
+  end
 
-    node_id = pubsubtopic_to_node_id(pubsub_topic)
+  # Retry of a description change whose node services were not up yet. Dropped
+  # once a newer description has arrived or the services never came up.
+  def handle_info({:description_change_retry, pubsub_topic, state, attempt}, socket) do
+    current = socket.assigns.active_nodes[pubsubtopic_to_node_id(pubsub_topic)]
 
-    updated_node =
-      socket.assigns.active_nodes[node_id]
-      |> Map.put(:description, state.description)
-      |> Map.put(:equipment_id, state.equipment_id)
-      |> Map.put(:raw_description, state.raw_description)
-      |> Map.put(:uuid, state.uuid)
+    cond do
+      current == nil or current[:uuid] != state[:uuid] ->
+        {:noreply, socket}
 
-    active_nodes = socket.assigns.active_nodes |> Map.put(node_id, updated_node)
-    current_node = socket.assigns.current_node
-    values = socket.assigns.values
+      attempt > @max_description_retries ->
+        Logger.error("Services for node #{pubsub_topic} (#{state[:uuid]}) did not start")
+        {:noreply, socket}
 
-    socket =
-      cond do
-        current_node == nil ->
-          Logger.info("No current node set, yet (possibly first node connected)")
-
-          {values, current_node} =
-            if NodeSupervisor.services_running?(state[:uuid]) do
-              {:ok, current_node} = NodeValues.get_node_db(node_id)
-              {:ok, values} = NodeValues.get_values(node_id)
-
-              subscribe_to_node(node_id)
-
-              Logger.info("Current node updated #{inspect(node_id)}")
-              {values, current_node}
-            else
-              Logger.warning(
-                "Node with UUID #{state[:uuid]} does not exist in the database, retrying..."
-              )
-
-              Process.send_after(self(), {:description_change, pubsub_topic, state}, 500)
-              {values, current_node}
-            end
-
-          socket
-          |> assign(current_node: current_node)
-          |> assign(values: values)
-          |> assign(:status_map, status_map(values))
-
-        state.node_id == current_node.node_id ->
-          {values, current_node} =
-            if NodeSupervisor.services_running?(state[:uuid]) do
-              # unsubscribe from all subs (prevents double updates)
-              unsubscribe_from_node(current_node.node_id)
-              {:ok, current_node} = NodeValues.get_node_db(node_id)
-              {:ok, values} = NodeValues.get_values(node_id)
-
-              subscribe_to_node(node_id)
-
-              Logger.info("Current node updated #{inspect(node_id)}")
-              {values, current_node}
-            else
-              unsubscribe_from_node(current_node.node_id)
-
-              Logger.warning(
-                "Node with UUID #{state[:uuid]} does not exist in the database, unsubscribed from pubsub topic."
-              )
-
-              Process.send_after(self(), {:description_change, pubsub_topic, state}, 500)
-              {values, current_node}
-            end
-
-          socket
-          |> assign(current_node: current_node)
-          |> assign(values: values)
-          |> assign(:status_map, status_map(values))
-
-        true ->
-          Logger.info("Current node not updated #{inspect(node_id)}")
-          socket
-      end
-
-    socket =
-      socket
-      |> assign(active_nodes: active_nodes)
-      |> assign_selected_module(socket.assigns.selected_module)
-
-    {:noreply, socket}
+      true ->
+        handle_description_change(pubsub_topic, state, attempt, socket)
+    end
   end
 
   def handle_info({:conn_state, pubsub_topic, active}, socket) do
@@ -516,6 +456,99 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
     SEC_Node_Supervisor.start_child(opts)
     {:noreply, socket}
+  end
+
+  defp handle_description_change(pubsub_topic, state, attempt, socket) do
+    Logger.info("description change: #{pubsub_topic} #{state.state}")
+
+    node_id = pubsubtopic_to_node_id(pubsub_topic)
+
+    updated_node =
+      (socket.assigns.active_nodes[node_id] || state)
+      |> Map.put(:description, state.description)
+      |> Map.put(:equipment_id, state.equipment_id)
+      |> Map.put(:raw_description, state.raw_description)
+      |> Map.put(:uuid, state.uuid)
+
+    active_nodes = socket.assigns.active_nodes |> Map.put(node_id, updated_node)
+    current_node = socket.assigns.current_node
+    values = socket.assigns.values
+
+    socket =
+      cond do
+        current_node == nil ->
+          Logger.info("No current node set, yet (possibly first node connected)")
+
+          {values, current_node} =
+            if NodeSupervisor.services_running?(state[:uuid]) do
+              {:ok, current_node} = NodeValues.get_node_db(node_id)
+              {:ok, values} = NodeValues.get_values(node_id)
+
+              subscribe_to_node(node_id)
+
+              Logger.info("Current node updated #{inspect(node_id)}")
+              {values, current_node}
+            else
+              Logger.warning(
+                "Services for node with UUID #{state[:uuid]} have not started yet, retrying..."
+              )
+
+              retry_description_change(pubsub_topic, state, attempt)
+              {values, current_node}
+            end
+
+          socket
+          |> assign(current_node: current_node)
+          |> assign(values: values)
+          |> assign(:status_map, status_map(values))
+
+        state.node_id == current_node.node_id ->
+          {values, current_node} =
+            if NodeSupervisor.services_running?(state[:uuid]) do
+              # unsubscribe from all subs (prevents double updates)
+              unsubscribe_from_node(current_node.node_id)
+              {:ok, current_node} = NodeValues.get_node_db(node_id)
+              {:ok, values} = NodeValues.get_values(node_id)
+
+              subscribe_to_node(node_id)
+
+              Logger.info("Current node updated #{inspect(node_id)}")
+              {values, current_node}
+            else
+              unsubscribe_from_node(current_node.node_id)
+
+              Logger.warning(
+                "Services for node with UUID #{state[:uuid]} have not started yet, retrying..."
+              )
+
+              retry_description_change(pubsub_topic, state, attempt)
+              {values, current_node}
+            end
+
+          socket
+          |> assign(current_node: current_node)
+          |> assign(values: values)
+          |> assign(:status_map, status_map(values))
+
+        true ->
+          Logger.info("Current node not updated #{inspect(node_id)}")
+          socket
+      end
+
+    socket =
+      socket
+      |> assign(active_nodes: active_nodes)
+      |> assign_selected_module(socket.assigns.selected_module)
+
+    {:noreply, socket}
+  end
+
+  defp retry_description_change(pubsub_topic, state, attempt) do
+    Process.send_after(
+      self(),
+      {:description_change_retry, pubsub_topic, state, attempt + 1},
+      500
+    )
   end
 
   defp pubsubtopic_to_node_id(pubsub_topic) do
