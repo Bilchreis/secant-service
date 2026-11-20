@@ -16,7 +16,7 @@ defmodule SecantService.PlotDB.Calibratable do
 
     if value_param && value_param.datainfo["type"] in @scalar_types do
       {v_val, v_ts} = fetch_param_data(value_param, mode)
-      {t_val, t_ts} = fetch_param_data(find_param(module, "target"), mode)
+      {t_val, t_ts} = fetch_held_param_data(find_param(module, "target"), mode)
       {vu_val, vu_ts} = fetch_param_data(find_param(module, "_value_uncalibrated"), mode)
       {tc_val, tc_ts} = fetch_param_data(find_param(module, "_target_calibrated"), mode)
 

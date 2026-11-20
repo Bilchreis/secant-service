@@ -21,7 +21,22 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
       # thin out long recordings to what the chart can show
       sampling: "lttb"
     }
+    |> target_style(name)
   end
+
+  # The setpoint looks like on the dashboard cards: a dashed step line
+  # (each target holds until the next one), no markers. The hook gives
+  # `_target` series the page's muted colour.
+  defp target_style(series, "target") do
+    Map.merge(series, %{
+      step: "end",
+      showSymbol: false,
+      lineStyle: %{width: 2, type: [6, 4]},
+      _target: true
+    })
+  end
+
+  defp target_style(series, _name), do: series
 
   def timeseries_option(series, unit, mode, legend_selected \\ %{}) do
     base = %{

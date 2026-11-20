@@ -523,7 +523,7 @@ Hooks.EChartsChart = {
         : overview;
     });
     this._chart.setOption({
-      series: Object.keys(this._seriesData).map((idx) => ({ data: this._seriesData[idx] })),
+      series: Object.keys(this._seriesData).map((idx) => ({ data: this._drawnData(idx) })),
     });
     this._renderResolution();
   },
@@ -581,9 +581,15 @@ Hooks.EChartsChart = {
       : option.yAxis && tint(intLabels(option.yAxis, 0));
     const inactive = isDarkTheme() ? "#6b6b70" : "#9a9aa0";
     const live = Array.isArray(this._rangeButtons);
+    this._targetIdx = new Set();
     const series = (option.series || []).map((s, i) => {
       if (s && s._enumBand) return this._enumBand(s, live);
       if (s && s._arrayHeat) return this._arrayHeat(s, live, i);
+      if (s && s._target) {
+        this._targetIdx.add(String(i));
+        const color = muted ? { lineStyle: { ...(s.lineStyle || {}), color: muted }, itemStyle: { ...(s.itemStyle || {}), color: muted } } : {};
+        return { ...s, ...color, data: this._heldTarget(s.data || [], option.series) };
+      }
       return s;
     });
     const legend = mapAxes(
@@ -1145,13 +1151,7 @@ Hooks.EChartsChart = {
           }
         } else if (!isExpanding && newXMin !== null) {
           // Shrinking: eagerly drop points that scrolled out
-          Object.keys(this._seriesData).forEach((idx) => {
-            const d = this._seriesData[idx];
-            if (d.length > 0 && this._pointTs(d[0]) < newXMin) {
-              const cutoff = d.findIndex(p => this._pointTs(p) >= newXMin);
-              this._seriesData[idx] = cutoff === -1 ? [] : d.slice(cutoff);
-            }
-          });
+          Object.keys(this._seriesData).forEach((idx) => this._trimBefore(idx, newXMin));
         }
 
         if (newXMin !== null) {
@@ -1175,6 +1175,42 @@ Hooks.EChartsChart = {
   _pointTs(point) {
     if (!point) return null;
     return Array.isArray(point) ? point[0] : (point.value ? point.value[0] : null);
+  },
+
+  // A setpoint holds until the next one: draw its last reading on to now
+  // (live) or to the newest reading of any series (history). Only the drawn
+  // copy gets the extra point; the buffer keeps the real readings.
+  _heldTarget(data, allSeries) {
+    if (!data || data.length === 0) return data;
+    const last = data[data.length - 1];
+    const lastTs = this._pointTs(last);
+    let end = null;
+    if (Array.isArray(this._rangeButtons)) {
+      end = Date.now();
+    } else {
+      const all = allSeries ? allSeries.map((s) => (s && s.data) || []) : Object.values(this._seriesData || {});
+      all.forEach((d) => {
+        const ts = d.length ? this._pointTs(d[d.length - 1]) : null;
+        if (ts != null && (end === null || ts > end)) end = ts;
+      });
+    }
+    if (end === null || lastTs == null || end <= lastTs) return data;
+    return data.concat([[end, Array.isArray(last) ? last[1] : last.value[1]]]);
+  },
+
+  // drop readings left of the window; a setpoint keeps the one still in force
+  _trimBefore(idx, xMin) {
+    const d = this._seriesData[idx];
+    if (d.length === 0 || this._pointTs(d[0]) >= xMin) return;
+    let cutoff = d.findIndex((p) => this._pointTs(p) >= xMin);
+    if (cutoff === -1) cutoff = d.length;
+    if (this._targetIdx && this._targetIdx.has(String(idx))) cutoff -= 1;
+    if (cutoff > 0) this._seriesData[idx] = d.slice(cutoff);
+  },
+
+  _drawnData(idx) {
+    const d = this._seriesData[idx];
+    return this._targetIdx && this._targetIdx.has(String(idx)) ? this._heldTarget(d) : d;
   },
 
   // Earliest timestamp currently buffered across all series, or null if nothing is buffered yet
@@ -1223,13 +1259,7 @@ Hooks.EChartsChart = {
     // when data has actually changed since the last flush.
     if (this._dataDirty) {
       if (xMin !== null) {
-        Object.keys(this._seriesData).forEach((idx) => {
-          const d = this._seriesData[idx];
-          if (d.length > 0 && this._pointTs(d[0]) < xMin) {
-            const cutoff = d.findIndex(p => this._pointTs(p) >= xMin);
-            this._seriesData[idx] = cutoff === -1 ? [] : d.slice(cutoff);
-          }
-        });
+        Object.keys(this._seriesData).forEach((idx) => this._trimBefore(idx, xMin));
       } else {
         Object.keys(this._seriesData).forEach((idx) => {
           const d = this._seriesData[idx];
@@ -1247,7 +1277,7 @@ Hooks.EChartsChart = {
         patch.series = this._splitArray(this._seriesData[0] || []).map((data) => ({ data }));
       } else {
         patch.series = Object.keys(this._seriesData).map((idx) => ({
-          data: this._seriesData[idx],
+          data: this._drawnData(idx),
         }));
       }
 
@@ -1261,6 +1291,11 @@ Hooks.EChartsChart = {
       }
 
       this._dataDirty = false;
+    } else if (this._targetIdx && this._targetIdx.size > 0) {
+      // nothing new, but the held setpoint still has to reach "now"
+      patch.series = Object.keys(this._seriesData).map((idx) =>
+        this._targetIdx.has(idx) ? { data: this._drawnData(idx) } : {},
+      );
     }
 
     if (Object.keys(patch).length === 0) return;
@@ -1352,6 +1387,33 @@ function sparkRange(lo, hi) {
   return { min: lo - pad, max: hi + pad };
 }
 
+// Smallest y span a card trend shows: 2 % of the datainfo range, or 1 % of
+// the reading's size when the range is unknown. Changes smaller than that
+// (usually noise) stay small instead of being zoomed to full height.
+const SPARK_SPAN_OF_LIMITS = 0.02;
+const SPARK_SPAN_OF_VALUE = 0.01;
+
+function sparkFloorRange(lo, hi, limMin, limMax) {
+  const hasLimits = limMin !== null && limMax !== null && limMax > limMin;
+  const floor = hasLimits
+    ? (limMax - limMin) * SPARK_SPAN_OF_LIMITS
+    : Math.max(Math.abs(lo), Math.abs(hi)) * SPARK_SPAN_OF_VALUE;
+  if (!(floor > 0) || hi - lo >= floor) return sparkRange(lo, hi);
+
+  // widen around the data, but stay inside the limits so a reading resting
+  // at a bound (e.g. 0 flow) draws along the edge, not mid-card
+  let min = (lo + hi - floor) / 2;
+  let max = min + floor;
+  if (limMin !== null && min < limMin && lo >= limMin) {
+    min = limMin;
+    max = limMin + floor;
+  } else if (limMax !== null && max > limMax && hi <= limMax) {
+    max = limMax;
+    min = limMax - floor;
+  }
+  return { min, max };
+}
+
 function sparkTime(ms) {
   const d = new Date(ms);
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -1363,6 +1425,9 @@ Hooks.Sparkline = {
     this.skew = 0; // node clock minus browser clock, from the newest readings
     this._visible = true;
     this.unit = this.el.dataset.unit || "";
+    const lim = (k) => (this.el.dataset[k] === undefined || this.el.dataset[k] === "" ? null : Number(this.el.dataset[k]));
+    this.limMin = lim("min");
+    this.limMax = lim("max");
     this.box = this.el.querySelector("[data-role=chart]");
     this.empty = this.el.querySelector("[data-role=empty]");
 
@@ -1507,7 +1572,8 @@ Hooks.Sparkline = {
     // each reading holds until the next one, the last one until now
     const held = (points) => (points.length ? points.concat([[now, points[points.length - 1][1]]]) : []);
     // tight y range from the data (ECharts' own range rounds outward and
-    // leaves a flat line at the bottom); a flat line sits in the middle
+    // leaves a flat line at the bottom), but never narrower than a floor, so
+    // a steady reading with noise draws as a nearly flat line
     let lo = Infinity;
     let hi = -Infinity;
     for (const p of value.concat(target)) {
@@ -1518,7 +1584,7 @@ Hooks.Sparkline = {
 
     chart.setOption({
       xAxis: { min: start, max: now },
-      yAxis: sparkRange(lo, hi),
+      yAxis: sparkFloorRange(lo, hi, this.limMin, this.limMax),
       series: [
         { data: held(value), lineStyle: { opacity: flat ? 0.4 : 1 } },
         { data: held(target) },

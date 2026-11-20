@@ -85,7 +85,7 @@ defmodule SecantService.PlotDB.Drivable do
 
         _enum_or_scalar ->
           target_param = find_param(module, "target")
-          {t_val, t_ts} = fetch_param_data(target_param, mode)
+          {t_val, t_ts} = fetch_held_param_data(target_param, mode)
 
           {v_series, t_series, extra_opts} =
             if value_param.datainfo["type"] == "enum" do
