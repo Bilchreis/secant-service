@@ -13,27 +13,15 @@ defmodule SecantService.NodeValues do
     )
   end
 
-  def get_values(node_id) do
-    case Registry.lookup(Registry.NodeValues, node_id) do
-      [] ->
-        Logger.error("NodeValues process not found for node ID: #{inspect(node_id)}")
-        {:error, :not_found}
+  def get_values(node_id), do: call(node_id, :get_values)
 
-      [{sec_node_pid, _value}] ->
-        {:ok, GenServer.call(sec_node_pid, :get_values)}
-    end
-  end
+  def get_node_db(node_id), do: call(node_id, :get_node_db)
 
-  def get_node_db(node_id) do
-    case Registry.lookup(Registry.NodeValues, node_id) do
-      [] ->
-        Logger.error("NodeValues process not found for node ID: #{inspect(node_id)}")
-        {:error, :not_found}
-
-      [{sec_node_pid, _value}] ->
-        {:ok, GenServer.call(sec_node_pid, :get_node_db)}
-    end
-  end
+  @doc """
+  Returns `{:ok, {node_db, values}}` read atomically from the same process, so the
+  description and the values always belong to the same node services generation.
+  """
+  def get_snapshot(node_id), do: call(node_id, :get_snapshot)
 
   def get_value(node_id, module, parameter) do
     case get_values(node_id) do
@@ -48,14 +36,25 @@ defmodule SecantService.NodeValues do
     end
   end
 
-  def get_table(node_id) do
+  def get_table(node_id), do: call(node_id, :get_table)
+
+  # The services of a node are stopped and restarted whenever its description
+  # changes, so the process may vanish between the lookup and the call. Treat
+  # that like "not running" instead of crashing the caller.
+  defp call(node_id, message) do
     case Registry.lookup(Registry.NodeValues, node_id) do
       [] ->
-        Logger.error("NodeValues process not found for node ID: #{inspect(node_id)}")
+        Logger.debug("NodeValues process not found for node ID: #{inspect(node_id)}")
         {:error, :not_found}
 
-      [{sec_node_pid, _value}] ->
-        {:ok, GenServer.call(sec_node_pid, :get_table)}
+      [{pid, _value}] ->
+        try do
+          {:ok, GenServer.call(pid, message)}
+        catch
+          :exit, reason ->
+            Logger.debug("NodeValues for #{inspect(node_id)} unavailable: #{inspect(reason)}")
+            {:error, :not_found}
+        end
     end
   end
 
@@ -136,6 +135,10 @@ defmodule SecantService.NodeValues do
     {:reply, state.node_db, state}
   end
 
+  def handle_call(:get_snapshot, _from, state) do
+    {:reply, {state.node_db, state.values}, state}
+  end
+
   def handle_call(:get_table, _from, state) do
     {:reply, state.table, state}
   end
@@ -155,7 +158,7 @@ defmodule SecantService.NodeValues do
               {:ok, data_report} ->
                 data_report
 
-              {:error, :notfound} ->
+              {:error, _} ->
                 Logger.warning(
                   "Data report for module #{module.name} and parameter #{parameter.name} not found in NodeTable for node #{db_node.host}:#{db_node.port}."
                 )

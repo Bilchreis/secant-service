@@ -39,6 +39,10 @@ defmodule SecantService.NodeDBWriter do
 
   @impl true
   def init(node_db) do
+    # Trap exits so terminate/2 runs (and flushes the pending batch) when the
+    # node services are shut down, e.g. on a description change.
+    Process.flag(:trap_exit, true)
+
     # Subscribe to node's topic for parameter updates
     topic = node_db.values_pubsub_topic
     Phoenix.PubSub.subscribe(@pubsub_name, topic)
@@ -221,27 +225,25 @@ defmodule SecantService.NodeDBWriter do
         count = length(initial_maps)
         Logger.info("Writing #{count} initial parameter values for node #{state.equipment_id}")
 
-        Task.start(fn ->
-          Enum.each(grouped, fn {storage_type, maps} ->
-            resource_module = ParameterValue.get_resource_module(storage_type)
-            valid = Enum.reject(maps, fn m -> is_nil(m.value) end)
+        # Written in this process (not a separate task): it must not outlive
+        # the node services, and later batches should land after it.
+        Enum.each(grouped, fn {storage_type, maps} ->
+          resource_module = ParameterValue.get_resource_module(storage_type)
+          valid = Enum.reject(maps, fn m -> is_nil(m.value) end)
 
-            unless Enum.empty?(valid) do
-              case Ash.bulk_create(valid, resource_module, :bulk_create,
-                     return_errors?: true,
-                     stop_on_error?: false,
-                     return_records?: false
-                   ) do
-                %Ash.BulkResult{status: :success} ->
-                  :ok
+          unless Enum.empty?(valid) do
+            case Ash.bulk_create(valid, resource_module, :bulk_create,
+                   return_errors?: true,
+                   stop_on_error?: false,
+                   return_records?: false
+                 ) do
+              %Ash.BulkResult{status: :success} ->
+                :ok
 
-                %Ash.BulkResult{status: status, error_count: error_count} ->
-                  Logger.warning(
-                    "Initial #{storage_type} insert: #{status}, #{error_count} errors"
-                  )
-              end
+              %Ash.BulkResult{status: status, error_count: error_count} ->
+                Logger.warning("Initial #{storage_type} insert: #{status}, #{error_count} errors")
             end
-          end)
+          end
         end)
 
       {:error, reason} ->
@@ -261,9 +263,10 @@ defmodule SecantService.NodeDBWriter do
 
   @impl true
   def terminate(reason, state) do
-    # Flush any remaining parameter values
+    # Flush any remaining parameter values. Synchronously, so the values are
+    # stored before the services are gone (e.g. on a description change).
     if state.batchsize > 0 do
-      flush_all_batches(state)
+      write_batches(state)
     end
 
     Logger.info("Stopping NodeDBWriter for: #{state.equipment_id} (reason: #{inspect(reason)})")
@@ -275,51 +278,51 @@ defmodule SecantService.NodeDBWriter do
   end
 
   defp flush_all_batches(state) do
-    Task.start(fn ->
-      @batch_list
-      |> Enum.each(fn batch_key ->
-        batch = Map.get(state, batch_key)
+    Task.start(fn -> write_batches(state) end)
+  end
 
-        unless Enum.empty?(batch) do
-          storage_type = get_storage_type_from_batch_key(batch_key)
-          resource_module = ParameterValue.get_resource_module(storage_type)
+  defp write_batches(state) do
+    @batch_list
+    |> Enum.each(fn batch_key ->
+      batch = Map.get(state, batch_key)
 
-          # Filter out records with nil values before bulk insert
-          valid_batch = Enum.reject(batch, fn record -> is_nil(record.value) end)
+      unless Enum.empty?(batch) do
+        storage_type = get_storage_type_from_batch_key(batch_key)
+        resource_module = ParameterValue.get_resource_module(storage_type)
 
-          if Enum.empty?(valid_batch) do
-            Logger.debug("Skipping empty batch for #{storage_type} after filtering nil values")
-          else
-            # Use Ash bulk_create for efficient batch insertion
-            case Ash.bulk_create(valid_batch, resource_module, :bulk_create,
-                   return_errors?: true,
-                   stop_on_error?: false,
-                   return_records?: false
-                 ) do
-              %Ash.BulkResult{status: :success} ->
-                Logger.debug(
-                  "Successfully inserted #{length(valid_batch)} #{storage_type} values"
-                )
+        # Filter out records with nil values before bulk insert
+        valid_batch = Enum.reject(batch, fn record -> is_nil(record.value) end)
 
-              %Ash.BulkResult{status: :partial_success, error_count: error_count, errors: errors} ->
-                Logger.warning(
-                  "Partially inserted #{storage_type} values: #{length(valid_batch) - error_count}/#{length(valid_batch)} succeeded"
-                )
+        if Enum.empty?(valid_batch) do
+          Logger.debug("Skipping empty batch for #{storage_type} after filtering nil values")
+        else
+          # Use Ash bulk_create for efficient batch insertion
+          case Ash.bulk_create(valid_batch, resource_module, :bulk_create,
+                 return_errors?: true,
+                 stop_on_error?: false,
+                 return_records?: false
+               ) do
+            %Ash.BulkResult{status: :success} ->
+              Logger.debug("Successfully inserted #{length(valid_batch)} #{storage_type} values")
 
-                # Log details about the first few errors for debugging
-                errors
-                # Only log first 3 to avoid spam
-                |> Enum.take(3)
-                |> Enum.each(fn error ->
-                  Logger.warning("Sample #{storage_type} insert error: #{inspect(error)}")
-                end)
+            %Ash.BulkResult{status: :partial_success, error_count: error_count, errors: errors} ->
+              Logger.warning(
+                "Partially inserted #{storage_type} values: #{length(valid_batch) - error_count}/#{length(valid_batch)} succeeded"
+              )
 
-              %Ash.BulkResult{status: :error, errors: errors} ->
-                Logger.error("Failed to insert #{storage_type} values: #{inspect(errors)}")
-            end
+              # Log details about the first few errors for debugging
+              errors
+              # Only log first 3 to avoid spam
+              |> Enum.take(3)
+              |> Enum.each(fn error ->
+                Logger.warning("Sample #{storage_type} insert error: #{inspect(error)}")
+              end)
+
+            %Ash.BulkResult{status: :error, errors: errors} ->
+              Logger.error("Failed to insert #{storage_type} values: #{inspect(errors)}")
           end
         end
-      end)
+      end
     end)
   end
 

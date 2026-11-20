@@ -25,7 +25,7 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
             {:ok, data_report} ->
               data_report
 
-            {:error, :notfound} ->
+            {:error, _} ->
               Logger.warning(
                 "Data report for module #{module_name} and parameter status not found in NodeTable for node #{inspect(node_id)}}."
               )

@@ -6,7 +6,6 @@ defmodule SecantService.Model do
 
   alias NodeTable
   alias SecantService.NodeValues
-  alias SecantService.NodeSupervisor
 
   # Define the struct at the top of the module
   defstruct [:active_nodes, :current_node, :values]
@@ -38,24 +37,7 @@ defmodule SecantService.Model do
   def get_initial_model() do
     active_nodes = SEC_Node_Supervisor.get_active_nodes()
 
-    # Select only the relevant keys from each node
-    active_nodes =
-      Enum.reduce(active_nodes, %{}, fn {node_id, node}, acc ->
-        node =
-          Map.take(node, [
-            :host,
-            :port,
-            :node_id,
-            :equipment_id,
-            :pubsub_topic,
-            :state,
-            :active,
-            :uuid,
-            :error
-          ])
-
-        Map.put(acc, node_id, node)
-      end)
+    active_nodes = Map.new(active_nodes, fn {node_id, node} -> {node_id, node_summary(node)} end)
 
     %Model{
       active_nodes: active_nodes,
@@ -63,6 +45,22 @@ defmodule SecantService.Model do
       values: nil
     }
   end
+
+  @node_summary_keys [
+    :host,
+    :port,
+    :node_id,
+    :equipment_id,
+    :pubsub_topic,
+    :state,
+    :active,
+    :uuid,
+    :error
+  ]
+
+  @doc "The part of a SEC_Node_Statem state the node list needs."
+  @spec node_summary(map()) :: map()
+  def node_summary(node_state), do: Map.take(node_state, @node_summary_keys)
 
   @spec get_default_node_id(t()) :: {String.t(), integer()} | nil
   def get_default_node_id(model) do
@@ -82,26 +80,17 @@ defmodule SecantService.Model do
 
   @spec set_current_node(t(), {String.t(), integer()}) :: t()
   def set_current_node(model, node_id) do
-    current_node = Map.get(model.active_nodes, node_id)
-
-    # Get the current node from the active nodes map
-    model =
-      if NodeSupervisor.services_running?(node_id) do
-        {:ok, db_node} = NodeValues.get_node_db(node_id)
-
-        {:ok, values} = NodeValues.get_values(node_id)
-
-        model =
-          model
-          |> Map.put(:current_node, db_node)
-          |> Map.put(:values, values)
-
+    # Description and values come from the same NodeValues process, so they
+    # always belong together even while the node services are being restarted.
+    case NodeValues.get_snapshot(node_id) do
+      {:ok, {db_node, values}} ->
         model
-      else
-        Logger.warning("Services for Node with UUID #{current_node[:uuid]} are not running yet.")
-        model
-      end
+        |> Map.put(:current_node, db_node)
+        |> Map.put(:values, values)
 
-    model
+      {:error, _} ->
+        Logger.info("Services for node #{inspect(node_id)} are not running (yet).")
+        model
+    end
   end
 end

@@ -23,7 +23,7 @@
       <.node_tabs
         active_nodes={@active_nodes}
         hidden_node_ids={@hidden_node_ids}
-        current_uuid={@current_node.uuid}
+        current_node_id={@current_node.node_id}
       />
 
       <%!-- header, rail and cards on the left; the module panel sits on the
@@ -89,11 +89,11 @@
         <span class="loading loading-ring loading-sm"></span>
         Waiting for SEC nodes. Nodes on the local network are discovered automatically.
       </div>
-      <.connect_node />
+      <.connect_node id="connect-node-empty" />
     </div>
   <% end %>
 
   <.modal id="connect_modal" title="" show={@show_connect_modal}>
-    <.connect_node />
+    <.connect_node id="connect-node-modal" />
   </.modal>
 </Layouts.app>

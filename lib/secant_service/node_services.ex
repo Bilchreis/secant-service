@@ -44,11 +44,18 @@ defmodule SecantService.NodeSupervisor do
 
   # uuid
   def services_running?(uuid) do
-    list_node_id_services()
-    |> Enum.any?(fn node_id ->
-      {:ok, node_db} = NodeValues.get_node_db(node_id)
-      node_db.uuid == uuid
-    end)
+    MapSet.member?(list_uuid_services(), uuid)
+  end
+
+  @doc """
+  The uuid of the SecNode record the running services of `node_id` were started
+  from, or `nil` if no services are running (or they are mid-restart).
+  """
+  def running_uuid(node_id) do
+    case NodeValues.get_node_db(node_id) do
+      {:ok, node_db} -> node_db.uuid
+      {:error, _} -> nil
+    end
   end
 
   def get_services_pid(node_id) do
@@ -81,8 +88,8 @@ defmodule SecantService.NodeServices do
   Supervisor for all processes related to a specific SEC Node, including:
   - NodeValues: Buffering and caching of incoming node values
   - DBWriter: Process responsible for writing node values to the database
-  - PlotCacheSupervisor: Dynamic supervisor for plot cache processes for this node
-    - this entails a process for each parameter of the SEC node
+  - PlotCacheSupervisor: Supervisor for the plot cache processes of this node
+    - this entails a process for each parameter of the SEC node, started with it
     - sends updates to the liveview plot components only every x seconds to reduce the number of updates
 
   """
@@ -116,7 +123,7 @@ defmodule SecantService.NodeServices do
       # Buffer process for this specific node
       {SecantService.NodeValues, node_db},
 
-      # Dynamic supervisor for parameter plot caches
+      # Supervisor for parameter plot caches (one per parameter)
       {SecantService.PlotCacheSupervisor, node_db},
 
       # Dispatcher process for plot cache updates
