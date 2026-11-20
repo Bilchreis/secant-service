@@ -5,7 +5,9 @@ defmodule SecantService.NexusExport do
   The file is built by the `secop-to-nexus` Python package from the node's
   describe message and the recorded history of every parameter: one
   `NXsensor`/`NXactuator`/`NXcollection` per module and one `NXlog` per
-  recorded parameter.
+  parameter that changed. A parameter whose value never changed in the
+  exported range is a plain field instead, and a changing string parameter
+  (such as the status text) is left out, since an `NXlog` holds numbers.
 
   The whole history is read into memory and handed to the shared Python
   interpreter, so a large export is slow and holds up the other Python work
