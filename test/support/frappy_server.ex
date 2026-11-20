@@ -71,9 +71,19 @@ defmodule SecantService.FrappyServer do
 
   @doc "Stops the node and waits until its port is closed."
   def stop(%__MODULE__{} = server) do
-    System.cmd("kill", ["-TERM", to_string(server.os_pid)], stderr_to_stdout: true)
+    pid = to_string(server.os_pid)
+    System.cmd("kill", ["-TERM", pid], stderr_to_stdout: true)
 
-    wait_until(10_000, "frappy to stop", fn -> not listening?(server.tcp_port) end)
+    # frappy occasionally ignores SIGTERM; then kill it and, when it runs
+    # through uvx, its python child
+    try do
+      wait_until(5_000, "frappy to stop", fn -> not listening?(server.tcp_port) end)
+    rescue
+      RuntimeError ->
+        System.cmd("pkill", ["-KILL", "-P", pid], stderr_to_stdout: true)
+        System.cmd("kill", ["-KILL", pid], stderr_to_stdout: true)
+        wait_until(5_000, "frappy to be killed", fn -> not listening?(server.tcp_port) end)
+    end
 
     if Port.info(server.port), do: Port.close(server.port)
     :ok
