@@ -61,6 +61,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       |> Model.to_socket(model)
       |> assign(:show_connect_modal, false)
       |> assign(:hidden_node_ids, MapSet.new())
+      |> assign(:selected_node_id, nil)
       |> assign(:selected_module, nil)
       |> assign(:plot_param, nil)
       |> assign(:status_map, %{})
@@ -98,7 +99,8 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       if requested != nil and requested != current_id do
         if current_id, do: unsubscribe_from_node(current_id)
 
-        model = Model.set_current_node(model, requested)
+        # a node without running services has nothing to show: no current node
+        model = Model.set_current_node(%{model | current_node: nil, values: nil}, requested)
 
         if model.current_node do
           subscribe_to_node(model.current_node.node_id)
@@ -110,6 +112,8 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       else
         socket
       end
+
+    socket = assign(socket, :selected_node_id, requested)
 
     {:noreply, assign_selected_module(socket, params["module"])}
   end
@@ -377,7 +381,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
     current_node = socket.assigns.current_node
 
-    unsubscribe_from_node(current_node.node_id)
+    if current_node, do: unsubscribe_from_node(current_node.node_id)
 
     # Use push_navigate instead of push_patch to force a full re-mount
     {:noreply, push_navigate(socket, to: ~p"/dashboard?node=#{new_pubsub_topic}")}
@@ -476,6 +480,10 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
     socket =
       cond do
+        # another node is selected and waiting for its own description
+        current_node == nil and socket.assigns.selected_node_id not in [nil, node_id] ->
+          socket
+
         current_node == nil ->
           Logger.info("No current node set, yet (possibly first node connected)")
 
@@ -501,6 +509,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
           |> assign(current_node: current_node)
           |> assign(values: values)
           |> assign(:status_map, status_map(values))
+          |> assign(:selected_node_id, node_id)
 
         state.node_id == current_node.node_id ->
           {values, current_node} =

@@ -189,6 +189,34 @@ defmodule SecantServiceWeb.DashboardComponents do
     """
   end
 
+  attr :node, :map, default: nil
+
+  @doc "Shown instead of the node view while the selected node has no data."
+  def node_unavailable(assigns) do
+    ~H"""
+    <div
+      id="node-unavailable"
+      role="status"
+      class="flex items-start gap-3 rounded-box border border-line bg-base-100 px-4 py-4 text-sm"
+    >
+      <.icon name="hero-signal-slash" class="mt-0.5 size-5 shrink-0 text-muted" />
+      <div class="flex flex-col gap-1">
+        <strong>
+          No data from <span :if={@node} class="font-mono">{@node.pubsub_topic}</span>
+          <span :if={!@node}>this node</span> yet.
+        </strong>
+        <span class="text-muted">
+          <%= if @node && @node.state in [:connected, :initialized] do %>
+            The node is connected and its data is being set up.
+          <% else %>
+            The node has not answered. It shows up here once the connection is established.
+          <% end %>
+        </span>
+      </div>
+    </div>
+    """
+  end
+
   defp display_node_name(%{equipment_id: id}) when is_binary(id), do: Util.display_name(id)
 
   defp display_node_name(%{uuid: uuid}) when is_binary(uuid),

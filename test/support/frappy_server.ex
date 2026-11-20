@@ -115,6 +115,22 @@ defmodule SecantService.FrappyServer do
     description = Keyword.get(opts, :description, "simulated cryostat")
 
     """
+    # Keep the test node out of SECoP discovery, so a secant-service running
+    # on this network does not pick it up
+    import frappy.server
+
+    class NoDiscovery:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    frappy.server.UDPListener = NoDiscovery
+
     Node(#{inspect(equipment_id)}, #{inspect(description)}, 'tcp://#{tcp_port}')
 
     Mod('cryo',

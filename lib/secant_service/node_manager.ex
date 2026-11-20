@@ -116,6 +116,12 @@ defmodule SecantService.NodeManager do
   # that comes back with a changed description gets a new uuid, so the services
   # of the old one are stopped, the old database node is archived and the new
   # one is stored and started.
+  #
+  # A node that has not answered a describe yet (still connecting, or
+  # discovered but unreachable) has nothing to store or serve, so it is left
+  # alone until its description arrives.
+  defp ensure_node_services(%{description: nil}), do: :ok
+
   defp ensure_node_services(node_state) do
     node_id = node_state.node_id
     running? = NodeSupervisor.services_running?(node_id)

@@ -14,6 +14,8 @@ defmodule SecantService.E2E.NodeReconnectTest do
   alias SecantService.NodeValues
   alias SecantService.SecNodes.SecNode
 
+  require Ash.Query
+
   @endpoint SecantServiceWeb.Endpoint
 
   @moduletag :frappy
@@ -109,6 +111,41 @@ defmodule SecantService.E2E.NodeReconnectTest do
     assert client_state(ctx.node_id).uuid == ctx.uuid
     assert NodeSupervisor.get_services_pid(ctx.node_id) == services_pid
     assert Ash.get!(SecNode, ctx.uuid).state == :active
+  end
+
+  test "a discovered node that never answers is not stored and does not block the dashboard",
+       ctx do
+    dead_port = FrappyServer.free_tcp_port()
+    dead_id = {@host, dead_port}
+
+    # like discovery: not manual, so the client keeps retrying
+    {:ok, _pid} =
+      SEC_Node_Supervisor.start_child(%{host: @host, port: dead_port, reconnect_backoff: 5000})
+
+    on_exit(fn -> stop_client(dead_id) end)
+    wait_for_client_state(dead_id, :disconnected)
+
+    NodeManager.sync_nodes()
+    :sys.get_state(NodeManager)
+
+    refute NodeSupervisor.services_running?(dead_id)
+    assert [] = SecNode |> Ash.Query.filter(port == ^dead_port) |> Ash.read!()
+
+    # the dashboard opens on the node that has data
+    {:ok, view, _html} = live(build_conn(), "/dashboard")
+    assert has_element?(view, "#uuid-#{ctx.uuid}")
+
+    # the dead node's tab shows a notice and keeps the other tabs reachable
+    {:ok, view, _html} = live(build_conn(), "/dashboard?node=127.0.0.1:#{dead_port}")
+    assert has_element?(view, "#node-unavailable")
+    assert has_element?(view, ~s([id="node-tab-127.0.0.1:#{ctx.tcp_port}"]))
+
+    view
+    |> element(~s([id="node-tab-127.0.0.1:#{ctx.tcp_port}"]))
+    |> render_click()
+
+    {path, _flash} = assert_redirect(view)
+    assert URI.decode(path) == "/dashboard?node=127.0.0.1:#{ctx.tcp_port}"
   end
 
   defp restart_frappy(ctx, opts) do
