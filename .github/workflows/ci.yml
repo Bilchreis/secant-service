@@ -67,5 +67,10 @@ jobs:
           docker logs postgres
           exit 1
 
+      # The end to end tests run a real SEC node: frappy's simulated cryostat.
+      # Same version as in test/support/frappy_server.ex.
+      - name: Install frappy
+        run: pipx install frappy-core==0.20.9
+
       - name: Test
         run: mix test

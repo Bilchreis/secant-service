@@ -28,6 +28,10 @@ config :secant_service, SecantServiceWeb.Endpoint,
   secret_key_base: "ifnc2osJzplwUj7akmZBq522GurBJer7DXPeyAVt2Ks8MD6dxsmP6vjcip0//TIa",
   server: false
 
+# Tests connect to the nodes they need themselves, so don't pick up whatever
+# SEC nodes happen to be on the network
+config :secant_client, start_node_discover: false
+
 # In test we don't send emails
 config :secant_service, SecantService.Mailer, adapter: Swoosh.Adapters.Test
 
