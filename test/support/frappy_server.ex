@@ -77,12 +77,12 @@ defmodule SecantService.FrappyServer do
     # frappy occasionally ignores SIGTERM; then kill it and, when it runs
     # through uvx, its python child
     try do
-      wait_until(5_000, "frappy to stop", fn -> not listening?(server.tcp_port) end)
+      wait_until(5_000, "frappy to stop", fn -> stopped?(server) end)
     rescue
       RuntimeError ->
         System.cmd("pkill", ["-KILL", "-P", pid], stderr_to_stdout: true)
         System.cmd("kill", ["-KILL", pid], stderr_to_stdout: true)
-        wait_until(5_000, "frappy to be killed", fn -> not listening?(server.tcp_port) end)
+        wait_until(5_000, "frappy to be killed", fn -> stopped?(server) end)
     end
 
     if Port.info(server.port), do: Port.close(server.port)
@@ -107,6 +107,11 @@ defmodule SecantService.FrappyServer do
         Process.sleep(100)
         do_wait_until(deadline, what, fun)
     end
+  end
+
+  defp stopped?(server) do
+    {_, status} = System.cmd("kill", ["-0", to_string(server.os_pid)], stderr_to_stdout: true)
+    status != 0 and not listening?(server.tcp_port)
   end
 
   defp listening?(tcp_port) do
