@@ -56,7 +56,7 @@ defmodule SecantService.NodeFixtures do
     }
   end
 
-  @doc "The state a `SEC_Node_Statem` holds after a successful handshake."
+  @doc "The state a `SecantClient.NodeStatem` holds after a successful handshake."
   def node_state(node_id, raw_description, uuid \\ Ecto.UUID.generate()) do
     {host, port} = node_id
 
@@ -68,7 +68,7 @@ defmodule SecantService.NodeFixtures do
       equipment_id: raw_description.equipment_id,
       reconnect_backoff: 5000,
       description:
-        SECoP_Parser.parse_node_description(raw_description, %{host: host, port: port}),
+        SecantClient.Parser.parse_node_description(raw_description, %{host: host, port: port}),
       raw_description: raw_description,
       active: true,
       uuid: uuid,
@@ -115,7 +115,7 @@ defmodule SecantService.NodeFixtures do
   machine in production.
   """
   def seed_node_table(node_id, raw_description) do
-    {:ok, table} = NodeTable.start(node_id)
+    {:ok, table} = SecantClient.NodeTable.start(node_id)
 
     for {module, %{accessibles: accessibles}} <- raw_description.modules,
         {param, _} <- accessibles do

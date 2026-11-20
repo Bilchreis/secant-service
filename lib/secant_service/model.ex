@@ -1,10 +1,8 @@
 defmodule SecantService.Model do
   require Logger
   alias SecantService.Model
-  alias SEC_Node_Supervisor
   use Phoenix.Component
 
-  alias NodeTable
   alias SecantService.NodeValues
   alias SecantService.NodeSupervisor
 
@@ -36,7 +34,7 @@ defmodule SecantService.Model do
 
   @spec get_initial_model() :: t()
   def get_initial_model() do
-    active_nodes = SEC_Node_Supervisor.get_active_nodes()
+    active_nodes = SecantClient.NodeSupervisor.get_active_nodes()
 
     active_nodes = Map.new(active_nodes, fn {node_id, node} -> {node_id, node_summary(node)} end)
 
@@ -63,7 +61,7 @@ defmodule SecantService.Model do
     :manual
   ]
 
-  @doc "The part of a SEC_Node_Statem state the node list needs."
+  @doc "The part of a SecantClient.NodeStatem state the node list needs."
   @spec node_summary(map()) :: map()
   def node_summary(node_state), do: Map.take(node_state, @node_summary_keys)
 

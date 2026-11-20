@@ -5,7 +5,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
 
   alias SecantService.NodeControl
   alias SecantServiceWeb.InFlight
-  alias NodeTable
+  alias SecantClient.NodeTable
   import SecantServiceWeb.CoreComponents
 
   import SecantServiceWeb.Components.ParameterFormFieldComponents

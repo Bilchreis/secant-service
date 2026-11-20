@@ -1,6 +1,6 @@
 defmodule SecantService.NodeControl do
   require Logger
-  alias SEC_Node_Statem
+  alias SecantClient.NodeStatem
   alias Jason
 
   # Add this helper function to convert string keys to atoms recursively
@@ -25,7 +25,7 @@ defmodule SecantService.NodeControl do
     parameter = unsigned_params["parameter"]
     value = unsigned_params["value"]
 
-    SEC_Node_Statem.change(nodeid, module, parameter, value)
+    NodeStatem.change(nodeid, module, parameter, value)
   end
 
   def execute_command(unsigned_params) do
@@ -36,7 +36,7 @@ defmodule SecantService.NodeControl do
     command = unsigned_params["command"]
     value = unsigned_params["value"]
 
-    SEC_Node_Statem.execute_command(nodeid, module, command, value)
+    NodeStatem.execute_command(nodeid, module, command, value)
   end
 
   defp get_datainfo_by_path(datainfo, ["value"]), do: datainfo

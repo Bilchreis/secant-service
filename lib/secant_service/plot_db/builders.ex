@@ -2,7 +2,7 @@ defmodule SecantService.PlotDB.Builders do
   alias SecantService.PlotDB.History
   alias SecantService.SecNodes.ParameterValue
   alias SecantService.SecNodes.Parameter
-  alias SEC_Node_Statem
+  alias SecantClient.NodeStatem
   require Logger
 
   # ---------------------------------------------------------------------------
@@ -110,7 +110,7 @@ defmodule SecantService.PlotDB.Builders do
   end
 
   defp read_until_valid(id, module_name, parameter_name) do
-    case SEC_Node_Statem.read(id, module_name, parameter_name) do
+    case NodeStatem.read(id, module_name, parameter_name) do
       {:reply, _r_mod, _r_para, [val, %{t: ts}]} ->
         val = val |> Jason.encode!() |> Jason.decode!()
 

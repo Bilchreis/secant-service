@@ -1,6 +1,6 @@
 defmodule SecantService.NodeValues do
   use GenServer
-  alias NodeTable
+  alias SecantClient.NodeTable
   require Logger
 
   @pubsub_name :secant_client_pubsub
