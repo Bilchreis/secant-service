@@ -287,11 +287,13 @@ defmodule SecantService.NodeManager do
     Phoenix.PubSub.broadcast(SecantService.PubSub, @services_topic, message)
   end
 
-  # Like SEC_Node_Supervisor.get_active_nodes/0, but one slow or dying node
+  # Like SecantClient.NodeSupervisor.get_active_nodes/0, but one slow or dying node
   # state machine can neither block nor crash the sync of all others.
   # Returns the states by node_id and the set of node_ids that did not answer.
   defp fetch_node_states do
-    Registry.select(Registry.SEC_Node_Statem, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+    Registry.select(SecantClient.Registry.NodeStatem, [
+      {{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}
+    ])
     |> Enum.reduce({%{}, MapSet.new()}, fn {node_id, pid}, {states, unreachable} ->
       case get_state(pid) do
         {:ok, state} -> {Map.put(states, state.node_id, state), unreachable}
@@ -302,7 +304,7 @@ defmodule SecantService.NodeManager do
   end
 
   defp fetch_node_state(node_id) do
-    case Registry.lookup(Registry.SEC_Node_Statem, node_id) do
+    case Registry.lookup(SecantClient.Registry.NodeStatem, node_id) do
       [{pid, _}] ->
         case get_state(pid) do
           {:ok, state} -> {:ok, state}

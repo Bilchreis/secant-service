@@ -5,7 +5,6 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
 
   alias SecantService.NodeControl
   alias SecantServiceWeb.InFlight
-  alias NodeTable
   import SecantServiceWeb.CoreComponents
 
   @impl true

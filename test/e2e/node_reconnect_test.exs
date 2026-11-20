@@ -35,7 +35,7 @@ defmodule SecantService.E2E.NodeReconnectTest do
     end)
 
     {:ok, _pid} =
-      SEC_Node_Supervisor.start_child(%{
+      SecantClient.NodeSupervisor.start_child(%{
         host: @host,
         port: tcp_port,
         manual: true,
@@ -104,7 +104,11 @@ defmodule SecantService.E2E.NodeReconnectTest do
 
     # like discovery: not manual, so the client keeps retrying
     {:ok, _pid} =
-      SEC_Node_Supervisor.start_child(%{host: @host, port: dead_port, reconnect_backoff: 5000})
+      SecantClient.NodeSupervisor.start_child(%{
+        host: @host,
+        port: dead_port,
+        reconnect_backoff: 5000
+      })
 
     on_exit(fn -> stop_client(dead_id) end)
     wait_for_client_state(dead_id, :disconnected)
@@ -160,14 +164,14 @@ defmodule SecantService.E2E.NodeReconnectTest do
   end
 
   defp client_state(node_id) do
-    [{pid, _}] = Registry.lookup(Registry.SEC_Node_Statem, node_id)
-    {:ok, state} = SEC_Node_Statem.get_state(pid)
+    [{pid, _}] = Registry.lookup(SecantClient.Registry.NodeStatem, node_id)
+    {:ok, state} = SecantClient.NodeStatem.get_state(pid)
     state
   end
 
   defp stop_client(node_id) do
-    case Registry.lookup(Registry.SEC_Node_Services, node_id) do
-      [{pid, _}] -> DynamicSupervisor.terminate_child(SEC_Node_Supervisor, pid)
+    case Registry.lookup(SecantClient.Registry.NodeServices, node_id) do
+      [{pid, _}] -> DynamicSupervisor.terminate_child(SecantClient.NodeSupervisor, pid)
       [] -> :ok
     end
   end

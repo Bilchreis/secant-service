@@ -11,7 +11,7 @@ defmodule SecantService.PlotDB do
 
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.Module
-  alias NodeTable
+  alias SecantClient.NodeTable
 
   @max_array_len 100
 

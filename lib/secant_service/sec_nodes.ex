@@ -26,12 +26,12 @@ defmodule SecantService.SecNodes do
   end
 
   @doc """
-  Imports a SEC_Node_Statem state into the database.
+  Imports a SecantClient.NodeStatem state into the database.
 
   This is the primary high-level function for persisting SECoP node descriptive data.
 
   ## Parameters
-  - `statem_state` - The state map from SEC_Node_Statem containing description and metadata
+  - `statem_state` - The state map from SecantClient.NodeStatem containing description and metadata
 
   ## Returns
   - `{:ok, sec_node}` - Successfully created SecNode record
@@ -39,7 +39,7 @@ defmodule SecantService.SecNodes do
 
   ## Examples
 
-      iex> {:ok, state} = SEC_Node_Statem.get_state(pid)
+      iex> {:ok, state} = SecantClient.NodeStatem.get_state(pid)
       iex> SecantService.Ash.SecNodes.import_statem_state(state)
       {:ok, %SecNode{equipment_id: "sim_gas_dosing", ...}}
   """

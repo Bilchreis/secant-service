@@ -3,15 +3,15 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
   alias SecantService.Model
   alias SecantClient
-  alias NodeDiscover
-  alias SEC_Node_Supervisor
+  alias SecantClient.NodeDiscover
+  alias SecantClient.NodeSupervisor
 
   alias SecantService.NodeManager
   alias SecantServiceWeb.DashboardComponents
   alias SecantServiceWeb.SECoPComponents
   require Logger
 
-  alias SEC_Node_Statem
+  alias SecantClient.NodeStatem
   import SecantServiceWeb.SECoPComponents
   import SecantServiceWeb.DashboardComponents
 
@@ -405,10 +405,10 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     Task.start(fn ->
       case active do
         true ->
-          SEC_Node_Statem.deactivate(node_id)
+          NodeStatem.deactivate(node_id)
 
         false ->
-          SEC_Node_Statem.activate(node_id)
+          NodeStatem.activate(node_id)
       end
     end)
 
@@ -514,7 +514,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       reconnect_backoff: 5000
     }
 
-    SEC_Node_Supervisor.start_child(opts)
+    NodeSupervisor.start_child(opts)
     {:noreply, socket}
   end
 

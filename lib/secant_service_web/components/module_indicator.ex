@@ -3,7 +3,7 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
 
   require Logger
 
-  alias NodeTable
+  alias SecantClient.NodeTable
   alias SecantService.Util
   alias SecantService.NodeValues
   alias SecantServiceWeb.SECoPComponents

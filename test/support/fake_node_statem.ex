@@ -1,17 +1,17 @@
 defmodule SecantService.FakeNodeStatem do
   @moduledoc """
-  Stands in for a `SEC_Node_Statem` in tests.
+  Stands in for a `SecantClient.NodeStatem` in tests.
 
-  It registers under the node_id in `Registry.SEC_Node_Statem`, exactly like
+  It registers under the node_id in `SecantClient.Registry.NodeStatem`, exactly like
   the real state machine, and answers `:get_state`. That is all the service
-  side uses (`SEC_Node_Supervisor.get_active_nodes/0`, NodeManager), so tests
+  side uses (`SecantClient.NodeSupervisor.get_active_nodes/0`, NodeManager), so tests
   control what the client "knows" about a node without any TCP connection.
   """
   use GenServer
 
   def start_link({node_id, state, opts}) do
     GenServer.start_link(__MODULE__, {state, opts},
-      name: {:via, Registry, {Registry.SEC_Node_Statem, node_id}}
+      name: {:via, Registry, {SecantClient.Registry.NodeStatem, node_id}}
     )
   end
 
@@ -24,7 +24,7 @@ defmodule SecantService.FakeNodeStatem do
   @doc "Make `:get_state` block for `ms`, like a state machine stuck in a handshake."
   def set_delay(node_id, ms), do: GenServer.call(via(node_id), {:set_delay, ms})
 
-  defp via(node_id), do: {:via, Registry, {Registry.SEC_Node_Statem, node_id}}
+  defp via(node_id), do: {:via, Registry, {SecantClient.Registry.NodeStatem, node_id}}
 
   @impl true
   def init({state, opts}), do: {:ok, %{node_state: state, delay: Keyword.get(opts, :delay, 0)}}

@@ -3,15 +3,15 @@ defmodule SecantService.DescribeMessageTransformer do
   require Logger
 
   @moduledoc """
-  Transforms SEC_Node_Statem state into database-ready format for Ash resources.
+  Transforms SecantClient.NodeStatem state into database-ready format for Ash resources.
   Pure transformation logic with no database interaction.
   """
 
   @doc """
-  Transforms a SEC_Node_Statem state into the format expected by SecNode Ash resource.
+  Transforms a SecantClient.NodeStatem state into the format expected by SecNode Ash resource.
 
   ## Parameters
-  - `statem_state` - The state map from SEC_Node_Statem containing:
+  - `statem_state` - The state map from SecantClient.NodeStatem containing:
     - `:host` - Host address
     - `:port` - Port number
     - `:equipment_id` - Equipment identifier
