@@ -1,7 +1,8 @@
 defmodule SecantServiceWeb.Components.ValueDisplay do
   @moduledoc """
   How a parameter value looks, chosen from its datainfo only: scalars, enums
-  as badges, structs field by field, arrays as a compact list.
+  as badges, structs field by field, arrays as a list, a spectrum or a
+  summary depending on type and length.
   """
   use Phoenix.Component
 

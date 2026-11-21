@@ -13,6 +13,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
   alias SecantClient.NodeStatem
   import SecantServiceWeb.SECoPComponents
+  import SecantServiceWeb.DashboardComponents, only: [conn_state: 1]
   import SecantServiceWeb.DashboardComponents.NodeTabs
   import SecantServiceWeb.DashboardComponents.NodeHeader
   import SecantServiceWeb.DashboardComponents.ModuleRail

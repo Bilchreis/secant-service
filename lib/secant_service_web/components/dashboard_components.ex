@@ -1,6 +1,6 @@
 defmodule SecantServiceWeb.DashboardComponents do
   @moduledoc """
-  Shared helpers of the node views: module grouping and sorting, ids.
+  Shared helpers of the node views: module grouping, ids, connection state.
 
   The components themselves are split by part of the page:
   `NodeTabs` (live node tabs and handshake), `NodeHeader`, `ModuleRail`,
@@ -8,11 +8,10 @@ defmodule SecantServiceWeb.DashboardComponents do
   panel). The live dashboard and the data browser share the header, the rail
   and the detail panel; the card grid is live only.
 
-  Everything is rendered from the node's self-description, so nothing here
-  may assume a particular module or parameter beyond what SECoP defines
-  (`value`, `target`, `status`, `stop`, `go`).
+  Everything is rendered from the node's self-description, so none of these
+  components may assume a particular module or parameter beyond what SECoP
+  defines (`value`, `target`, `status`, `stop`, `go`).
   """
-  alias SecantService.Acquisition
   alias SecantService.Util
 
   @doc """
@@ -38,8 +37,7 @@ defmodule SecantServiceWeb.DashboardComponents do
   end
 
   # "contr10" sorts after "contr9"
-  @doc false
-  def natural_key(name) do
+  defp natural_key(name) do
     ~r/(\d+)/
     |> Regex.split(String.downcase(name), include_captures: true, trim: true)
     |> Enum.map(fn part ->
@@ -65,18 +63,6 @@ defmodule SecantServiceWeb.DashboardComponents do
     end
   end
 
-  # value, target and status first, then the rest in description order
-  @doc false
-  def sort_parameters(parameters) do
-    order = %{"value" => 0, "target" => 1, "status" => 2}
-    Enum.sort_by(parameters, fn p -> Map.get(order, p.name, 3) end)
-  end
-
-  @doc false
-  def acq_channels(module, modules) do
-    if Acquisition.controller?(module), do: Acquisition.channels(module, modules), else: []
-  end
-
   @doc false
   def class_label(nil), do: "module"
   def class_label(class), do: class
@@ -89,11 +75,8 @@ defmodule SecantServiceWeb.DashboardComponents do
   def sparkline_id(node, module_name),
     do: "spark:#{node.uuid}:#{node.host}:#{node.port}:#{module_name}"
 
-  # descriptions often contain blank lines; keep line breaks, drop the gaps
-  @doc false
-  def compact_text(text) do
-    text
-    |> String.trim()
-    |> String.replace(~r/\n\s*\n+/, "\n")
-  end
+  @doc "Combined connection state: :initialized (live), :paused or the raw disconnected state."
+  def conn_state(%{state: :initialized, active: false}), do: :paused
+  def conn_state(%{state: state}), do: state
+  def conn_state(_), do: :disconnected
 end
