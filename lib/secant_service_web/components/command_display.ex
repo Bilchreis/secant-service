@@ -71,7 +71,7 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
           |> assign(:command_success, "error")
           |> assign(:last_result, {:error, "#{error_class}: #{error_text}"})
 
-        {:error, reason} when reason in [:disconnected, :uninitialized] ->
+        {:error, reason} when reason in [:disconnected, :uninitialized, :not_connected] ->
           send(
             self(),
             {:put_flash,
