@@ -6,7 +6,7 @@ defmodule SecantService.NodeDBWriterTest do
   """
   use SecantService.NodeCase, async: false
 
-  alias SecantService.SecNodes
+  alias SecantService.{NodeDBWriter, SecNodes}
   alias SecantService.SecNodes.Reading.Storage
 
   @desc %{"temp" => ["value", "status"]}
@@ -107,5 +107,60 @@ defmodule SecantService.NodeDBWriterTest do
              {1_700_000_200, 7.0},
              {1_700_000_201, 7.0}
            ]
+  end
+
+  describe "writing" do
+    # logs the failed writes
+    @tag :capture_log
+    test "a batch the database could not take is retried until it is stored",
+         %{node_id: node_id, uuid: uuid, temp: temp} do
+      eventually(fn -> length(SecNodes.readings!(temp)) == 1 end)
+      failures = :counters.new(1, [])
+
+      failing = fn rows ->
+        if :counters.get(failures, 1) < 2 do
+          :counters.add(failures, 1, 1)
+          raise DBConnection.ConnectionError, "connection not available"
+        else
+          SecNodes.insert_readings(rows)
+        end
+      end
+
+      Application.put_env(:secant_service, :insert_readings, failing)
+      Application.put_env(:secant_service, :writer_retry_delay, 10)
+
+      on_exit(fn ->
+        Application.delete_env(:secant_service, :insert_readings)
+        Application.delete_env(:secant_service, :writer_retry_delay)
+      end)
+
+      send_value_update(node_id, "temp", "value", [5.0, %{t: 1_700_000_100.0}])
+      send_value_update(node_id, "temp", "value", [6.0, %{t: 1_700_000_101.0}])
+
+      assert flush_and_read(uuid, temp, 3) == [
+               {1_700_000_000, 1.0},
+               {1_700_000_100, 5.0},
+               {1_700_000_101, 6.0}
+             ]
+
+      assert :counters.get(failures, 1) == 2
+    end
+
+    # logs the dropped reading
+    @tag :capture_log
+    test "only the readings the database rejects are dropped", %{temp: temp} do
+      eventually(fn -> length(SecNodes.readings!(temp)) == 1 end)
+      gone = %{temp | id: -1}
+
+      rows =
+        for {parameter, t} <- [{temp, 1}, {gone, 2}, {temp, 3}, {temp, 4}, {gone, 5}] do
+          Storage.to_row(t * 1.0, parameter, 1_700_000_000.0 + t, %{})
+        end
+
+      assert NodeDBWriter.insert(rows) == {:ok, 2}
+
+      assert temp |> SecNodes.readings!() |> Enum.map(&Storage.raw_value/1) |> Enum.sort() ==
+               [1.0, 1.0, 3.0, 4.0]
+    end
   end
 end

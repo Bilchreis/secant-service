@@ -7,6 +7,10 @@ defmodule SecantService.SecNodes.Reading.Storage do
   declared type (a node sending a float for an `int`, say) is not dropped or
   coerced: it is kept as it was sent in `value_json`. Reading a value back
   therefore never needs the datainfo; it is whichever column is set.
+
+  Postgres text and jsonb cannot hold a NUL character. A value (or
+  qualifiers) containing one is stored as its JSON text instead, which
+  escapes it as `\\u0000`, and decoded again when read.
   """
 
   alias SecantService.SecNodes.{Parameter, Reading}
@@ -57,6 +61,7 @@ defmodule SecantService.SecNodes.Reading.Storage do
   @doc "The value of a reading, as the node sent it."
   def raw_value(%Reading{} = reading) do
     case Enum.find_value(Reading.value_columns(), &value_of(reading, &1)) do
+      {:json, %{"json" => text}} -> Jason.decode!(text)
       {:json, %{"value" => value}} -> value
       {:json, value} -> value
       {_column, value} -> value
@@ -132,12 +137,18 @@ defmodule SecantService.SecNodes.Reading.Storage do
   defp place(raw, datainfo) do
     column = column(datainfo)
 
-    if fits?(column, raw) do
-      {column, cast(column, raw)}
-    else
-      {:value_json, %{"type" => datainfo["type"], "value" => raw}}
+    cond do
+      nul?(raw) -> {:value_json, %{"type" => datainfo["type"], "json" => Jason.encode!(raw)}}
+      fits?(column, raw) -> {column, cast(column, raw)}
+      true -> {:value_json, %{"type" => datainfo["type"], "value" => raw}}
     end
   end
+
+  # whether a NUL character is in any string of the value
+  defp nul?(v) when is_binary(v), do: :binary.match(v, <<0>>) != :nomatch
+  defp nul?(v) when is_list(v), do: Enum.any?(v, &nul?/1)
+  defp nul?(v) when is_map(v), do: Enum.any?(v, fn {k, v} -> nul?(k) or nul?(v) end)
+  defp nul?(_v), do: false
 
   defp fits?(:value_float, v), do: float?(v)
   defp fits?(:value_int, v), do: int64?(v)
@@ -158,7 +169,11 @@ defmodule SecantService.SecNodes.Reading.Storage do
   defp cast(:value_json, v), do: %{"value" => v}
   defp cast(_column, v), do: v
 
-  defp drop_t(qualifiers) when is_map(qualifiers), do: Map.drop(qualifiers, [:t, "t"])
+  defp drop_t(qualifiers) when is_map(qualifiers) do
+    qualifiers = Map.drop(qualifiers, [:t, "t"])
+    if nul?(qualifiers), do: %{"json" => Jason.encode!(qualifiers)}, else: qualifiers
+  end
+
   defp drop_t(qualifiers), do: %{"unexpected" => inspect(qualifiers)}
 
   defp to_datetime(%DateTime{} = dt), do: dt

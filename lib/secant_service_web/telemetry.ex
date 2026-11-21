@@ -51,6 +51,19 @@ defmodule SecantServiceWeb.Telemetry do
         unit: {:native, :millisecond}
       ),
 
+      # Recording (SecantService.NodeDBWriter)
+      summary("secant_service.node_db_writer.write.duration",
+        unit: {:native, :millisecond},
+        description: "Time to store one batch of readings"
+      ),
+      sum("secant_service.node_db_writer.write.rows", description: "Readings written"),
+      sum("secant_service.node_db_writer.write.dropped",
+        description: "Readings the database rejected"
+      ),
+      sum("secant_service.node_db_writer.overflow.dropped",
+        description: "Readings dropped from a full buffer"
+      ),
+
       # Database Metrics
       summary("secant_service.repo.query.total_time",
         unit: {:native, :millisecond},

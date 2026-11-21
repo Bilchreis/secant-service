@@ -24,6 +24,8 @@ defmodule SecantService.Application do
       {Registry, keys: :unique, name: Registry.NodeValues},
       {Registry, keys: :unique, name: Registry.NodeServices},
       {Registry, keys: :unique, name: Registry.PlotCache},
+      # the NodeDBWriters' writes
+      {Task.Supervisor, name: SecantService.TaskSupervisor},
       SecantClient.Supervisor,
       {SecantService.NodeSupervisor, []}
     ]
