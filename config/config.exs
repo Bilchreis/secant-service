@@ -12,14 +12,15 @@ config :ash_oban, pro?: false
 config :secant_service, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
-  plugins: [{Oban.Plugins.Cron, []}],
+  # Lifeline: a job left "executing" by a hard kill would otherwise block
+  # every later job of its trigger for that record
+  plugins: [{Oban.Plugins.Cron, []}, {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(30)}],
   queues: [
     default: 10,
     sec_node_cleanup_old_nodes: 10,
     sec_node_purge_trashed_nodes: 10,
     sec_node_recalculate_storage_active: 10,
-    sec_node_recalculate_storage_on_archive: 10,
-    sec_node_sync_node_states: 10
+    sec_node_recalculate_storage_on_archive: 10
   ],
   repo: SecantService.Repo
 

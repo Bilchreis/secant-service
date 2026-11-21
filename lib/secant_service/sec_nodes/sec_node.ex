@@ -43,15 +43,6 @@ defmodule SecantService.SecNodes.SecNode do
 
   oban do
     triggers do
-      trigger :sync_node_states do
-        scheduler_cron "0 * * * *"
-        action :sync_node_state
-        where expr(state == :active)
-        read_action :read_for_state_transition
-        worker_module_name SecantService.SecNodes.SecNode.AshOban.Worker.SyncNodeStates
-        scheduler_module_name SecantService.SecNodes.SecNode.AshOban.Scheduler.SyncNodeStates
-      end
-
       trigger :recalculate_storage_on_archive do
         scheduler_cron "0 * * * *"
         action :finish_archiving
@@ -97,9 +88,12 @@ defmodule SecantService.SecNodes.SecNode do
     initial_states [:active]
     default_initial_state :active
 
+    # Only SecantService.NodeManager moves a session out of :active (when
+    # its services stop) or back into it (when the node still reports that
+    # session's uuid, which it must keep recording).
     transitions do
-      transition :sync_node_state, from: :active, to: :processed
       transition :archive, from: :active, to: :processed
+      transition :reactivate, from: [:processed, :archived, :trashed], to: :active
       transition :finish_archiving, from: :processed, to: :archived
       transition :trash, from: [:archived, :processed], to: :trashed
       transition :restore, from: :trashed, to: :archived
@@ -163,6 +157,19 @@ defmodule SecantService.SecNodes.SecNode do
               )
     end
 
+    # The sessions marked as recording, for the NodeManager to compare with
+    # the services that actually run
+    read :active do
+      filter expr(state == :active)
+    end
+
+    # The ended sessions among `uuids`, for the NodeManager to reactivate
+    # those that are still live
+    read :ended_among do
+      argument :uuids, {:array, :uuid}, allow_nil?: false
+      filter expr(uuid in ^arg(:uuids) and state != :active)
+    end
+
     # Read action for cleanup trigger with keyset pagination
     read :read_for_cleanup do
       pagination keyset?: true, required?: false
@@ -170,17 +177,6 @@ defmodule SecantService.SecNodes.SecNode do
       prepare build(
                 load: [
                   :should_cleanup
-                ]
-              )
-    end
-
-    read :read_for_state_transition do
-      pagination keyset?: true, required?: false
-
-      prepare build(
-                load: [
-                  :should_cleanup,
-                  :should_purge
                 ]
               )
     end
@@ -258,11 +254,8 @@ defmodule SecantService.SecNodes.SecNode do
       change transition_state(:archived)
     end
 
-    update :sync_node_state do
-      accept []
-      require_atomic? false
-
-      change SecantService.SecNodes.Changes.SyncNodeState
+    update :reactivate do
+      change transition_state(:active)
     end
 
     # processed -> archived: the final storage count of a finished session
@@ -274,6 +267,9 @@ defmodule SecantService.SecNodes.SecNode do
 
       change SecantService.SecNodes.Changes.RecalculateSecNodeStorage
       change transition_state(:archived)
+      # The state is checked on the record as it was read, before the
+      # recount. Reactivated meanwhile, the session must stay active.
+      change filter(expr(state == :processed))
     end
 
     # Hourly storage count of a session that is still recording

@@ -8,6 +8,8 @@ defmodule SecantService.NodeManagerTest do
 
   require Ash.Query
 
+  alias SecantService.SecNodes
+
   @desc_a %{"temp" => ["value", "status", "target"], "press" => ["value", "status"]}
   # "press" removed, "flow" added, "temp" gained a parameter
   @desc_b %{"temp" => ["value", "status", "target", "ramp"], "flow" => ["value", "status"]}
@@ -228,6 +230,122 @@ defmodule SecantService.NodeManagerTest do
       assert served_modules(node_id) == sorted(@desc_b)
     end
   end
+
+  describe "sessions" do
+    # Sessions end only when their services stop. The hourly job that used to
+    # end "sessions without services" asked each node's NodeValues; when one
+    # was busy or restarting it archived a session that kept recording, and
+    # cleanup later deleted it.
+
+    test "a session left active by a previous run is archived" do
+      {:ok, stale} =
+        SecNodes.upsert_sec_node(%{
+          uuid: Ecto.UUID.generate(),
+          equipment_id: "previous_run",
+          host: "localhost",
+          port: 1
+        })
+
+      assert :ok = NodeManager.sync_nodes!()
+      assert record_state(stale.uuid) == :processed
+    end
+
+    test "a busy node process does not end its session", %{node_id: node_id} do
+      state = connect(node_id, @desc_a)
+      [{node_values, _}] = Registry.lookup(Registry.NodeValues, node_id)
+
+      :sys.suspend(node_values)
+
+      try do
+        assert :ok = NodeManager.sync_nodes!()
+        AshOban.Test.schedule_and_run_triggers(SecNode)
+      after
+        :sys.resume(node_values)
+      end
+
+      assert record_state(state.uuid) == :active
+    end
+
+    test "a live session whose services stopped is restarted, not archived",
+         %{node_id: node_id} do
+      state = connect(node_id, @desc_a)
+      NodeSupervisor.stop_node_services(node_id)
+
+      assert :ok = NodeManager.sync_nodes!()
+
+      assert_receive {:node_services_ready, ^node_id, uuid}, 5_000
+      assert uuid == state.uuid
+      assert record_state(state.uuid) == :active
+      writer_idle(uuid)
+    end
+
+    for ended <- [:processed, :archived, :trashed] do
+      test "a #{ended} session the node still reports is reactivated", %{node_id: node_id} do
+        state = connect(node_id, @desc_a)
+        NodeSupervisor.stop_node_services(node_id)
+        end_session(state.uuid, unquote(ended))
+
+        assert :ok = NodeManager.sync_nodes!()
+
+        assert_receive {:node_services_ready, ^node_id, _}, 5_000
+        assert NodeSupervisor.running_uuid(node_id) == state.uuid
+        assert record_state(state.uuid) == :active
+        assert [_] = active_records(node_id)
+        writer_idle(state.uuid)
+      end
+    end
+
+    test "a session ended while its services run is reactivated", %{node_id: node_id} do
+      state = connect(node_id, @desc_a)
+      end_session(state.uuid, :archived)
+
+      assert :ok = NodeManager.sync_nodes!()
+
+      assert record_state(state.uuid) == :active
+    end
+
+    test "archiving that finishes after a reactivation leaves the session active",
+         %{node_id: node_id} do
+      state = connect(node_id, @desc_a)
+      NodeSupervisor.stop_node_services(node_id)
+      # as the archiving job read it
+      processed = end_session(state.uuid, :processed)
+
+      assert :ok = NodeManager.sync_nodes!()
+      assert_receive {:node_services_ready, ^node_id, _}, 5_000
+
+      assert {:error, _} = Ash.update(processed, %{}, action: :finish_archiving)
+      AshOban.Test.schedule_and_run_triggers(SecNode)
+      assert record_state(state.uuid) == :active
+      writer_idle(state.uuid)
+    end
+
+    # logs the expected timeout
+    @tag :capture_log
+    test "the session of a node that does not answer is left alone", %{node_id: node_id} do
+      state = connect(node_id, @desc_a)
+      NodeSupervisor.stop_node_services(node_id)
+      FakeNodeStatem.set_delay(node_id, 1_000)
+
+      NodeManager.sync_nodes!()
+
+      assert record_state(state.uuid) == :active
+    end
+  end
+
+  defp end_session(uuid, state) do
+    processed = uuid |> SecNodes.get_sec_node!() |> SecNodes.archive_sec_node!()
+
+    case state do
+      :processed -> processed
+      :archived -> Ash.update!(processed, %{}, action: :finish_archiving)
+      :trashed -> processed |> SecNodes.trash_sec_node!()
+    end
+  end
+
+  # The new writer stores the initial values first; let it finish before the
+  # test (and its sandbox) ends.
+  defp writer_idle(uuid), do: :sys.get_state({:via, Registry, {Registry.NodeDBWriter, uuid}})
 
   describe "robustness" do
     # logs the expected timeout / start failure

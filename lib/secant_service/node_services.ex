@@ -2,7 +2,6 @@ defmodule SecantService.NodeSupervisor do
   # Automatically defines child_spec/1
   require Logger
   use DynamicSupervisor
-  alias SecantService.NodeValues
 
   def start_link(init_arg) do
     DynamicSupervisor.start_link(__MODULE__, init_arg, name: __MODULE__)
@@ -37,24 +36,21 @@ defmodule SecantService.NodeSupervisor do
     end
   end
 
-  # node_id
-  def services_running?({host, port}) do
-    get_services_pid({host, port}) != nil
-  end
-
-  # uuid
-  def services_running?(uuid) do
-    MapSet.member?(list_uuid_services(), uuid)
-  end
+  @doc "Whether services run for a node (`{host, port}`) or a session (uuid)."
+  def services_running?({_host, _port} = node_id), do: get_services_pid(node_id) != nil
+  def services_running?(uuid), do: MapSet.member?(running_uuids(), uuid)
 
   @doc """
   The uuid of the SecNode record the running services of `node_id` were started
-  from, or `nil` if no services are running (or they are mid-restart).
+  from, or `nil` if no services are running.
+
+  The uuid is the value of the services' Registry entry, so this never waits
+  on a node process: it answers the same while a child is busy or restarting.
   """
   def running_uuid(node_id) do
-    case NodeValues.get_node_db(node_id) do
-      {:ok, node_db} -> node_db.uuid
-      {:error, _} -> nil
+    case Registry.lookup(Registry.NodeServices, node_id) do
+      [{_pid, uuid}] -> uuid
+      [] -> nil
     end
   end
 
@@ -69,14 +65,10 @@ defmodule SecantService.NodeSupervisor do
     Registry.select(Registry.NodeServices, [{{:"$1", :_, :_}, [], [:"$1"]}])
   end
 
-  def list_uuid_services() do
-    list_node_id_services()
-    |> Enum.reduce(MapSet.new(), fn node_id, acc ->
-      case NodeValues.get_node_db(node_id) do
-        {:ok, node_db} -> MapSet.put(acc, node_db.uuid)
-        {:error, _} -> acc
-      end
-    end)
+  @doc "The uuids of all sessions that have running services."
+  def running_uuids() do
+    Registry.select(Registry.NodeServices, [{{:_, :_, :"$1"}, [], [:"$1"]}])
+    |> MapSet.new()
   end
 end
 
@@ -95,7 +87,8 @@ defmodule SecantService.NodeServices do
 
   def start_link(node_db) do
     Supervisor.start_link(__MODULE__, node_db,
-      name: {:via, Registry, {Registry.NodeServices, node_db.node_id}}
+      # the uuid is the entry's value: see NodeSupervisor.running_uuid/1
+      name: {:via, Registry, {Registry.NodeServices, node_db.node_id, node_db.uuid}}
     )
   end
 
