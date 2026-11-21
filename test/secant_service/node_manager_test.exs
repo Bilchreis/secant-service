@@ -47,9 +47,29 @@ defmodule SecantService.NodeManagerTest do
     test "starts a plot cache for every parameter", %{node_id: node_id} do
       connect(node_id, @desc_a)
 
-      for {module, params} <- @desc_a, param <- params do
-        assert [_] = Registry.lookup(Registry.PlotCache, {node_id, module, param})
-      end
+      expected =
+        for {module, params} <- @desc_a, param <- params, into: MapSet.new(), do: {module, param}
+
+      assert PlotCache.parameters(node_id) == expected
+    end
+
+    test "batches live values for the plots", %{node_id: node_id} do
+      connect(node_id, @desc_a)
+      Phoenix.PubSub.subscribe(SecantService.PubSub, "plot_data:#{topic(node_id)}")
+
+      send_value_update(node_id, "temp", "value", [1.0, %{t: 1_700_000_001.0}])
+      send_value_update(node_id, "temp", "value", [2.0, %{t: 1_700_000_002.0}])
+      send_value_update(node_id, "press", "value", [3.0, %{t: 1_700_000_003.0}])
+      # not in the description: dropped
+      send_value_update(node_id, "nope", "value", [4.0, %{t: 1_700_000_004.0}])
+      :ok = PlotCache.flush(node_id)
+
+      assert_receive {:plot_data, batch}
+
+      assert Enum.sort(batch) == [
+               {"press", "value", [[3.0, %{t: 1_700_000_003.0}]]},
+               {"temp", "value", [[1.0, %{t: 1_700_000_001.0}], [2.0, %{t: 1_700_000_002.0}]]}
+             ]
     end
 
     test "that is still handshaking (no description) is skipped", %{node_id: node_id} do
@@ -96,10 +116,10 @@ defmodule SecantService.NodeManagerTest do
       change_description(node_id, raw_description("eq-b", @desc_b))
       assert_receive {:node_services_ready, ^node_id, _}, 5_000
 
-      assert [_] = Registry.lookup(Registry.PlotCache, {node_id, "flow", "value"})
-      assert [_] = Registry.lookup(Registry.PlotCache, {node_id, "temp", "ramp"})
-
-      eventually(fn -> Registry.lookup(Registry.PlotCache, {node_id, "press", "value"}) == [] end)
+      parameters = PlotCache.parameters(node_id)
+      assert {"flow", "value"} in parameters
+      assert {"temp", "ramp"} in parameters
+      refute {"press", "value"} in parameters
     end
 
     test "values of newly added parameters reach the services", %{node_id: node_id} do
@@ -232,19 +252,20 @@ defmodule SecantService.NodeManagerTest do
     test "a failed restart is retried until the new services run", %{node_id: node_id} do
       connect(node_id, @desc_a)
 
-      # Something still holds the name of a plot cache of the new description,
+      # Something still holds the name of the DB writer of the new session,
       # so starting the new services fails...
       test_pid = self()
+      new_uuid = Ecto.UUID.generate()
 
       blocker =
         spawn(fn ->
-          Registry.register(Registry.PlotCache, {node_id, "flow", "value"}, nil)
+          Registry.register(Registry.NodeDBWriter, new_uuid, nil)
           send(test_pid, :registered)
           Process.sleep(:infinity)
         end)
 
       assert_receive :registered
-      new = change_description(node_id, raw_description("eq-b", @desc_b))
+      new = change_description(node_id, raw_description("eq-b", @desc_b), new_uuid)
       flush_node_manager()
       refute_received {:node_services_ready, ^node_id, _}
 

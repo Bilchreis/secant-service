@@ -1,6 +1,8 @@
 defmodule SecantServiceWeb.DashboardLive.Index do
   use SecantServiceWeb, :live_view
 
+  @value_flush_ms 250
+
   alias SecantService.Model
   alias SecantClient
   alias SecantClient.NodeDiscover
@@ -338,54 +340,54 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     {:noreply, socket}
   end
 
+  # Live values are buffered and pushed to the widgets at most every
+  # @value_flush_ms, keeping only the latest value per parameter. A node that
+  # publishes hundreds of updates per second then costs a few diffs per
+  # second per viewer instead of one diff per update.
   @impl true
   def handle_info({:value_update, :updated, module, accessible, data_report}, socket) do
+    pending = socket.private[:pending_values] || %{}
+
+    if map_size(pending) == 0 do
+      Process.send_after(self(), :flush_values, @value_flush_ms)
+    end
+
+    {:noreply,
+     put_private(socket, :pending_values, Map.put(pending, {module, accessible}, data_report))}
+  end
+
+  def handle_info(:flush_values, socket) do
+    pending = socket.private[:pending_values] || %{}
+    socket = put_private(socket, :pending_values, %{})
     values = socket.assigns.values
 
-    if is_map(values) and Map.has_key?(values, module) do
-      node_id_str =
-        "#{to_string(socket.assigns.current_node.host)}:#{socket.assigns.current_node.port}"
+    socket =
+      case socket.assigns.current_node do
+        %{host: host, port: port} when is_map(values) ->
+          node_id_str = "#{host}:#{port}"
 
-      update_components(
-        node_id_str,
-        module,
-        accessible,
-        data_report
-      )
+          Enum.reduce(pending, socket, fn {{module, accessible}, data_report}, socket ->
+            if Map.has_key?(values, module) do
+              update_components(node_id_str, module, accessible, data_report)
+              put_status_color(socket, module, accessible, data_report)
+            else
+              socket
+            end
+          end)
 
-      socket =
-        case {accessible, data_report} do
-          {"status", %{stat_color: color}} ->
-            assign(socket, :status_map, Map.put(socket.assigns.status_map, module, color))
+        _ ->
+          socket
+      end
 
-          _ ->
-            socket
-        end
-
-      {:noreply, socket}
-    else
-      {:noreply, socket}
-    end
+    {:noreply, socket}
   end
 
   @impl true
-  def handle_info({:plot_data, module, accessible, data_report}, socket) do
+  def handle_info({:plot_data, batch}, socket) do
     %{current_node: node, selected_module: selected, plot_param: plot_param} = socket.assigns
 
-    if node && accessible in ["value", "target"] do
-      send_update(SecantServiceWeb.Components.Sparkline,
-        id: DashboardComponents.sparkline_id(node, module),
-        append: data_report,
-        series: accessible
-      )
-    end
-
-    if node && module == selected do
-      send_update(SecantServiceWeb.Components.HistoryDB,
-        id: plot_id(node, module, plot_param),
-        value_update: data_report,
-        parameter: accessible
-      )
+    for {module, accessible, data_report} <- batch do
+      push_plot_data(node, selected, plot_param, module, accessible, data_report)
     end
 
     {:noreply, socket}
@@ -580,6 +582,29 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       id: "parameter_value:" <> node_id_str <> ":" <> module <> ":" <> accessible,
       value_update: data_report
     )
+  end
+
+  defp put_status_color(socket, module, "status", %{stat_color: color}),
+    do: assign(socket, :status_map, Map.put(socket.assigns.status_map, module, color))
+
+  defp put_status_color(socket, _module, _accessible, _data_report), do: socket
+
+  defp push_plot_data(node, selected, plot_param, module, accessible, data_report) do
+    if node && accessible in ["value", "target"] do
+      send_update(SecantServiceWeb.Components.Sparkline,
+        id: DashboardComponents.sparkline_id(node, module),
+        append: data_report,
+        series: accessible
+      )
+    end
+
+    if node && module == selected do
+      send_update(SecantServiceWeb.Components.HistoryDB,
+        id: plot_id(node, module, plot_param),
+        value_update: data_report,
+        parameter: accessible
+      )
+    end
   end
 
   # goal progress on the acquisition channel tiles

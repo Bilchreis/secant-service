@@ -88,9 +88,8 @@ defmodule SecantService.NodeServices do
   Supervisor for all processes related to a specific SEC Node, including:
   - NodeValues: Buffering and caching of incoming node values
   - DBWriter: Process responsible for writing node values to the database
-  - PlotCacheSupervisor: Supervisor for the plot cache processes of this node
-    - this entails a process for each parameter of the SEC node, started with it
-    - sends updates to the liveview plot components only every x seconds to reduce the number of updates
+  - PlotCache: collects live values and sends them to the dashboard plots in
+    one batch every few seconds
 
   """
 
@@ -108,11 +107,8 @@ defmodule SecantService.NodeServices do
       # Buffer process for this specific node
       {SecantService.NodeValues, node_db},
 
-      # Supervisor for parameter plot caches (one per parameter)
-      {SecantService.PlotCacheSupervisor, node_db},
-
-      # Dispatcher process for plot cache updates
-      {SecantService.PlotCacheDispatcher, node_db.node_id},
+      # Batches live values for the dashboard plots
+      {SecantService.PlotCache, node_db},
 
       # DB Writer process for this specific node
       {SecantService.NodeDBWriter, node_db}

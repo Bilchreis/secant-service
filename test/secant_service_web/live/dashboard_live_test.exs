@@ -106,6 +106,18 @@ defmodule SecantServiceWeb.DashboardLiveTest do
     assert has_element?(view, "#inspector")
   end
 
+  test "a burst of value updates ends on the latest value",
+       %{conn: conn, node_id: node_id, path: path} do
+    connect_and_wait(node_id, @desc_a)
+    view = open_dashboard(conn, path)
+
+    for i <- 1..50,
+        do: send_value_update(node_id, "temp", "value", [i + 0.5, %{t: 1_700_000_000.0 + i}])
+
+    assert eventually(fn -> render(view) =~ "50.5" end)
+    refute render(view) =~ "49.5"
+  end
+
   test "a status error report is shown and keeps the page alive",
        %{conn: conn, node_id: {host, port} = node_id, path: path} do
     connect_and_wait(node_id, @desc_a)
