@@ -1,5 +1,8 @@
 defmodule SecantServiceWeb.DashboardComponents.NodeHeader do
-  @moduledoc "Header of a node: name, description, connection state (live and historical)."
+  @moduledoc """
+  Header of a node: name, description, connection state (live and
+  historical), and the banner shown while its values are not live.
+  """
   use Phoenix.Component
 
   alias SecantService.Util
@@ -119,11 +122,6 @@ defmodule SecantServiceWeb.DashboardComponents.NodeHeader do
     """
   end
 
-  @doc "Combined connection state: :initialized (live), :paused or the raw disconnected state."
-  def conn_state(%{state: :initialized, active: false}), do: :paused
-  def conn_state(%{state: state}), do: state
-  def conn_state(_), do: :disconnected
-
   attr :conn_state, :atom, required: true
 
   @doc "Warns that the values on screen are not live."
@@ -160,5 +158,12 @@ defmodule SecantServiceWeb.DashboardComponents.NodeHeader do
       <% end %>
     </div>
     """
+  end
+
+  # descriptions often contain blank lines; keep line breaks, drop the gaps
+  defp compact_text(text) do
+    text
+    |> String.trim()
+    |> String.replace(~r/\n\s*\n+/, "\n")
   end
 end

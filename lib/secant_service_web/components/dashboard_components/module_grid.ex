@@ -1,5 +1,8 @@
 defmodule SecantServiceWeb.DashboardComponents.ModuleGrid do
-  @moduledoc "Card grid of the live dashboard: one card per module, acquisition cards for acquisition modules."
+  @moduledoc """
+  Card grid of the live dashboard: one card per module, acquisition cards
+  for acquisition modules.
+  """
   use Phoenix.Component
 
   alias SecantService.Acquisition

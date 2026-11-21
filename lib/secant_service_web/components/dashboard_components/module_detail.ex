@@ -1,5 +1,8 @@
 defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
-  @moduledoc "Detail of one module: the live inspector and the data browser's main panel, and the resizable side panel around it."
+  @moduledoc """
+  Detail of one module: the live inspector and the data browser's main
+  panel, and the resizable side panel around it.
+  """
   use Phoenix.Component
 
   alias SecantService.Acquisition
@@ -332,5 +335,15 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
       </div>
     </aside>
     """
+  end
+
+  # value, target and status first, then the rest in description order
+  defp sort_parameters(parameters) do
+    order = %{"value" => 0, "target" => 1, "status" => 2}
+    Enum.sort_by(parameters, fn p -> Map.get(order, p.name, 3) end)
+  end
+
+  defp acq_channels(module, modules) do
+    if Acquisition.controller?(module), do: Acquisition.channels(module, modules), else: []
   end
 end
