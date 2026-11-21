@@ -163,6 +163,13 @@ defmodule SecantService.SecNodes.SecNode do
       filter expr(state == :active)
     end
 
+    # The ended sessions among `uuids`, for the NodeManager to reactivate
+    # those that are still live
+    read :ended_among do
+      argument :uuids, {:array, :uuid}, allow_nil?: false
+      filter expr(uuid in ^arg(:uuids) and state != :active)
+    end
+
     # Read action for cleanup trigger with keyset pagination
     read :read_for_cleanup do
       pagination keyset?: true, required?: false
@@ -260,6 +267,9 @@ defmodule SecantService.SecNodes.SecNode do
 
       change SecantService.SecNodes.Changes.RecalculateSecNodeStorage
       change transition_state(:archived)
+      # The state is checked on the record as it was read, before the
+      # recount. Reactivated meanwhile, the session must stay active.
+      change filter(expr(state == :processed))
     end
 
     # Hourly storage count of a session that is still recording

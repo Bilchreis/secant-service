@@ -126,15 +126,19 @@ defmodule SecantService.NodeManager do
     Logger.info("Description change for node: #{node_state.equipment_id}")
 
     # The message is a snapshot; when it is processed the node may already have
-    # moved on to yet another description. Prefer the current state.
-    current =
-      case fetch_node_state(node_state.node_id) do
-        {:ok, current} -> current
-        :error -> node_state
-      end
-
+    # moved on to yet another description, so act on the current state. When
+    # the state machine does not answer, the retry sync picks the change up:
+    # restarting from the snapshot could end the session that is live.
     {:noreply,
-     attempt(fn -> if described?(current), do: ensure_services(current), else: :ok end, state)}
+     attempt(
+       fn ->
+         case fetch_node_state(node_state.node_id) do
+           {:ok, current} -> if described?(current), do: ensure_services(current), else: :ok
+           :error -> {:error, :unreachable}
+         end
+       end,
+       state
+     )}
   end
 
   # Late replies of timed out get_state calls, and anything else
@@ -195,21 +199,42 @@ defmodule SecantService.NodeManager do
     |> Enum.each(&retire_services/1)
 
     current = for {_id, s} <- node_states, described?(s), into: MapSet.new(), do: s.uuid
-    close_ended_sessions(MapSet.union(current, NodeSupervisor.running_uuids()))
+    live = MapSet.union(current, NodeSupervisor.running_uuids())
+
+    results = [
+      reactivate_live_sessions(live),
+      close_ended_sessions(live, unreachable) | results
+    ]
 
     if Enum.all?(results, &(&1 == :ok)), do: :ok, else: {:error, :incomplete}
+  end
+
+  # A live session must be active, whatever moved it out (e.g. a second
+  # instance of the app on the same database, whose Registry knows none of
+  # this one's services).
+  defp reactivate_live_sessions(live) do
+    with {:ok, ended} <- SecNodes.ended_sec_nodes_among(MapSet.to_list(live)) do
+      ended |> Enum.map(&reactivate/1) |> all_ok()
+    end
   end
 
   # Archives the active records that are not live: no services run for them
   # and the client does not report them as current. The live set is taken
   # after (re)starting services, and this process is the only one that starts
-  # services, so a session can't start between the two.
-  defp close_ended_sessions(live) do
-    {:ok, active} = SecNodes.active_sec_nodes()
+  # them. Records of nodes whose state machine did not answer are left alone
+  # until it does: their current uuid is unknown.
+  defp close_ended_sessions(live, unreachable) do
+    with {:ok, active} <- SecNodes.active_sec_nodes() do
+      active
+      |> Enum.reject(&MapSet.member?(live, &1.uuid))
+      |> Enum.reject(&MapSet.member?(unreachable, {String.to_charlist(&1.host), &1.port}))
+      |> Enum.map(&archive/1)
+      |> all_ok()
+    end
+  end
 
-    active
-    |> Enum.reject(&MapSet.member?(live, &1.uuid))
-    |> Enum.each(&archive/1)
+  defp all_ok(results) do
+    Enum.find(results, :ok, &(&1 != :ok))
   end
 
   # Only nodes that completed a describe can be stored and served.
@@ -251,7 +276,7 @@ defmodule SecantService.NodeManager do
         {:ok, node_db}
 
       {:ok, node_db} ->
-        reactivate(node_db)
+        with :ok <- reactivate(node_db), do: SecNodes.get_sec_node(node_db.uuid)
 
       {:error, _not_found} ->
         transformed = DescribeMessageTransformer.transform(node_state)
@@ -306,9 +331,11 @@ defmodule SecantService.NodeManager do
     case SecNodes.archive_sec_node(node) do
       {:ok, _} ->
         Logger.info("NodeManager: archived node record #{node.uuid}")
+        :ok
 
       {:error, error} ->
         Logger.warning("NodeManager: failed to archive node #{node.uuid}: #{inspect(error)}")
+        {:error, error}
     end
   end
 
@@ -319,8 +346,13 @@ defmodule SecantService.NodeManager do
       "NodeManager: session #{node_db.uuid} is #{node_db.state} but still live, reactivating"
     )
 
-    with {:ok, _} <- SecNodes.reactivate_sec_node(node_db) do
-      SecNodes.get_sec_node(node_db.uuid)
+    case SecNodes.reactivate_sec_node(node_db) do
+      {:ok, _} ->
+        :ok
+
+      {:error, error} ->
+        Logger.warning("NodeManager: failed to reactivate #{node_db.uuid}: #{inspect(error)}")
+        {:error, error}
     end
   end
 
