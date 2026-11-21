@@ -21,13 +21,6 @@ defmodule SecantService.SecNodes.Module do
   actions do
     defaults [:read, :destroy]
 
-    read :get_node_id do
-      argument :id, :integer, allow_nil?: false
-      filter expr(id == ^arg(:id))
-      prepare build(select: [:id, :sec_node_id], load: [sec_node: [:node_id]])
-      get? true
-    end
-
     create :create do
       primary? true
 

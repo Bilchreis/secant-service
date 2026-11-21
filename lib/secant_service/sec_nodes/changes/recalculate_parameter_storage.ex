@@ -13,17 +13,20 @@ defmodule SecantService.SecNodes.Changes.RecalculateParameterStorage do
 
   @impl true
   def change(changeset, _opts, _context) do
+    Ash.Changeset.before_action(changeset, &put_metrics/1)
+  end
+
+  defp put_metrics(changeset) do
     parameter = changeset.data
 
-    # Load the parameter with calculations
     case load_calculated_metrics(parameter) do
       {:ok, loaded_parameter} ->
         changeset
-        |> Ash.Changeset.change_attribute(
+        |> Ash.Changeset.force_change_attribute(
           :datapoint_count,
           loaded_parameter.calculated_datapoint_count
         )
-        |> Ash.Changeset.change_attribute(
+        |> Ash.Changeset.force_change_attribute(
           :disk_size_bytes,
           loaded_parameter.calculated_disk_size_bytes
         )

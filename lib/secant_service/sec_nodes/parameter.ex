@@ -16,11 +16,6 @@ defmodule SecantService.SecNodes.Parameter do
     identity_index_names module_id_name: "parameters_module_id_name_index"
   end
 
-  code_interface do
-    define :history_window, args: [:parameter_id, :from_ms, :to_ms]
-    define :history_resolution, args: [:parameter_id, :from_ms, :to_ms]
-  end
-
   actions do
     defaults [:read, :destroy]
 
@@ -58,6 +53,9 @@ defmodule SecantService.SecNodes.Parameter do
     update :recalculate_storage do
       accept []
       require_atomic? false
+      # the counts read the value hypertables; a failing query must not
+      # abort a transaction (the change logs it and keeps the old counts)
+      transaction? false
 
       change SecantService.SecNodes.Changes.RecalculateParameterStorage
     end
@@ -70,16 +68,6 @@ defmodule SecantService.SecNodes.Parameter do
       prepare build(load: [:module])
 
       filter expr(module.sec_node_id == ^arg(:node_uuid))
-    end
-
-    read :get_with_context do
-      argument :id, :integer do
-        allow_nil? false
-      end
-
-      filter expr(id == ^arg(:id))
-
-      prepare build(load: [module: [sec_node: [:node_id]]])
     end
 
     # Readings for the historical plots, thinned out in the database when the

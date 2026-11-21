@@ -1,4 +1,5 @@
 defmodule SecantService.PlotDB do
+  alias SecantService.SecNodes
   alias SecantService.Util
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.DTypePlot
@@ -66,7 +67,7 @@ defmodule SecantService.PlotDB do
     resolution =
       secop_obj
       |> history_params()
-      |> Enum.map(&Parameter.history_resolution!(&1.id, nil, nil))
+      |> Enum.map(&SecNodes.history_resolution!(&1.id, nil, nil))
       |> History.coarsest()
 
     put_in(plot, [:option, :_windowFetch], resolution)
@@ -327,10 +328,7 @@ defmodule SecantService.PlotDB do
   # ---------------------------------------------------------------------------
 
   def calibration_plot(%Module{} = module) do
-    %{sec_node: %{node_id: node_id}} =
-      Module
-      |> Ash.Query.for_read(:get_node_id, %{id: module.id})
-      |> Ash.read_first!()
+    %{sec_node: %{node_id: node_id}} = SecNodes.get_module!(module.id)
 
     module_atom = String.to_existing_atom(module.name)
 

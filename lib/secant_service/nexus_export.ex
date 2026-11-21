@@ -14,6 +14,7 @@ defmodule SecantService.NexusExport do
   (SECoP check, ophyd class generation) while it runs.
   """
 
+  alias SecantService.SecNodes
   alias SecantService.SecNodes.ParameterValue
   alias SecantService.SecNodes.SecNode
 
@@ -71,13 +72,7 @@ defmodule SecantService.NexusExport do
   end
 
   defp read_values(parameter, time_range) do
-    ParameterValue.get_resource_module(parameter)
-    |> Ash.Query.for_read(
-      :for_parameter,
-      Map.merge(time_range, %{parameter_id: parameter.id, order: :asc})
-    )
-    |> Ash.Query.select([:timestamp, :value])
-    |> Ash.read!()
+    SecNodes.readings!(parameter, Map.put(time_range, :order, :asc), select: [:timestamp, :value])
   end
 
   defp pack_timestamps(values) do

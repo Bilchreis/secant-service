@@ -1,7 +1,7 @@
 defmodule SecantService.PlotDB.Builders do
+  alias SecantService.SecNodes
   alias SecantService.PlotDB.History
   alias SecantService.SecNodes.ParameterValue
-  alias SecantService.SecNodes.Parameter
   alias SecantService.NodeValues
 
   # ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@ defmodule SecantService.PlotDB.Builders do
   # (see `History`). The chart asks for more detail when it is zoomed in.
   def fetch_param_data(param, :historical) do
     if History.numeric?(param) do
-      %{values: values, timestamps: timestamps} = Parameter.history_window!(param.id, nil, nil)
+      %{values: values, timestamps: timestamps} = SecNodes.history_window!(param.id, nil, nil)
       {values, timestamps}
     else
       get_values(param) |> ParameterValue.extract_value_timestamp_lists(param)
@@ -70,14 +70,8 @@ defmodule SecantService.PlotDB.Builders do
   defp last_before(param, from_ms) do
     end_ts = DateTime.from_unix!(trunc(from_ms) - 1, :millisecond)
 
-    ParameterValue.get_resource_module(param)
-    |> Ash.Query.for_read(:for_parameter, %{
-      parameter_id: param.id,
-      end_timestamp: end_ts,
-      limit: 1,
-      order: :desc
-    })
-    |> Ash.read!()
+    param
+    |> SecNodes.readings!(%{end_timestamp: end_ts, limit: 1, order: :desc})
     |> ParameterValue.extract_value_timestamp_lists(param)
     |> case do
       {[value | _], _} -> value
@@ -91,9 +85,7 @@ defmodule SecantService.PlotDB.Builders do
   "empty because nothing has ever been recorded" without re-fetching full history.
   """
   def any_data?(param) do
-    case ParameterValue.get_resource_module(param)
-         |> Ash.Query.for_read(:for_parameter, %{parameter_id: param.id, limit: 1, order: :desc})
-         |> Ash.read_first() do
+    case SecNodes.latest_reading(param) do
       {:ok, nil} -> false
       {:ok, _record} -> true
       # Transient DB error: assume data exists rather than trigger a spurious device read.
@@ -110,32 +102,24 @@ defmodule SecantService.PlotDB.Builders do
 
   def fetch_param_data_in_range(param, from_ms, to_ms) do
     args =
-      %{parameter_id: param.id}
+      %{}
       |> maybe_put(:start_timestamp, from_ms && DateTime.from_unix!(trunc(from_ms), :millisecond))
       |> maybe_put(:end_timestamp, to_ms && DateTime.from_unix!(trunc(to_ms), :millisecond))
 
-    ParameterValue.get_resource_module(param)
-    |> Ash.Query.for_read(:for_parameter, args)
-    |> Ash.read!()
+    param
+    |> SecNodes.readings!(args)
     |> ParameterValue.extract_value_timestamp_lists(param)
   end
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp get_values(parameter) do
-    ParameterValue.get_resource_module(parameter)
-    |> Ash.Query.for_read(:for_parameter, %{parameter_id: parameter.id})
-    |> Ash.read!()
-  end
+  defp get_values(parameter), do: SecNodes.readings!(parameter)
 
   # Nothing recorded yet for a live plot: start from the value the node
   # services already hold. Never reads from the device.
   defp current_value(param) do
-    parameter =
-      Parameter
-      |> Ash.Query.for_read(:get_with_context, %{id: param.id})
-      |> Ash.read_first!()
+    parameter = SecNodes.get_parameter!(param.id)
 
     case NodeValues.get_value(
            parameter.module.sec_node.node_id,

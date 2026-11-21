@@ -1,7 +1,8 @@
 defmodule SecantService.SecNodes.Changes.RecalculateSecNodeStorage do
   @moduledoc """
-  Change to recalculate storage for all parameters of a sec node and transition
-  node state from `:processed` to `:archived` when applicable.
+  Recounts the stored datapoints and disk size of every parameter of a sec
+  node. Used by `:finish_archiving` and `:refresh_storage`; the work runs when
+  the action runs, not while the changeset is built.
   """
 
   use Ash.Resource.Change
@@ -11,19 +12,14 @@ defmodule SecantService.SecNodes.Changes.RecalculateSecNodeStorage do
 
   @impl true
   def change(changeset, _opts, _context) do
-    recalculate_all_parameter_storage(changeset.data.uuid)
-
-    current_state = Ash.Changeset.get_attribute(changeset, :state)
-
-    if current_state == :processed do
-      AshStateMachine.transition_state(changeset, :archived)
-    else
+    Ash.Changeset.before_action(changeset, fn changeset ->
+      recalculate_all_parameter_storage(changeset.data.uuid)
       changeset
-    end
+    end)
   end
 
   defp recalculate_all_parameter_storage(sec_node_uuid) do
-    case Ash.get(SecNode, sec_node_uuid, load: [modules: [:parameters]]) do
+    case Ash.get(SecNode, sec_node_uuid, load: [modules: [:parameters]], authorize?: false) do
       {:ok, sec_node} ->
         parameters =
           sec_node.modules
