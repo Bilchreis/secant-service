@@ -1,8 +1,6 @@
 defmodule SecantServiceWeb.DashboardLive.Index do
   use SecantServiceWeb, :live_view
 
-  @value_flush_ms 250
-
   alias SecantService.Model
   alias SecantClient
   alias SecantClient.NodeDiscover
@@ -326,25 +324,11 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     {:noreply, socket}
   end
 
-  # Live values are buffered and pushed to the widgets at most every
-  # @value_flush_ms, keeping only the latest value per parameter. A node that
-  # publishes hundreds of updates per second then costs a few diffs per
-  # second per viewer instead of one diff per update.
+  # NodeValues publishes the changed values of a node in one batch every
+  # 250 ms, latest per parameter, so each viewer handles a few messages per
+  # second however fast the node updates.
   @impl true
-  def handle_info({:value_update, :updated, module, accessible, data_report}, socket) do
-    pending = socket.private[:pending_values] || %{}
-
-    if map_size(pending) == 0 do
-      Process.send_after(self(), :flush_values, @value_flush_ms)
-    end
-
-    {:noreply,
-     put_private(socket, :pending_values, Map.put(pending, {module, accessible}, data_report))}
-  end
-
-  def handle_info(:flush_values, socket) do
-    pending = socket.private[:pending_values] || %{}
-    socket = put_private(socket, :pending_values, %{})
+  def handle_info({:value_updates, batch}, socket) do
     values = socket.assigns.values
 
     socket =
@@ -352,7 +336,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
         %{host: host, port: port} when is_map(values) ->
           node_id_str = "#{host}:#{port}"
 
-          Enum.reduce(pending, socket, fn {{module, accessible}, data_report}, socket ->
+          Enum.reduce(batch, socket, fn {{module, accessible}, data_report}, socket ->
             if Map.has_key?(values, module) do
               update_components(node_id_str, module, accessible, data_report)
               put_status_color(socket, module, accessible, data_report)
