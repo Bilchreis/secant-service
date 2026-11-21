@@ -16,9 +16,9 @@ defmodule SecantService.PlotDB.Calibratable do
 
     if value_param && value_param.datainfo["type"] in @scalar_types do
       {v_val, v_ts} = fetch_param_data(value_param, mode)
-      {t_val, t_ts} = fetch_held_param_data(find_param(module, "target"), mode)
-      {vu_val, vu_ts} = fetch_param_data(find_param(module, "_value_uncalibrated"), mode)
-      {tc_val, tc_ts} = fetch_param_data(find_param(module, "_target_calibrated"), mode)
+      {t_val, t_ts} = fetch_optional(find_param(module, "target"), mode, :held)
+      {vu_val, vu_ts} = fetch_optional(find_param(module, "_value_uncalibrated"), mode)
+      {tc_val, tc_ts} = fetch_optional(find_param(module, "_target_calibrated"), mode)
 
       unit = get_in(value_param.datainfo, ["unit"])
 
@@ -51,6 +51,13 @@ defmodule SecantService.PlotDB.Calibratable do
       :not_plottable
     end
   end
+
+  # Only "value" is required; the module may lack the other parameters (they
+  # were renamed between interface class versions). Missing ones plot empty.
+  defp fetch_optional(param, mode, kind \\ :plain)
+  defp fetch_optional(nil, _mode, _kind), do: {[], []}
+  defp fetch_optional(param, mode, :held), do: fetch_held_param_data(param, mode)
+  defp fetch_optional(param, mode, :plain), do: fetch_param_data(param, mode)
 
   @impl true
   def trace_updates(

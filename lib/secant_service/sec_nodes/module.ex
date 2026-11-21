@@ -154,26 +154,6 @@ defmodule SecantService.SecNodes.Module do
     end
   end
 
-  def has_parameter?(module, param_name) do
-    case module.parameters do
-      %Ash.NotLoaded{} ->
-        raise "parameters must be loaded to check for parameter: #{param_name}"
-
-      parameters ->
-        Enum.any?(parameters, fn param -> param.name == param_name end)
-    end
-  end
-
-  def has_command?(module, command_name) do
-    case module.commands do
-      %Ash.NotLoaded{} ->
-        raise "commands must be loaded to check for command: #{command_name}"
-
-      commands ->
-        Enum.any?(commands, fn cmd -> cmd.name == command_name end)
-    end
-  end
-
   def get_parameter(module, param_name) do
     case module.parameters do
       %Ash.NotLoaded{} ->
@@ -181,16 +161,6 @@ defmodule SecantService.SecNodes.Module do
 
       parameters ->
         Enum.find(parameters, fn param -> param.name == param_name end)
-    end
-  end
-
-  def get_command(module, command_name) do
-    case module.commands do
-      %Ash.NotLoaded{} ->
-        raise "commands must be loaded to get command: #{command_name}"
-
-      commands ->
-        Enum.find(commands, fn cmd -> cmd.name == command_name end)
     end
   end
 end

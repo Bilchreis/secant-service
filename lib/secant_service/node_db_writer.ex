@@ -30,11 +30,6 @@ defmodule SecantService.NodeDBWriter do
     )
   end
 
-  def update_parameter(node_id, module, parameter, data_report) do
-    [{sec_node_pid, _value}] = Registry.lookup(Registry.NodeDBWriter, node_id)
-    GenServer.cast(sec_node_pid, {:parameter_update, module, parameter, data_report})
-  end
-
   # Server callbacks
 
   @impl true

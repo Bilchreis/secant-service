@@ -100,21 +100,6 @@ defmodule SecantService.NodeServices do
     )
   end
 
-  def stop(node_id) do
-    case Registry.lookup(Registry.NodeServices, node_id) do
-      [{supervisor_pid, _}] ->
-        Logger.info("Stopping NodeServices for #{inspect(node_id)}")
-        Supervisor.stop(supervisor_pid, :normal)
-
-      [] ->
-        Logger.warning(
-          "Attempted to stop NodeServices for #{inspect(node_id)}, but no such service was found."
-        )
-
-        {:error, :not_found}
-    end
-  end
-
   @impl true
   def init(node_db) do
     Logger.info("Initializing NodeServices for #{inspect(node_db.node_id)}")

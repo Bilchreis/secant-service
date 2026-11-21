@@ -106,6 +106,43 @@ defmodule SecantServiceWeb.DashboardLiveTest do
     assert has_element?(view, "#inspector")
   end
 
+  test "a status error report is shown and keeps the page alive",
+       %{conn: conn, node_id: {host, port} = node_id, path: path} do
+    connect_and_wait(node_id, @desc_a)
+    view = open_dashboard(conn, path)
+
+    for _ <- 1..3 do
+      Phoenix.PubSub.broadcast(
+        :secant_client_pubsub,
+        "error_update:#{host}:#{port}",
+        {:error_update, "temp", "status", ["HardwareError", "sensor unplugged", %{}]}
+      )
+    end
+
+    assert eventually(fn -> render(view) =~ "HardwareError: sensor unplugged" end)
+
+    # a remount reads the error from the services' table
+    assert {:ok, _view, _html} = live(conn, path)
+  end
+
+  test "a malformed node link does not crash the page", %{conn: conn, node_id: node_id} do
+    connect_and_wait(node_id, @desc_a)
+
+    for bad <- ["a:b", "nohost", ":1234", "host:99999"] do
+      assert {:ok, _view, _html} = live(conn, "/dashboard?node=" <> URI.encode_www_form(bad))
+    end
+  end
+
+  test "connect-node rejects an invalid port", %{conn: conn, node_id: node_id, path: path} do
+    connect_and_wait(node_id, @desc_a)
+    view = open_dashboard(conn, path)
+
+    render_hook(view, "connect-node", %{"host" => "localhost", "port" => "abc"})
+    render_hook(view, "connect-node", %{"host" => "", "port" => "10800"})
+
+    assert Process.alive?(view.pid)
+  end
+
   # "127.0.0.1:1234" -> CSS-safe id selector part
   defp escape(id), do: String.replace(id, ~r/([.:])/, "\\\\\\1")
 end

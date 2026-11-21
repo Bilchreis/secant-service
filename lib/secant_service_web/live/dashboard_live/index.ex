@@ -107,13 +107,14 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     if exists?, do: socket, else: assign(socket, :plot_param, nil)
   end
 
+  # "host:port"; the port is after the last colon so IPv6 hosts work too.
   defp parse_node_param(node_param) do
-    case String.split(node_param, ":") do
-      [host, port] ->
-        {:ok, {String.to_charlist(host), String.to_integer(port)}}
-
-      _ ->
-        :error
+    with [_, host, port] <- Regex.run(~r/^(.+):(\d{1,5})$/, node_param),
+         port = String.to_integer(port),
+         true <- port in 1..65_535 do
+      {:ok, {String.to_charlist(host), port}}
+    else
+      _ -> :error
     end
   end
 
@@ -368,11 +369,6 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   end
 
   @impl true
-  def handle_info({:value_update, :equal, _module, _accessible, _data_report}, socket) do
-    {:noreply, socket}
-  end
-
-  @impl true
   def handle_info({:plot_data, module, accessible, data_report}, socket) do
     %{current_node: node, selected_module: selected, plot_param: plot_param} = socket.assigns
 
@@ -396,21 +392,12 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   end
 
   def handle_event("toggle-conn-state", _unsigned_params, socket) do
-    Logger.info("Toggling connection state for current node")
-
-    node_state = socket.assigns.active_nodes[socket.assigns.current_node.node_id]
-    node_id = node_state.node_id
-    active = node_state.active
-
-    Task.start(fn ->
-      case active do
-        true ->
-          NodeStatem.deactivate(node_id)
-
-        false ->
-          NodeStatem.activate(node_id)
-      end
-    end)
+    with %{node_id: node_id} <- socket.assigns.current_node,
+         %{node_id: node_id, active: active} <- socket.assigns.active_nodes[node_id] do
+      Task.start(fn ->
+        if active, do: NodeStatem.deactivate(node_id), else: NodeStatem.activate(node_id)
+      end)
+    end
 
     {:noreply, socket}
   end
@@ -507,20 +494,27 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   end
 
   def handle_event("connect-node", params, socket) do
-    opts = %{
-      host: params["host"] |> String.to_charlist(),
-      port: params["port"] |> String.to_integer(),
-      manual: true,
-      reconnect_backoff: 5000
-    }
+    host = String.trim(params["host"] || "")
 
-    NodeSupervisor.start_child(opts)
-    {:noreply, socket}
+    case parse_node_param("#{host}:#{String.trim(params["port"] || "")}") do
+      {:ok, {host, port}} ->
+        NodeSupervisor.start_child(%{
+          host: host,
+          port: port,
+          manual: true,
+          reconnect_backoff: 5000
+        })
+
+        {:noreply, socket}
+
+      :error ->
+        {:noreply, put_flash(socket, :error, "Enter a host and a port between 1 and 65535")}
+    end
   end
 
   defp pubsubtopic_to_node_id(pubsub_topic) do
-    [ip, port] = String.split(pubsub_topic, ":")
-    {String.to_charlist(ip), String.to_integer(port)}
+    {:ok, node_id} = parse_node_param(pubsub_topic)
+    node_id
   end
 
   def update_components(node_id_str, module, "status", data_report) do

@@ -104,26 +104,13 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
 
   @impl true
   def handle_event("trigger_cleanup", _params, socket) do
-    result = AshOban.schedule_and_run_triggers({SecNode, :cleanup_old_nodes})
-
-    total = Map.get(result, :success, 0) + Map.get(result, :failure, 0)
-
-    flash =
-      cond do
-        Map.get(result, :failure, 0) > 0 ->
-          {:error,
-           "Cleanup finished with #{result.failure} failure(s) and #{result.success} success(es)."}
-
-        total > 0 ->
-          {:info, "Cleanup triggered successfully. #{total} node(s) moved to trash."}
-
-        true ->
-          {:info, "Cleanup triggered. No nodes matched for cleanup."}
-      end
+    # The trigger's jobs run in the background (queues are not drained outside
+    # tests), so there is no result to report yet.
+    AshOban.schedule(SecNode, :cleanup_old_nodes)
 
     {:noreply,
      socket
-     |> put_flash(elem(flash, 0), elem(flash, 1))
+     |> put_flash(:info, "Cleanup scheduled. Old nodes move to the trash in the background.")
      |> push_patch(to: current_path(socket))}
   end
 

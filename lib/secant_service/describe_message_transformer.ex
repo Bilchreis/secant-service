@@ -159,7 +159,7 @@ defmodule SecantService.DescribeMessageTransformer do
   defp ophyd_class(describe_str) do
     try do
       {result, _globals} =
-        Pythonx.eval(
+        eval_quietly(
           """
           import json
           from secop_ophyd.GenNodeCode import GenNodeCode
@@ -174,9 +174,7 @@ defmodule SecantService.DescribeMessageTransformer do
           GenCode.generate_code()
 
           """,
-          %{"descr" => describe_str},
-          stdout_device: File.open!("/dev/null", [:write]),
-          stderr_device: File.open!("/dev/null", [:write])
+          %{"descr" => describe_str}
         )
 
       class_str = Pythonx.decode(result)
@@ -193,7 +191,7 @@ defmodule SecantService.DescribeMessageTransformer do
     result =
       try do
         {result, _globals} =
-          Pythonx.eval(
+          eval_quietly(
             """
             from secop_check.checker import Checker
 
@@ -225,9 +223,7 @@ defmodule SecantService.DescribeMessageTransformer do
 
             diag_list
             """,
-            %{"descr" => describe_str, "version" => version, "output" => output},
-            stdout_device: File.open!("/dev/null", [:write]),
-            stderr_device: File.open!("/dev/null", [:write])
+            %{"descr" => describe_str, "version" => version, "output" => output}
           )
 
         Pythonx.decode(result)
@@ -247,5 +243,17 @@ defmodule SecantService.DescribeMessageTransformer do
       end
 
     %{"version" => version, "result" => result}
+  end
+
+  # Python's stdout/stderr go to /dev/null; the handle is closed afterwards so
+  # every stored node does not leak two io processes.
+  defp eval_quietly(code, globals) do
+    null = File.open!("/dev/null", [:write])
+
+    try do
+      Pythonx.eval(code, globals, stdout_device: null, stderr_device: null)
+    after
+      File.close(null)
+    end
   end
 end
