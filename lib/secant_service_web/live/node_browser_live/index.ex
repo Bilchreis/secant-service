@@ -9,7 +9,9 @@ defmodule SecantServiceWeb.NodeBrowserLive.Index do
   alias SecantService.SecNodes
   alias SecantServiceWeb.DashboardComponents
 
-  import SecantServiceWeb.DashboardComponents
+  import SecantServiceWeb.DashboardComponents.NodeHeader
+  import SecantServiceWeb.DashboardComponents.ModuleRail
+  import SecantServiceWeb.DashboardComponents.ModuleDetail
 
   @impl true
   def mount(params, _session, socket) do
