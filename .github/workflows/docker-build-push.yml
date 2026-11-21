@@ -17,6 +17,15 @@ on:
     types: [published]
   # Allow manual triggering
   workflow_dispatch:
+  # The release workflow pushes the image for a new version through this.
+  # Releases it creates don't trigger the `release` event above: events from
+  # the workflow's own token never start other workflows.
+  workflow_call:
+    inputs:
+      version:
+        description: Version to tag the image with, plus `latest`.
+        type: string
+        required: true
 
 # A new push to a PR supersedes the previous build. Pushes to main and
 # releases queue up instead of cancelling, so every tag gets published.
@@ -64,6 +73,8 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=sha,format=short
+            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=raw,value=latest,enable=${{ inputs.version != '' }}
 
       # Build into the local Docker daemon first so the image can be scanned
       # before anything is published.

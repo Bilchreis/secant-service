@@ -6,6 +6,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # The release workflow runs these checks before it releases.
+  workflow_call:
 
 # A new push to a PR supersedes the previous run; runs on main always finish.
 concurrency:
