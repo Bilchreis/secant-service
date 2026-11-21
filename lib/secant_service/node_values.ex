@@ -3,7 +3,8 @@ defmodule SecantService.NodeValues do
   The current value of every parameter of one node, processed for display.
 
   Changed values are not broadcast one by one. They are collected, latest per
-  parameter, and published together every 250 ms as
+  parameter, and published together once per `:values_publish_interval`
+  (250 ms by default) as
   `{:value_updates, %{{module, parameter} => processed}}` on
   `SecantService.Topics.processed_values/1`. Every dashboard viewer of the
   node then handles a few messages per second instead of one per update.
@@ -111,9 +112,11 @@ defmodule SecantService.NodeValues do
   end
 
   defp apply_update(state, module, accessible, report) do
-    case value_update(state.values, state.node_db, state.table, module, accessible, report) do
+    case value_update(state.values, state.table, module, accessible, report) do
       {:ok, :updated, values, processed} ->
-        if state.pending == %{}, do: Process.send_after(self(), :publish, publish_interval())
+        if map_size(state.pending) == 0,
+          do: Process.send_after(self(), :publish, publish_interval())
+
         pending = Map.put(state.pending, {module, accessible}, processed)
         %{state | values: values, pending: pending}
 
@@ -185,7 +188,7 @@ defmodule SecantService.NodeValues do
     {:ok}
   end
 
-  def value_update(values, _node_db, table, module, accessible, data_report) do
+  def value_update(values, table, module, accessible, data_report) do
     # Check if the module exists
 
     case get_in(values, [module, accessible]) do

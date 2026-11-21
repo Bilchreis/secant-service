@@ -64,6 +64,7 @@ defmodule SecantService.NodeValuesTest do
     send_error_update(node_id, "temp", "value", @error)
     assert_receive {:value_updates, %{{"temp", "value"} => %{error_report: @error}}}
 
+    # a second batch: the publish timer is armed again after the first
     send_value_update(node_id, "temp", "value", [4.2, %{t: 1_700_000_300.0}])
     assert_receive {:value_updates, %{{"temp", "value"} => %{data_report: [4.2, _]}}}
 
@@ -83,7 +84,11 @@ defmodule SecantService.NodeValuesTest do
 
   test "changes are published in batches, latest per parameter",
        %{node_id: node_id, values_pid: pid} do
-    # queued while suspended, so all three land in the same interval
+    # A longer interval than the test default, so a slow machine cannot split
+    # the batch. Suspending NodeValues queues all four updates; on resume they
+    # are handled back to back, inside one interval.
+    Application.put_env(:secant_service, :values_publish_interval, 200)
+    on_exit(fn -> Application.put_env(:secant_service, :values_publish_interval, 10) end)
     :sys.suspend(pid)
 
     for {v, t} <- [{1.0, 1}, {2.0, 2}, {3.0, 3}] do
@@ -93,7 +98,7 @@ defmodule SecantService.NodeValuesTest do
     send_value_update(node_id, "temp", "target", [5.0, %{t: 1_700_000_504.0}])
     :sys.resume(pid)
 
-    assert_receive {:value_updates, batch}
+    assert_receive {:value_updates, batch}, 1_000
     assert %{data_report: [3.0, _]} = batch[{"temp", "value"}]
     assert %{data_report: [5.0, _]} = batch[{"temp", "target"}]
     refute_receive {:value_updates, _}, 100

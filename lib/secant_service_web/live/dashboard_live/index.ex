@@ -123,12 +123,13 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       if requested != nil and requested != current_id do
         if current_id, do: unsubscribe_from_node(current_id)
 
+        # Subscribe before taking the snapshot so no batch falls in between.
+        subscribe_to_node(requested)
+
         # a node without running services has nothing to show: no current node
         model = Model.set_current_node(%{model | current_node: nil, values: nil}, requested)
 
-        if model.current_node do
-          subscribe_to_node(model.current_node.node_id)
-        end
+        if model.current_node == nil, do: unsubscribe_from_node(requested)
 
         socket
         |> Model.to_socket(model)
@@ -324,9 +325,9 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     {:noreply, socket}
   end
 
-  # NodeValues publishes the changed values of a node in one batch every
-  # 250 ms, latest per parameter, so each viewer handles a few messages per
-  # second however fast the node updates.
+  # NodeValues publishes the changed values of a node in one batch per
+  # interval (250 ms by default), latest per parameter, so each viewer handles
+  # a few messages per second however fast the node updates.
   @impl true
   def handle_info({:value_updates, batch}, socket) do
     values = socket.assigns.values
