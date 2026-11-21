@@ -113,12 +113,18 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
 
   # one run at a time per command: a second click while the node is still
   # working on the first must not send the command again (stop is exempt)
-  def handle_event("set_arg", %{"command" => command}, %{assigns: %{running: true}} = socket)
-      when command != "stop" do
+  def handle_event(
+        "set_arg",
+        _params,
+        %{assigns: %{running: true, command: %{name: name}}} = socket
+      )
+      when name != "stop" do
     {:noreply, socket}
   end
 
   def handle_event("set_arg", params, socket) do
+    params = Map.merge(params, target_params(socket))
+
     with {:ok, params} <- normalise_argument(params, socket),
          true <- claim_command(params) do
       run_command(params, socket)
@@ -347,6 +353,17 @@ defmodule SecantServiceWeb.Components.CommandDisplay do
       |> assign_new(:last_result, fn -> nil end)
 
     socket
+  end
+
+  # Which command to run comes from the component's own assigns, never from
+  # the (client-editable) hidden form fields.
+  defp target_params(socket) do
+    %{
+      "host" => to_string(socket.assigns.host),
+      "port" => to_string(socket.assigns.port),
+      "module" => socket.assigns.module_name,
+      "command" => socket.assigns.command.name
+    }
   end
 
   # stop must always go through, even while another stop is pending

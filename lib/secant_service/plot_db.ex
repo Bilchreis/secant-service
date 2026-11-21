@@ -572,7 +572,8 @@ defmodule SecantService.PlotDB do
                {:data_report, module_atom, String.to_existing_atom(name)}
              ) do
           {:ok, %{data_report: [value, _]}} -> value
-          {:error, _} -> nil
+          # an error report, or nothing received yet
+          _ -> nil
         end
       rescue
         ArgumentError -> nil
@@ -595,7 +596,7 @@ defmodule SecantService.PlotDB do
              {:data_report, module_atom, String.to_existing_atom(param_name)}
            ) do
         {:ok, %{data_report: [value, _]}} -> value
-        {:error, _} -> nil
+        _ -> nil
       end
     end
 

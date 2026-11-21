@@ -433,7 +433,8 @@ defmodule SecantService.SecNodes.SecNode do
 
     calculate :display_description, :string, fn records, _context ->
       Enum.map(records, fn record ->
-        record.description
+        # description is optional in SECoP
+        (record.description || "")
         |> String.split("\n")
         |> Enum.map(&Phoenix.HTML.html_escape/1)
         |> Enum.intersperse(Phoenix.HTML.raw("<br>"))

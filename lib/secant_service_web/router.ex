@@ -85,7 +85,7 @@ defmodule SecantServiceWeb.Router do
       pipe_through :browser
 
       live_dashboard "/dashboard",
-        metrics: MyAppWeb.Telemetry,
+        metrics: SecantServiceWeb.Telemetry,
         additional_pages: [
           flame_on: FlameOn.DashboardPage
         ]

@@ -42,72 +42,6 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     end
   end
 
-  def get_display_value(raw_value, datainfo, _depth) do
-    unit = datainfo["unit"] || ""
-
-    case datainfo["type"] do
-      "double" ->
-        formatted =
-          case raw_value do
-            nil ->
-              "N/A"
-
-            val when val == 0.0 ->
-              "0.0"
-
-            val when abs(val) >= 1000 or abs(val) < 0.001 ->
-              # Use scientific notation for very large or very small numbers
-              :io_lib.format("~.3e", [val]) |> to_string()
-
-            val ->
-              # Use regular decimal notation with up to 6 decimal places, removing trailing zeros
-              :io_lib.format("~.6f", [val])
-              |> to_string()
-              |> String.replace(~r/\.?0+$/, "")
-          end
-
-        "#{formatted} #{unit}" |> String.trim()
-
-      "scaled" ->
-        formatted =
-          case raw_value do
-            nil ->
-              "N/A"
-
-            val when val == 0.0 ->
-              "0"
-
-            val when abs(val) >= 1000 or abs(val) < 0.001 ->
-              :io_lib.format("~.3e", [val]) |> to_string()
-
-            val ->
-              :io_lib.format("~.6f", [val])
-              |> to_string()
-              |> String.replace(~r/\.?0+$/, "")
-          end
-
-        "#{formatted} #{unit}" |> String.trim()
-
-      "enum" ->
-        # Return the name for display
-        {name, _} =
-          datainfo["members"]
-          |> Enum.find(fn
-            {_name, val} -> val == raw_value
-            _ -> false
-          end)
-
-        "#{raw_value}: #{name}"
-
-      _ ->
-        if unit == "" do
-          "#{Jason.encode!(raw_value, pretty: true)}"
-        else
-          "#{Jason.encode!(raw_value, pretty: true)} #{unit}"
-        end
-    end
-  end
-
   def flattened_form_map(
         flattened_map \\ %{},
         path \\ ["value"],
@@ -215,7 +149,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   def update(%{value_update: data_report} = _assigns, socket) do
     socket =
       case data_report do
-        %{error_report: [error_cls, error_msg, qualifiers]} ->
+        %{error_report: [error_cls, error_msg | qualifiers]} ->
           Logger.warning("Error Update: #{error_cls}, #{error_msg}, #{inspect(qualifiers)}")
           assign(socket, :parameter_error, [error_cls, error_msg])
 
@@ -278,15 +212,31 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     {:ok, socket}
   end
 
+  def update(%{control: :set_parameter}, %{assigns: %{parameter: %{readonly: true}}} = socket) do
+    {:ok, assign(socket, :set_feedback, {:error, "This parameter is read-only"})}
+  end
+
   def update(%{control: :set_parameter, unsigned_params: unsigned_params} = _assigns, socket) do
+    # What to change comes from the component's own assigns, never from the
+    # (client-editable) hidden form fields.
+    unsigned_params = Map.merge(unsigned_params, target_params(socket))
     form_key = form_key(unsigned_params["form_type"])
     form = Map.fetch!(socket.assigns, form_key)
 
+    # errors on member fields of the modal (anything but the whole value)
+    # must block the Set: the value field still holds the last valid merge
+    member_errors = Enum.reject(form.errors, &match?({:value, _}, &1))
+
     validated_form =
-      if blank?(unsigned_params["value"]) do
-        %{form | errors: [value: {"Enter a value", []}]}
-      else
-        NodeControl.validate(unsigned_params, socket.assigns.parameter.datainfo, form)
+      cond do
+        blank?(unsigned_params["value"]) ->
+          %{form | errors: [value: {"Enter a value", []}]}
+
+        member_errors != [] ->
+          form
+
+        true ->
+          NodeControl.validate(unsigned_params, socket.assigns.parameter.datainfo, form)
       end
 
     if validated_form.errors != [] do
@@ -733,7 +683,12 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
         title={"Set #{@module_name}:#{@parameter.name}"}
         show={@show_parameter_value_modal}
       >
-        <.form for={@modal_form} phx-submit="set_parameter" phx-change="validate_parameter">
+        <.form
+          for={@modal_form}
+          id={"set-modal-form:" <> @id_str}
+          phx-submit="set_parameter"
+          phx-change="validate_parameter"
+        >
           <input
             type="hidden"
             name="form_type"
@@ -795,7 +750,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
 
     socket =
       case val_map do
-        %{error_report: [error_cls, error_msg, _qualifiers]} ->
+        %{error_report: [error_cls, error_msg | _]} ->
           assign(socket, :parameter_error, [error_cls, error_msg])
           |> assign(:parameter_value, nil)
 
@@ -861,6 +816,15 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
       {nil, unit} -> "new value [#{unit}]"
       {limits, unit} -> String.trim("#{limits} #{unit}")
     end
+  end
+
+  defp target_params(socket) do
+    %{
+      "host" => to_string(socket.assigns.host),
+      "port" => to_string(socket.assigns.port),
+      "module" => socket.assigns.module_name,
+      "parameter" => socket.assigns.parameter.name
+    }
   end
 
   defp op_key(params),

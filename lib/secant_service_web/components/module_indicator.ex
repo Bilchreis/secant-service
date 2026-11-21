@@ -81,13 +81,17 @@ defmodule SecantServiceWeb.Components.ModuleIndicator do
 
   defp status_parts(nil), do: {"bg-st-off", "text-muted", nil, nil}
 
-  defp status_parts(%{data_report: nil}), do: {"bg-st-off", "text-muted", nil, nil}
+  # The node could not read the status itself (error_update on "status").
+  defp status_parts(%{error_report: [error_cls, error_msg | _]}),
+    do: {"bg-st-error", "text-st-error", "ERR", "#{error_cls}: #{error_msg}"}
 
-  defp status_parts(status_value) do
-    {SECoPComponents.status_to_color(status_value.stat_color),
-     SECoPComponents.status_to_text(status_value.stat_color), to_string(status_value.stat_code),
-     status_value.stat_string}
+  defp status_parts(%{stat_color: color, stat_code: code, stat_string: string}) do
+    {SECoPComponents.status_to_color(color), SECoPComponents.status_to_text(color),
+     to_string(code), string}
   end
+
+  # no status received yet
+  defp status_parts(_status_value), do: {"bg-st-off", "text-muted", nil, nil}
 
   attr :status_value, :map, default: nil
   attr :node_state, :atom, default: :initialized

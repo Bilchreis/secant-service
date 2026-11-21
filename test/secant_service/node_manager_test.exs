@@ -210,6 +210,8 @@ defmodule SecantService.NodeManagerTest do
   end
 
   describe "robustness" do
+    # logs the expected timeout / start failure
+    @tag :capture_log
     test "an unresponsive state machine neither blocks others nor loses its services",
          %{node_id: node_id} do
       slow = connect(node_id, @desc_a)
@@ -225,6 +227,8 @@ defmodule SecantService.NodeManagerTest do
       refute_received {:node_services_stopped, _}
     end
 
+    # logs the expected timeout / start failure
+    @tag :capture_log
     test "a failed restart is retried until the new services run", %{node_id: node_id} do
       connect(node_id, @desc_a)
 

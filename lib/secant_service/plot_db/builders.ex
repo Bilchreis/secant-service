@@ -2,8 +2,7 @@ defmodule SecantService.PlotDB.Builders do
   alias SecantService.PlotDB.History
   alias SecantService.SecNodes.ParameterValue
   alias SecantService.SecNodes.Parameter
-  alias SecantClient.NodeStatem
-  require Logger
+  alias SecantService.NodeValues
 
   # ---------------------------------------------------------------------------
   # Parameter helpers
@@ -26,7 +25,6 @@ defmodule SecantService.PlotDB.Builders do
     else
       get_values(param) |> ParameterValue.extract_value_timestamp_lists(param)
     end
-    |> read_from_device_if_empty(param.id)
   end
 
   def fetch_param_data(param, :live) do
@@ -35,7 +33,7 @@ defmodule SecantService.PlotDB.Builders do
 
     case windowed do
       {[], []} ->
-        if any_data?(param), do: windowed, else: read_from_device_if_empty(windowed, param.id)
+        if any_data?(param), do: windowed, else: current_value(param)
 
       _ ->
         windowed
@@ -131,52 +129,33 @@ defmodule SecantService.PlotDB.Builders do
     |> Ash.read!()
   end
 
-  defp read_from_device_if_empty({_value_val, _value_ts} = readings, param_id) do
-    case readings do
-      {[], []} ->
-        Logger.warning(
-          "No values found in DB for param_id: #{param_id}, trying to read from device"
-        )
+  # Nothing recorded yet for a live plot: start from the value the node
+  # services already hold. Never reads from the device.
+  defp current_value(param) do
+    parameter =
+      Parameter
+      |> Ash.Query.for_read(:get_with_context, %{id: param.id})
+      |> Ash.read_first!()
 
-        parameter =
-          Parameter
-          |> Ash.Query.for_read(:get_with_context, %{id: param_id})
-          |> Ash.read_first!()
+    case NodeValues.get_value(
+           parameter.module.sec_node.node_id,
+           parameter.module.name,
+           parameter.name
+         ) do
+      {:ok, %{data_report: [value, %{t: ts}]}} when is_number(ts) ->
+        {[stringify_keys(value)], [round(ts * 1000)]}
 
-        read_until_valid(
-          parameter.module.sec_node.node_id,
-          parameter.module.name,
-          parameter.name
-        )
-
-      {_, _} ->
-        readings
+      _ ->
+        {[], []}
     end
   end
 
-  defp read_until_valid(id, module_name, parameter_name) do
-    case NodeStatem.read(id, module_name, parameter_name) do
-      {:reply, _r_mod, _r_para, [val, %{t: ts}]} ->
-        val = val |> Jason.encode!() |> Jason.decode!()
+  # Values from the node services carry atom keys; stored readings do not.
+  defp stringify_keys(%{} = map),
+    do: Map.new(map, fn {k, v} -> {to_string(k), stringify_keys(v)} end)
 
-        secs = trunc(ts)
-        usecs = trunc((ts - secs) * 1_000_000)
-        {:ok, dt} = DateTime.from_unix(secs)
-        ts = %{dt | microsecond: {usecs, 6}} |> DateTime.to_unix(:millisecond)
-
-        {[val], [ts]}
-
-      {:error, :read, _specifier, _error_class, error_text, _error_dict} ->
-        Logger.warning("Read failed: #{error_text}, retrying...")
-        Process.sleep(10_000)
-        read_until_valid(id, module_name, parameter_name)
-
-      other ->
-        Logger.warning("Unexpected response: #{inspect(other)}, retrying...")
-        Process.sleep(20_000)
-        read_until_valid(id, module_name, parameter_name)
-    end
-  end
+  defp stringify_keys(list) when is_list(list), do: Enum.map(list, &stringify_keys/1)
+  defp stringify_keys(value), do: value
 
   # ---------------------------------------------------------------------------
   # Range helpers — shared by all dtype option assemblers

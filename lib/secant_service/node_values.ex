@@ -36,8 +36,6 @@ defmodule SecantService.NodeValues do
     end
   end
 
-  def get_table(node_id), do: call(node_id, :get_table)
-
   # The services of a node are stopped and restarted whenever its description
   # changes, so the process may vanish between the lookup and the call. Treat
   # that like "not running" instead of crashing the caller.
@@ -139,10 +137,6 @@ defmodule SecantService.NodeValues do
     {:reply, {state.node_db, state.values}, state}
   end
 
-  def handle_call(:get_table, _from, state) do
-    {:reply, state.table, state}
-  end
-
   def get_val_map(db_node, service_table) do
     node_id = db_node.node_id
 
@@ -216,12 +210,6 @@ defmodule SecantService.NodeValues do
         merged_without_timestamp = remove_timestamp(merged_param_val)
 
         if old_without_timestamp == merged_without_timestamp do
-          Phoenix.PubSub.broadcast(
-            SecantService.PubSub,
-            "value_update:processed:#{node_db.node_id_str}",
-            {:value_update, :equal, module, accessible, new_param_val}
-          )
-
           {:ok, :equal, values}
         else
           Phoenix.PubSub.broadcast(
@@ -244,6 +232,12 @@ defmodule SecantService.NodeValues do
   end
 
   defp remove_timestamp(param_val), do: param_val
+
+  # Error reports come first: they can arrive for any accessible, including
+  # "status", whose clause below expects a [value, qualifiers] data report.
+  def process_data_report(_accessible, {:error_report, [_cls, _msg | _] = report}, datainfo) do
+    %{error_report: report, datainfo: datainfo}
+  end
 
   def process_data_report("status", data_report, datainfo) do
     if data_report != nil do
@@ -268,14 +262,6 @@ defmodule SecantService.NodeValues do
 
   def process_data_report(nil, nil, nil) do
     nil
-  end
-
-  def process_data_report(
-        _accessible,
-        {:error_report, [error_cls, error_msg, qualifiers]},
-        datainfo
-      ) do
-    %{error_report: [error_cls, error_msg, qualifiers], datainfo: datainfo}
   end
 
   def process_data_report(_accessible, data_report, datainfo) do

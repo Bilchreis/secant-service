@@ -64,6 +64,11 @@ defmodule SecantService.PlotCacheDispatcher do
 
     {:noreply, state}
   end
+
+  # Only value updates are expected on this topic. Ignore anything else
+  # rather than crash: under :rest_for_one a crash here would also restart
+  # the NodeDBWriter.
+  def handle_info(_msg, state), do: {:noreply, state}
 end
 
 defmodule SecantService.PlotCache do
