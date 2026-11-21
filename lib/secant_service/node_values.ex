@@ -1,10 +1,21 @@
 defmodule SecantService.NodeValues do
+  @moduledoc """
+  The current value of every parameter of one node, processed for display.
+
+  Changed values are not broadcast one by one. They are collected, latest per
+  parameter, and published together once per `:values_publish_interval`
+  (250 ms by default) as
+  `{:value_updates, node_id, %{{module, parameter} => processed}}` on
+  `SecantService.Topics.processed_values/1`. Every dashboard viewer of the
+  node then handles a few messages per second instead of one per update.
+  """
   use GenServer
   alias SecantClient.NodeTable
   alias SecantService.Topics
   require Logger
 
   @pubsub_name :secant_client_pubsub
+  @default_publish_interval 250
 
   def start_link(node_db) do
     state = %{node_db: node_db}
@@ -72,6 +83,7 @@ defmodule SecantService.NodeValues do
       state
       |> Map.put(:table, table)
       |> Map.put(:values, values)
+      |> Map.put(:pending, %{})
 
     Logger.info(
       "Started NodeValues for Node: #{state.node_db.equipment_id} (#{state.node_db.uuid})"
@@ -82,47 +94,39 @@ defmodule SecantService.NodeValues do
 
   @impl true
   def handle_info({:value_update, module, accessible, data_report}, state) do
-    new_state =
-      case value_update(state.values, state.node_db, state.table, module, accessible, data_report) do
-        {:ok, :equal, _values} ->
-          state
-
-        {:ok, :updated, values} ->
-          Map.put(state, :values, values)
-
-        _ ->
-          state
-      end
-
-    {:noreply, new_state}
+    {:noreply, apply_update(state, module, accessible, data_report)}
   end
 
-  @impl true
   def handle_info({:error_update, module, accessible, error_report}, state) do
-    # wrap error report in a tuple
-    error_report = {:error_report, error_report}
-
-    new_state =
-      case value_update(
-             state.values,
-             state.node_db,
-             state.table,
-             module,
-             accessible,
-             error_report
-           ) do
-        {:ok, :equal, _values} ->
-          state
-
-        {:ok, :updated, values} ->
-          Map.put(state, :values, values)
-
-        _ ->
-          state
-      end
-
-    {:noreply, new_state}
+    {:noreply, apply_update(state, module, accessible, {:error_report, error_report})}
   end
+
+  def handle_info(:publish, state) do
+    Phoenix.PubSub.broadcast(
+      SecantService.PubSub,
+      Topics.processed_values(state.node_db.node_id),
+      {:value_updates, state.node_db.node_id, state.pending}
+    )
+
+    {:noreply, %{state | pending: %{}}}
+  end
+
+  defp apply_update(state, module, accessible, report) do
+    case value_update(state.values, state.table, module, accessible, report) do
+      {:ok, :updated, values, processed} ->
+        if map_size(state.pending) == 0,
+          do: Process.send_after(self(), :publish, publish_interval())
+
+        pending = Map.put(state.pending, {module, accessible}, processed)
+        %{state | values: values, pending: pending}
+
+      _ ->
+        state
+    end
+  end
+
+  defp publish_interval,
+    do: Application.get_env(:secant_service, :values_publish_interval, @default_publish_interval)
 
   @impl true
   def handle_call(:get_values, _from, state) do
@@ -184,7 +188,7 @@ defmodule SecantService.NodeValues do
     {:ok}
   end
 
-  def value_update(values, node_db, table, module, accessible, data_report) do
+  def value_update(values, table, module, accessible, data_report) do
     # Check if the module exists
 
     case get_in(values, [module, accessible]) do
@@ -213,15 +217,9 @@ defmodule SecantService.NodeValues do
         if old_without_timestamp == merged_without_timestamp do
           {:ok, :equal, values}
         else
-          Phoenix.PubSub.broadcast(
-            SecantService.PubSub,
-            Topics.processed_values(node_db.node_id),
-            {:value_update, :updated, module, accessible, new_param_val}
-          )
-
           insert_parameter_value(table, module, accessible, merged_param_val)
 
-          {:ok, :updated, put_in(values, [module, accessible], merged_param_val)}
+          {:ok, :updated, put_in(values, [module, accessible], merged_param_val), new_param_val}
         end
     end
   end

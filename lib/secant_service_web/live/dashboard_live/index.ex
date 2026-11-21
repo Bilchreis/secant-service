@@ -1,8 +1,6 @@
 defmodule SecantServiceWeb.DashboardLive.Index do
   use SecantServiceWeb, :live_view
 
-  @value_flush_ms 250
-
   alias SecantService.Model
   alias SecantClient
   alias SecantClient.NodeDiscover
@@ -125,12 +123,13 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       if requested != nil and requested != current_id do
         if current_id, do: unsubscribe_from_node(current_id)
 
+        # Subscribe before taking the snapshot so no batch falls in between.
+        subscribe_to_node(requested)
+
         # a node without running services has nothing to show: no current node
         model = Model.set_current_node(%{model | current_node: nil, values: nil}, requested)
 
-        if model.current_node do
-          subscribe_to_node(model.current_node.node_id)
-        end
+        if model.current_node == nil, do: unsubscribe_from_node(requested)
 
         socket
         |> Model.to_socket(model)
@@ -326,35 +325,23 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     {:noreply, socket}
   end
 
-  # Live values are buffered and pushed to the widgets at most every
-  # @value_flush_ms, keeping only the latest value per parameter. A node that
-  # publishes hundreds of updates per second then costs a few diffs per
-  # second per viewer instead of one diff per update.
+  # NodeValues publishes the changed values of a node in one batch per
+  # interval (250 ms by default), latest per parameter, so each viewer handles
+  # a few messages per second however fast the node updates.
   @impl true
-  def handle_info({:value_update, :updated, module, accessible, data_report}, socket) do
-    pending = socket.private[:pending_values] || %{}
-
-    if map_size(pending) == 0 do
-      Process.send_after(self(), :flush_values, @value_flush_ms)
-    end
-
-    {:noreply,
-     put_private(socket, :pending_values, Map.put(pending, {module, accessible}, data_report))}
-  end
-
-  def handle_info(:flush_values, socket) do
-    pending = socket.private[:pending_values] || %{}
-    socket = put_private(socket, :pending_values, %{})
+  def handle_info({:value_updates, node_id, batch}, socket) do
     values = socket.assigns.values
 
     socket =
       case socket.assigns.current_node do
-        %{host: host, port: port} when is_map(values) ->
+        # a batch of the previous node can still be queued after a switch
+        %{node_id: ^node_id, host: host, port: port} when is_map(values) ->
           node_id_str = "#{host}:#{port}"
+          selected = socket.assigns.selected_module
 
-          Enum.reduce(pending, socket, fn {{module, accessible}, data_report}, socket ->
+          Enum.reduce(batch, socket, fn {{module, accessible}, data_report}, socket ->
             if Map.has_key?(values, module) do
-              update_components(node_id_str, module, accessible, data_report)
+              update_components(node_id_str, module, accessible, data_report, selected)
               put_status_color(socket, module, accessible, data_report)
             else
               socket
@@ -505,7 +492,17 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     node_id
   end
 
-  def update_components(node_id_str, module, "status", data_report) do
+  # The module cards are rendered for every module, the inspector only for
+  # the selected one: skip the inspector components of the others.
+  defp update_components(node_id_str, module, accessible, data_report, selected) do
+    update_cards(node_id_str, module, accessible, data_report)
+
+    if module == selected do
+      update_inspector(node_id_str, module, accessible, data_report)
+    end
+  end
+
+  defp update_cards(node_id_str, module, "status", data_report) do
     send_update(SecantServiceWeb.Components.ModuleIndicator,
       id: "module_indicator:" <> node_id_str <> ":" <> module,
       value_update: data_report
@@ -515,55 +512,34 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       id: "module_indicator_mod:" <> node_id_str <> ":" <> module,
       value_update: data_report
     )
+  end
 
-    send_update(SecantServiceWeb.Components.ModuleIndicator,
-      id: "module_indicator_insp:" <> node_id_str <> ":" <> module,
-      value_update: data_report
-    )
+  defp update_cards(node_id_str, module, accessible, data_report)
+       when accessible in ["value", "target"] do
+    if accessible == "value",
+      do: update_acquisition_goal(node_id_str, module, accessible, data_report)
 
     send_update(SecantServiceWeb.Components.ParameterValueDisplay,
-      id: "parameter_value:" <> node_id_str <> ":" <> module <> ":" <> "status",
+      id: "module_dash:" <> node_id_str <> ":" <> module <> ":" <> accessible,
       value_update: data_report
     )
   end
 
-  def update_components(node_id_str, module, "value", data_report) do
-    update_acquisition_goal(node_id_str, module, "value", data_report)
-
-    send_update(SecantServiceWeb.Components.ParameterValueDisplay,
-      id: "module_dash:" <> node_id_str <> ":" <> module <> ":" <> "value",
-      value_update: data_report
-    )
-
-    send_update(SecantServiceWeb.Components.ParameterValueDisplay,
-      id: "parameter_value:" <> node_id_str <> ":" <> module <> ":" <> "value",
-      value_update: data_report
-    )
-  end
-
-  def update_components(node_id_str, module, "target", data_report) do
-    send_update(SecantServiceWeb.Components.ParameterValueDisplay,
-      id: "parameter_value:" <> node_id_str <> ":" <> module <> ":" <> "target",
-      value_update: data_report
-    )
-
-    send_update(SecantServiceWeb.Components.ParameterValueDisplay,
-      id: "module_dash:" <> node_id_str <> ":" <> module <> ":" <> "target",
-      value_update: data_report
-    )
-  end
-
-  def update_components(node_id_str, module, accessible, data_report)
-      when accessible in ["goal", "goal_enable"] do
+  defp update_cards(node_id_str, module, accessible, data_report)
+       when accessible in ["goal", "goal_enable"] do
     update_acquisition_goal(node_id_str, module, accessible, data_report)
-
-    send_update(SecantServiceWeb.Components.ParameterValueDisplay,
-      id: "parameter_value:" <> node_id_str <> ":" <> module <> ":" <> accessible,
-      value_update: data_report
-    )
   end
 
-  def update_components(node_id_str, module, accessible, data_report) do
+  defp update_cards(_node_id_str, _module, _accessible, _data_report), do: :ok
+
+  defp update_inspector(node_id_str, module, accessible, data_report) do
+    if accessible == "status" do
+      send_update(SecantServiceWeb.Components.ModuleIndicator,
+        id: "module_indicator_insp:" <> node_id_str <> ":" <> module,
+        value_update: data_report
+      )
+    end
+
     send_update(SecantServiceWeb.Components.ParameterValueDisplay,
       id: "parameter_value:" <> node_id_str <> ":" <> module <> ":" <> accessible,
       value_update: data_report

@@ -118,6 +118,28 @@ defmodule SecantServiceWeb.DashboardLiveTest do
     refute render(view) =~ "49.5"
   end
 
+  test "live values reach every module card and the inspector of the selected module",
+       %{conn: conn, node_id: node_id, path: path} do
+    connect_and_wait(node_id, @desc_a)
+    view = open_dashboard(conn, path <> "&module=temp")
+
+    send_value_update(node_id, "press", "value", [7.25, %{t: 1_700_000_001.0}])
+    send_value_update(node_id, "temp", "value", [3.75, %{t: 1_700_000_002.0}])
+
+    assert eventually(fn -> has_element?(view, "#card-press", "7.25") end)
+
+    inspector_row = "#" <> escape("param-row:dash_parameter:#{topic(node_id)}:temp:value")
+    assert eventually(fn -> has_element?(view, inspector_row, "3.75") end)
+
+    assert has_element?(view, "#card-temp", "3.75")
+
+    # the inspector follows a change of the selected module
+    render_patch(view, path <> "&module=press")
+    send_value_update(node_id, "press", "value", [8.5, %{t: 1_700_000_003.0}])
+    press_row = "#" <> escape("param-row:dash_parameter:#{topic(node_id)}:press:value")
+    assert eventually(fn -> has_element?(view, press_row, "8.5") end)
+  end
+
   test "a status error report is shown and keeps the page alive",
        %{conn: conn, node_id: {host, port} = node_id, path: path} do
     connect_and_wait(node_id, @desc_a)

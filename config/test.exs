@@ -52,3 +52,6 @@ config :phoenix, :plug_init_mode, :runtime
 # Enable helpful, but potentially expensive runtime checks
 config :phoenix_live_view,
   enable_expensive_runtime_checks: true
+
+# NodeValues batches changed values; publish quickly so tests need not wait
+config :secant_service, values_publish_interval: 10
