@@ -1,10 +1,15 @@
 defmodule SecantService.MixProject do
   use Mix.Project
 
+  # Bumping this is the release: once it lands on main, the release workflow
+  # tests it, pushes the Docker image and creates the v<version> tag and
+  # GitHub release.
+  @version "0.3.0"
+
   def project do
     [
       app: :secant_service,
-      version: "0.2.18",
+      version: @version,
       elixir: "~> 1.20.1",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,

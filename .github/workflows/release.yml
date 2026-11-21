@@ -1,0 +1,82 @@
+name: Release
+
+# Bumping @version in mix.exs is the release: when main carries a version that
+# has no v<version> tag yet, this runs the CI checks, pushes the Docker image
+# tagged <version> and latest, then creates the tag and the GitHub release.
+on:
+  push:
+    branches: [main]
+  # To retry a release that failed.
+  workflow_dispatch:
+
+# One release at a time, and never cancel one half way through.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Cheap gate that runs on every push to main, so the rest only starts when
+  # there is something to release.
+  check:
+    name: Check for an unreleased version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compare mix.exs version with the tags
+        id: version
+        run: |
+          version="$(sed -n 's/^ *@version "\(.*\)"$/\1/p' mix.exs)"
+          if [ -z "$version" ]; then
+            echo "::error::Could not read @version from mix.exs"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "v$version is already released."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$version has no tag yet, releasing."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    name: Test
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    uses: ./.github/workflows/ci.yml
+
+  image:
+    name: Docker image
+    needs: [check, test]
+    uses: ./.github/workflows/docker-build-push.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+  # Last, so a failed image push leaves no tag and the release can be retried.
+  release:
+    name: Release v${{ needs.check.outputs.version }}
+    needs: [check, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write # create the tag and the GitHub release
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - name: Create the tag and GitHub release
+        run: gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

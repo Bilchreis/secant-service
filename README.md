@@ -30,6 +30,13 @@ setup in `docker-compose.yml`.
 
 Ready to run in production? Please [check our deployment guides](https://hexdocs.pm/phoenix/deployment.html).
 
+## Releasing
+
+Bump `@version` in `mix.exs` and merge to `main`. The release workflow then
+runs the CI checks, pushes the Docker image tagged `<version>` and `latest`, and
+creates the `v<version>` tag and GitHub release. Pushes that don't change the
+version release nothing.
+
 ## Learn more
 
   * Official website: https://www.phoenixframework.org/
