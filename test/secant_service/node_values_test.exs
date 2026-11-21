@@ -8,12 +8,12 @@ defmodule SecantService.NodeValuesTest do
   @desc %{"temp" => ["value", "status", "target"]}
 
   setup do
-    Phoenix.PubSub.subscribe(SecantService.PubSub, NodeManager.services_topic())
+    Phoenix.PubSub.subscribe(SecantService.PubSub, SecantService.Topics.node_services())
     node_id = unique_node_id()
     connect_node(node_id, raw_description("eq-#{elem(node_id, 1)}", @desc))
     assert_receive {:node_services_ready, ^node_id, _}, 5_000
 
-    Phoenix.PubSub.subscribe(SecantService.PubSub, "value_update:processed:#{topic(node_id)}")
+    Phoenix.PubSub.subscribe(SecantService.PubSub, SecantService.Topics.processed_values(node_id))
     {:ok, node_id: node_id, values_pid: values_pid(node_id)}
   end
 

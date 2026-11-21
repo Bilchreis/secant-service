@@ -123,9 +123,6 @@ defmodule SecantService.SecNodes.SecNode do
                 sort: [{:inserted_at, :desc}],
                 load: [
                   :node_id,
-                  :values_pubsub_topic,
-                  :processed_values_pubsub_topic,
-                  :error_pubsub_topic,
                   :node_id_str,
                   :display_description,
                   :display_equipment_id,
@@ -146,9 +143,6 @@ defmodule SecantService.SecNodes.SecNode do
       prepare build(
                 load: [
                   :node_id,
-                  :values_pubsub_topic,
-                  :processed_values_pubsub_topic,
-                  :error_pubsub_topic,
                   :node_id_str,
                   :display_description,
                   :display_equipment_id,
@@ -361,25 +355,6 @@ defmodule SecantService.SecNodes.SecNode do
   end
 
   calculations do
-    calculate :values_pubsub_topic,
-              :string,
-              expr(
-                "value_update:" <> ^ref(:host) <> ":" <> fragment("CAST(? AS TEXT)", ^ref(:port))
-              )
-
-    calculate :processed_values_pubsub_topic,
-              :string,
-              expr(
-                "value_update:processed:" <>
-                  ^ref(:host) <> ":" <> fragment("CAST(? AS TEXT)", ^ref(:port))
-              )
-
-    calculate :error_pubsub_topic,
-              :string,
-              expr(
-                "error_update:" <> ^ref(:host) <> ":" <> fragment("CAST(? AS TEXT)", ^ref(:port))
-              )
-
     calculate :node_id_str,
               :string,
               expr(^ref(:host) <> ":" <> fragment("CAST(? AS TEXT)", ^ref(:port)))

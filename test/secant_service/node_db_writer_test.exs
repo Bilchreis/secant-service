@@ -12,7 +12,7 @@ defmodule SecantService.NodeDBWriterTest do
   @desc %{"temp" => ["value", "status"]}
 
   setup do
-    Phoenix.PubSub.subscribe(SecantService.PubSub, NodeManager.services_topic())
+    Phoenix.PubSub.subscribe(SecantService.PubSub, SecantService.Topics.node_services())
     node_id = unique_node_id()
     state = connect_node(node_id, raw_description("eq-#{elem(node_id, 1)}", @desc))
     assert_receive {:node_services_ready, ^node_id, _}, 5_000

@@ -9,7 +9,7 @@ defmodule SecantServiceWeb.DashboardLiveTest do
   @desc_b %{"temp" => ["value", "status", "target"], "flow" => ["value", "status"]}
 
   setup %{conn: conn} do
-    Phoenix.PubSub.subscribe(SecantService.PubSub, NodeManager.services_topic())
+    Phoenix.PubSub.subscribe(SecantService.PubSub, SecantService.Topics.node_services())
     node_id = unique_node_id()
     {:ok, conn: conn, node_id: node_id, path: "/dashboard?node=#{topic(node_id)}"}
   end

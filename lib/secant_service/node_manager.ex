@@ -27,7 +27,7 @@ defmodule SecantService.NodeManager do
       keeps recording is never cleaned up or purged.
 
   Whenever services for a node have been (re)started or stopped, this is
-  broadcast on `SecantService.PubSub`, topic `services_topic/0`:
+  broadcast on `SecantService.PubSub`, topic `SecantService.Topics.node_services/0`:
 
     * `{:node_services_ready, node_id, uuid}`
     * `{:node_services_stopped, node_id}`
@@ -43,7 +43,6 @@ defmodule SecantService.NodeManager do
   alias SecantService.DescribeMessageTransformer
 
   @pubsub_name :secant_client_pubsub
-  @services_topic "node_services"
   # Periodic safety-net sync; events (new node, description change) are the primary trigger
   @check_interval :timer.minutes(10)
   @max_retry_interval :timer.minutes(1)
@@ -53,9 +52,6 @@ defmodule SecantService.NodeManager do
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
-
-  @doc "Topic on `SecantService.PubSub` where service lifecycle events are broadcast."
-  def services_topic, do: @services_topic
 
   @doc "Trigger an asynchronous sync of all nodes."
   def sync_nodes do
@@ -362,7 +358,7 @@ defmodule SecantService.NodeManager do
   end
 
   defp broadcast(message) do
-    Phoenix.PubSub.broadcast(SecantService.PubSub, @services_topic, message)
+    Phoenix.PubSub.broadcast(SecantService.PubSub, SecantService.Topics.node_services(), message)
   end
 
   # Like SecantClient.NodeSupervisor.get_active_nodes/0, but one slow or dying node

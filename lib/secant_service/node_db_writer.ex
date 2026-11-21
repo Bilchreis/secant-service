@@ -65,6 +65,7 @@ defmodule SecantService.NodeDBWriter do
   alias SecantService.SecNodes
   alias SecantService.SecNodes.Reading
   alias SecantService.SecNodes.Reading.Storage
+  alias SecantService.Topics
 
   @pubsub_name :secant_client_pubsub
 
@@ -87,7 +88,7 @@ defmodule SecantService.NodeDBWriter do
     # Trap exits so terminate/2 runs (and stores the buffer) when the node
     # services are shut down, e.g. on a description change.
     Process.flag(:trap_exit, true)
-    Phoenix.PubSub.subscribe(@pubsub_name, node_db.values_pubsub_topic)
+    Phoenix.PubSub.subscribe(@pubsub_name, Topics.value_update(node_db.node_id))
 
     parameters = build_parameter_cache(node_db.uuid)
 

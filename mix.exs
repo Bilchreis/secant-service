@@ -17,6 +17,13 @@ defmodule SecantService.MixProject do
       deps: deps(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
       listeners: [Phoenix.CodeReloader],
+      dialyzer: [
+        # in _build, which CI caches with the rest of the build
+        plt_core_path: "_build/#{Mix.env()}",
+        plt_add_apps: [:mix, :ex_unit],
+        flags: [:extra_return, :missing_return],
+        ignore_warnings: ".dialyzer_ignore.exs"
+      ],
       consolidate_protocols: Mix.env() != :dev,
       hex: [
         # assent 0.2.x: Sign in with Apple callback claims override
@@ -30,7 +37,7 @@ defmodule SecantService.MixProject do
   end
 
   def cli do
-    [preferred_envs: [precommit: :test]]
+    [preferred_envs: [precommit: :test, dialyzer: :test]]
   end
 
   # Configuration for the OTP application.
@@ -97,6 +104,9 @@ defmodule SecantService.MixProject do
       {:secant_client, "~> 0.5.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.19", only: [:dev, :test], runtime: false},
+      # test only, like precommit: a dev dependency would ask the running dev
+      # server to recompile it
+      {:dialyxir, "~> 1.4", only: :test, runtime: false},
       {:tzdata, "~> 1.1"},
       {:exprintf, "~> 0.2.1"},
       {:pythonx, "~> 0.4.4"},
@@ -127,6 +137,7 @@ defmodule SecantService.MixProject do
         "format",
         "credo --only warning --strict",
         "ash.codegen --check",
+        "dialyzer",
         "test"
       ],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],

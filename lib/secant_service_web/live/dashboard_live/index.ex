@@ -8,7 +8,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   alias SecantClient.NodeDiscover
   alias SecantClient.NodeSupervisor
 
-  alias SecantService.NodeManager
+  alias SecantService.Topics
   alias SecantServiceWeb.DashboardComponents
   alias SecantServiceWeb.SECoPComponents
   require Logger
@@ -18,27 +18,13 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   import SecantServiceWeb.DashboardComponents
 
   defp subscribe_to_node(node_id) do
-    Phoenix.PubSub.subscribe(
-      SecantService.PubSub,
-      "value_update:processed:#{elem(node_id, 0)}:#{elem(node_id, 1)}"
-    )
-
-    Phoenix.PubSub.subscribe(
-      SecantService.PubSub,
-      "plot_data:#{elem(node_id, 0)}:#{elem(node_id, 1)}"
-    )
+    Phoenix.PubSub.subscribe(SecantService.PubSub, Topics.processed_values(node_id))
+    Phoenix.PubSub.subscribe(SecantService.PubSub, Topics.plot_data(node_id))
   end
 
   defp unsubscribe_from_node(node_id) do
-    Phoenix.PubSub.unsubscribe(
-      SecantService.PubSub,
-      "value_update:processed:#{elem(node_id, 0)}:#{elem(node_id, 1)}"
-    )
-
-    Phoenix.PubSub.unsubscribe(
-      SecantService.PubSub,
-      "plot_data:#{elem(node_id, 0)}:#{elem(node_id, 1)}"
-    )
+    Phoenix.PubSub.unsubscribe(SecantService.PubSub, Topics.processed_values(node_id))
+    Phoenix.PubSub.unsubscribe(SecantService.PubSub, Topics.plot_data(node_id))
   end
 
   @impl true
@@ -53,7 +39,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     Phoenix.PubSub.subscribe(:secant_client_pubsub, "state_change")
     Phoenix.PubSub.subscribe(:secant_client_pubsub, "secop_conn_state")
     Phoenix.PubSub.subscribe(:secant_client_pubsub, "new_node")
-    Phoenix.PubSub.subscribe(SecantService.PubSub, NodeManager.services_topic())
+    Phoenix.PubSub.subscribe(SecantService.PubSub, Topics.node_services())
 
     socket =
       socket

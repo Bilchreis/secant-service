@@ -7,9 +7,11 @@ defmodule SecantService.PlotCache do
   One process per node: it subscribes to the node's value topic itself and
   keeps the readings of all parameters of the description in one buffer.
   The batch is broadcast as `{:plot_data, [{module, parameter, reports}]}` on
-  `"plot_data:host:port"`, reports oldest first.
+  `SecantService.Topics.plot_data/1`, reports oldest first.
   """
   use GenServer
+
+  alias SecantService.Topics
 
   @client_pubsub :secant_client_pubsub
   @service_pubsub SecantService.PubSub
@@ -36,8 +38,7 @@ defmodule SecantService.PlotCache do
 
   @impl true
   def init(node_db) do
-    {host, port} = node_db.node_id
-    Phoenix.PubSub.subscribe(@client_pubsub, "value_update:#{host}:#{port}")
+    Phoenix.PubSub.subscribe(@client_pubsub, Topics.value_update(node_db.node_id))
     Process.send_after(self(), :publish, @publish_interval)
 
     known =
@@ -45,7 +46,7 @@ defmodule SecantService.PlotCache do
         {module.name, parameter.name}
       end
 
-    {:ok, %{topic: "plot_data:#{host}:#{port}", known: known, buffer: %{}}}
+    {:ok, %{topic: Topics.plot_data(node_db.node_id), known: known, buffer: %{}}}
   end
 
   @impl true
