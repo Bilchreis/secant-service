@@ -132,6 +132,12 @@ defmodule SecantServiceWeb.DashboardLiveTest do
     assert eventually(fn -> has_element?(view, inspector_row, "3.75") end)
 
     assert has_element?(view, "#card-temp", "3.75")
+
+    # the inspector follows a change of the selected module
+    render_patch(view, path <> "&module=press")
+    send_value_update(node_id, "press", "value", [8.5, %{t: 1_700_000_003.0}])
+    press_row = "#" <> escape("param-row:dash_parameter:#{topic(node_id)}:press:value")
+    assert eventually(fn -> has_element?(view, press_row, "8.5") end)
   end
 
   test "a status error report is shown and keeps the page alive",

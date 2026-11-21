@@ -136,7 +136,7 @@ defmodule SecantService.NodeManagerTest do
 
       send_value_update(node_id, "flow", "value", [12.5, %{t: 1_700_000_100.0}])
 
-      assert_receive {:value_updates, %{{"flow", "value"} => %{data_report: [12.5, _]}}}
+      assert_receive {:value_updates, ^node_id, %{{"flow", "value"} => %{data_report: [12.5, _]}}}
       assert {:ok, %{data_report: [12.5, _]}} = NodeValues.get_value(node_id, "flow", "value")
     end
 

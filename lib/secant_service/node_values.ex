@@ -5,7 +5,7 @@ defmodule SecantService.NodeValues do
   Changed values are not broadcast one by one. They are collected, latest per
   parameter, and published together once per `:values_publish_interval`
   (250 ms by default) as
-  `{:value_updates, %{{module, parameter} => processed}}` on
+  `{:value_updates, node_id, %{{module, parameter} => processed}}` on
   `SecantService.Topics.processed_values/1`. Every dashboard viewer of the
   node then handles a few messages per second instead of one per update.
   """
@@ -105,7 +105,7 @@ defmodule SecantService.NodeValues do
     Phoenix.PubSub.broadcast(
       SecantService.PubSub,
       Topics.processed_values(state.node_db.node_id),
-      {:value_updates, state.pending}
+      {:value_updates, state.node_db.node_id, state.pending}
     )
 
     {:noreply, %{state | pending: %{}}}

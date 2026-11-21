@@ -329,12 +329,13 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   # interval (250 ms by default), latest per parameter, so each viewer handles
   # a few messages per second however fast the node updates.
   @impl true
-  def handle_info({:value_updates, batch}, socket) do
+  def handle_info({:value_updates, node_id, batch}, socket) do
     values = socket.assigns.values
 
     socket =
       case socket.assigns.current_node do
-        %{host: host, port: port} when is_map(values) ->
+        # a batch of the previous node can still be queued after a switch
+        %{node_id: ^node_id, host: host, port: port} when is_map(values) ->
           node_id_str = "#{host}:#{port}"
           selected = socket.assigns.selected_module
 
@@ -493,7 +494,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
   # The module cards are rendered for every module, the inspector only for
   # the selected one: skip the inspector components of the others.
-  def update_components(node_id_str, module, accessible, data_report, selected) do
+  defp update_components(node_id_str, module, accessible, data_report, selected) do
     update_cards(node_id_str, module, accessible, data_report)
 
     if module == selected do
