@@ -166,8 +166,8 @@ defmodule SecantService.NodeManagerTest do
       assert_receive {:node_services_ready, ^node_id, _}, 5_000
 
       eventually(fn ->
-        SecantService.SecNodes.ParameterValueDouble
-        |> Ash.Query.filter(parameter_id == ^temp_value.id and value == 42.5)
+        SecantService.SecNodes.Reading
+        |> Ash.Query.filter(parameter_id == ^temp_value.id and value_float == 42.5)
         |> Ash.read!()
         |> Enum.any?()
       end)

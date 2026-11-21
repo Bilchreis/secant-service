@@ -11,7 +11,7 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
   alias SecantService.SecNodes
   alias SecantService.SecNodes.Parameter
-  alias SecantService.SecNodes.ParameterValue
+  alias SecantService.SecNodes.Reading.Storage
 
   @max_points 4000
   # how many readings the time slider can step through (the most recent ones)
@@ -30,7 +30,7 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
         nil
 
       {:ok, record} ->
-        case ParameterValue.get_raw_value(record, param) do
+        case Storage.raw_value(record) do
           list when is_list(list) -> {list, DateTime.to_unix(record.timestamp, :millisecond)}
           _ -> nil
         end
@@ -54,7 +54,7 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
         nil
 
       {:ok, record} ->
-        case ParameterValue.get_raw_value(record, param) do
+        case Storage.raw_value(record) do
           list when is_list(list) -> {list, DateTime.to_unix(record.timestamp, :millisecond)}
           _ -> nil
         end

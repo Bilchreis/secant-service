@@ -16,7 +16,7 @@ defmodule SecantServiceWeb.ExportController do
   alias SecantService.NexusExport
   alias SecantService.SecNodes
   alias SecantService.SecNodes.Parameter
-  alias SecantService.SecNodes.ParameterValue
+  alias SecantService.SecNodes.Reading.Storage
   alias SecantService.SecNodes.SecNode
 
   def parameter(conn, %{"id" => id} = params) do
@@ -102,7 +102,7 @@ defmodule SecantServiceWeb.ExportController do
         [
           timestamp(pv.timestamp),
           ",",
-          csv_field(ParameterValue.get_raw_value(pv, parameter)),
+          csv_field(Storage.raw_value(pv)),
           "\n"
         ]
       end)
@@ -114,7 +114,6 @@ defmodule SecantServiceWeb.ExportController do
   defp timestamp(%NaiveDateTime{} = ts), do: NaiveDateTime.to_iso8601(ts) <> "Z"
 
   defp csv_field(value) when is_number(value), do: to_string(value)
-  defp csv_field(%Decimal{} = value), do: Decimal.to_string(value)
   defp csv_field(value) when is_boolean(value), do: to_string(value)
   defp csv_field(nil), do: ""
   defp csv_field(value) when is_binary(value), do: quote_csv(value)

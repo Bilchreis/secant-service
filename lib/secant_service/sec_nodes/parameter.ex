@@ -168,65 +168,19 @@ defmodule SecantService.SecNodes.Parameter do
       public? true
     end
 
-    has_many :parameter_values_array_bools, SecantService.SecNodes.ParameterValueArrayBool do
-      public? true
-    end
-
-    has_many :parameter_values_array_doubles,
-             SecantService.SecNodes.ParameterValueArrayDouble do
-      public? true
-    end
-
-    has_many :parameter_values_array_ints, SecantService.SecNodes.ParameterValueArrayInt do
-      public? true
-    end
-
-    has_many :parameter_values_array_strings,
-             SecantService.SecNodes.ParameterValueArrayString do
-      public? true
-    end
-
-    has_many :parameter_values_bools, SecantService.SecNodes.ParameterValueBool do
-      public? true
-    end
-
-    has_many :parameter_values_doubles, SecantService.SecNodes.ParameterValueDouble do
-      public? true
-    end
-
-    has_many :parameter_values_ints, SecantService.SecNodes.ParameterValueInt do
-      public? true
-    end
-
-    has_many :parameter_values_jsons, SecantService.SecNodes.ParameterValueJson do
-      public? true
-    end
-
-    has_many :parameter_values_strings, SecantService.SecNodes.ParameterValueString do
+    has_many :readings, SecantService.SecNodes.Reading do
       public? true
     end
   end
 
   calculations do
-    calculate :calculated_datapoint_count,
-              :integer,
-              SecantService.SecNodes.Calculations.ParameterDatapointCount
-
     calculate :calculated_disk_size_bytes,
               :integer,
               SecantService.SecNodes.Calculations.ParameterDiskSize
   end
 
   aggregates do
-    count :parameter_values_array_bools_count, :parameter_values_array_bools
-    count :parameter_values_array_doubles_count, :parameter_values_array_doubles
-    count :parameter_values_array_ints_count, :parameter_values_array_ints
-    count :parameter_values_array_strings_count, :parameter_values_array_strings
-    count :parameter_values_bools_count, :parameter_values_bools
-    count :parameter_values_doubles_count, :parameter_values_doubles
-    count :parameter_values_ints_count, :parameter_values_ints
-    count :parameter_values_jsons_count, :parameter_values_jsons
-    count :parameter_values_strings_count, :parameter_values_strings
+    count :calculated_datapoint_count, :readings
   end
 
   identities do

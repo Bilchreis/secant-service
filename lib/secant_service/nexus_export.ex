@@ -15,7 +15,8 @@ defmodule SecantService.NexusExport do
   """
 
   alias SecantService.SecNodes
-  alias SecantService.SecNodes.ParameterValue
+  alias SecantService.SecNodes.Reading
+  alias SecantService.SecNodes.Reading.Storage
   alias SecantService.SecNodes.SecNode
 
   require Logger
@@ -72,7 +73,9 @@ defmodule SecantService.NexusExport do
   end
 
   defp read_values(parameter, time_range) do
-    SecNodes.readings!(parameter, Map.put(time_range, :order, :asc), select: [:timestamp, :value])
+    SecNodes.readings!(parameter, Map.put(time_range, :order, :asc),
+      select: [:timestamp | Reading.value_columns()]
+    )
   end
 
   defp pack_timestamps(values) do
@@ -84,20 +87,16 @@ defmodule SecantService.NexusExport do
   defp unix_seconds(%DateTime{} = timestamp),
     do: DateTime.to_unix(timestamp, :microsecond) / 1_000_000
 
+  # doubles as packed float64 when every value is one, JSON otherwise
   defp pack_values(values, parameter) do
-    case ParameterValue.get_storage_type(parameter) do
-      :double ->
-        {"float64",
-         for(%{value: value} <- values, into: <<>>, do: <<to_float(value)::float-64-native>>)}
+    raw = Enum.map(values, &Storage.raw_value/1)
 
-      _ ->
-        {"json",
-         values |> Enum.map(&ParameterValue.get_raw_value(&1, parameter)) |> Jason.encode!()}
+    if Storage.column(parameter) == :value_float and Enum.all?(raw, &is_number/1) do
+      {"float64", for(v <- raw, into: <<>>, do: <<v * 1.0::float-64-native>>)}
+    else
+      {"json", Jason.encode!(raw)}
     end
   end
-
-  defp to_float(%Decimal{} = value), do: Decimal.to_float(value)
-  defp to_float(value) when is_number(value), do: value * 1.0
 
   defp write(describe, series) do
     null = File.open!("/dev/null", [:write])
