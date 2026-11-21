@@ -138,6 +138,9 @@ defmodule SecantService.SecNodes do
       return_records?: false,
       authorize?: false,
       notify?: false,
+      # all or nothing per call: a write killed midway leaves no rows behind,
+      # so NodeDBWriter can send the rows again
+      transaction: :batch,
       # Kernel. because the domain defines its own max/…
       batch_size: Kernel.max(length(rows), 1)
     )

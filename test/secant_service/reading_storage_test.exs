@@ -139,6 +139,24 @@ defmodule SecantService.ReadingStorageTest do
     refute Map.has_key?(qualifiers, "t")
   end
 
+  test "values and qualifiers with a NUL character are stored as sent" do
+    for {datainfo, value} <- [
+          {%{"type" => "string"}, "a\u0000b"},
+          {%{"type" => "array", "members" => %{"type" => "string"}}, ["ok", "\u0000"]},
+          {%{"type" => "struct", "members" => %{"s" => %{"type" => "string"}}},
+           %{"s" => "x\u0000"}}
+        ] do
+      p = parameter(datainfo)
+      row = Storage.to_row(value, p, 1_700_000_000.0, %{"note" => "q\u0000"})
+
+      assert %Ash.BulkResult{status: :success} = SecNodes.insert_readings([row])
+      assert [reading] = SecNodes.readings!(p)
+      assert Storage.raw_value(reading) == value
+      assert Storage.same?(Storage.fingerprint(reading), Storage.fingerprint(row))
+      assert Storage.qualifiers(reading) == %{"note" => "q\u0000"}
+    end
+  end
+
   test "values a column can't hold are kept in value_json" do
     huge = Bitwise.bsl(1, 70)
     p = parameter(@int)
