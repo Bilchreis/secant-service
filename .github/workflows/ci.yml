@@ -59,6 +59,10 @@ jobs:
       - name: Check for missing Ash migrations
         run: mix ash.codegen --check
 
+      # The PLTs live in _build, so the build cache keeps them between runs.
+      - name: Dialyzer
+        run: mix dialyzer --format github
+
       - name: Wait for Postgres
         run: |
           for _ in $(seq 60); do

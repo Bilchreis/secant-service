@@ -1,6 +1,7 @@
 defmodule SecantService.NodeValues do
   use GenServer
   alias SecantClient.NodeTable
+  alias SecantService.Topics
   require Logger
 
   @pubsub_name :secant_client_pubsub
@@ -58,8 +59,8 @@ defmodule SecantService.NodeValues do
 
   @impl true
   def init(state) do
-    Phoenix.PubSub.subscribe(@pubsub_name, state.node_db.values_pubsub_topic)
-    Phoenix.PubSub.subscribe(@pubsub_name, state.node_db.error_pubsub_topic)
+    Phoenix.PubSub.subscribe(@pubsub_name, Topics.value_update(state.node_db.node_id))
+    Phoenix.PubSub.subscribe(@pubsub_name, Topics.error_update(state.node_db.node_id))
 
     # Remove any stale NodeTable entry before starting, so we always get a fresh table
     :ets.delete(:node_table_lookup, {:service, state.node_db.node_id})
@@ -214,7 +215,7 @@ defmodule SecantService.NodeValues do
         else
           Phoenix.PubSub.broadcast(
             SecantService.PubSub,
-            "value_update:processed:#{node_db.node_id_str}",
+            Topics.processed_values(node_db.node_id),
             {:value_update, :updated, module, accessible, new_param_val}
           )
 

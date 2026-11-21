@@ -9,7 +9,7 @@ defmodule SecantServiceWeb.AcquisitionCardTest do
   @t 1_700_000_100.0
 
   setup %{conn: conn} do
-    Phoenix.PubSub.subscribe(SecantService.PubSub, NodeManager.services_topic())
+    Phoenix.PubSub.subscribe(SecantService.PubSub, SecantService.Topics.node_services())
     node_id = unique_node_id()
 
     raw =

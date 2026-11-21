@@ -62,6 +62,9 @@ defmodule SecantServiceWeb.Telemetry do
         tags: [:reason],
         description: "Readings dropped: rejected by the database, buffer full, or on stop"
       ),
+      last_value("secant_service.nodes.recording.count",
+        description: "Nodes whose services are running"
+      ),
 
       # Database Metrics
       summary("secant_service.repo.query.total_time",
@@ -96,9 +99,17 @@ defmodule SecantServiceWeb.Telemetry do
 
   defp periodic_measurements do
     [
-      # A module, function and arguments to be invoked periodically.
-      # This function must call :telemetry.execute/3 and a metric must be added above.
-      # {SecantServiceWeb, :count_users, []}
+      {__MODULE__, :measure_recording, []}
     ]
+  end
+
+  # The poller starts before the node registry and drops a measurement that
+  # raises, so skip the beat until the registry is up.
+  @doc false
+  def measure_recording do
+    count = MapSet.size(SecantService.NodeSupervisor.running_uuids())
+    :telemetry.execute([:secant_service, :nodes, :recording], %{count: count}, %{})
+  rescue
+    ArgumentError -> :ok
   end
 end

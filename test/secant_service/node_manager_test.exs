@@ -15,7 +15,7 @@ defmodule SecantService.NodeManagerTest do
   @desc_b %{"temp" => ["value", "status", "target", "ramp"], "flow" => ["value", "status"]}
 
   setup do
-    Phoenix.PubSub.subscribe(SecantService.PubSub, NodeManager.services_topic())
+    Phoenix.PubSub.subscribe(SecantService.PubSub, SecantService.Topics.node_services())
     {:ok, node_id: unique_node_id()}
   end
 
@@ -57,7 +57,7 @@ defmodule SecantService.NodeManagerTest do
 
     test "batches live values for the plots", %{node_id: node_id} do
       connect(node_id, @desc_a)
-      Phoenix.PubSub.subscribe(SecantService.PubSub, "plot_data:#{topic(node_id)}")
+      Phoenix.PubSub.subscribe(SecantService.PubSub, SecantService.Topics.plot_data(node_id))
 
       send_value_update(node_id, "temp", "value", [1.0, %{t: 1_700_000_001.0}])
       send_value_update(node_id, "temp", "value", [2.0, %{t: 1_700_000_002.0}])
@@ -129,7 +129,11 @@ defmodule SecantService.NodeManagerTest do
       change_description(node_id, raw_description("eq-b", @desc_b))
       assert_receive {:node_services_ready, ^node_id, _}, 5_000
 
-      Phoenix.PubSub.subscribe(SecantService.PubSub, "value_update:processed:#{topic(node_id)}")
+      Phoenix.PubSub.subscribe(
+        SecantService.PubSub,
+        SecantService.Topics.processed_values(node_id)
+      )
+
       send_value_update(node_id, "flow", "value", [12.5, %{t: 1_700_000_100.0}])
 
       assert_receive {:value_update, :updated, "flow", "value", %{data_report: [12.5, _]}}
