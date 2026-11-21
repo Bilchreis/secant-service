@@ -4,7 +4,9 @@ defmodule SecantServiceWeb.ExportControllerTest do
   import Plug.Conn
   import Phoenix.ConnTest
 
-  alias SecantService.SecNodes.{Module, Parameter, ParameterValue, SecNode}
+  alias SecantService.SecNodes
+  alias SecantService.SecNodes.{Module, Parameter, SecNode}
+  alias SecantService.SecNodes.Reading.Storage
 
   @endpoint SecantServiceWeb.Endpoint
 
@@ -93,9 +95,10 @@ defmodule SecantServiceWeb.ExportControllerTest do
       |> Map.fetch!(name)
       |> Enum.with_index()
       |> Enum.each(fn {value, i} ->
-        value
-        |> ParameterValue.create_changeset(parameter, DateTime.add(@start, i, :second))
-        |> Ash.create!()
+        %Ash.BulkResult{status: :success} =
+          SecNodes.insert_readings([
+            Storage.to_row(value, parameter, DateTime.add(@start, i, :second), %{})
+          ])
       end)
     end
 

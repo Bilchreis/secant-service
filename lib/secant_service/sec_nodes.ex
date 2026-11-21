@@ -9,7 +9,9 @@ defmodule SecantService.SecNodes do
   use Ash.Domain,
     otp_app: :secant_service
 
-  alias SecantService.SecNodes.{ParameterValue, SecNode}
+  import Ecto.Query, only: [from: 2]
+
+  alias SecantService.SecNodes.{Reading, SecNode}
 
   resources do
     resource SecantService.SecNodes.Command
@@ -21,15 +23,7 @@ defmodule SecantService.SecNodes do
         default_options: [load: [sec_node: [:node_id]]]
     end
 
-    resource SecantService.SecNodes.ParameterValueArrayBool
-    resource SecantService.SecNodes.ParameterValueArrayDouble
-    resource SecantService.SecNodes.ParameterValueArrayInt
-    resource SecantService.SecNodes.ParameterValueArrayString
-    resource SecantService.SecNodes.ParameterValueBool
-    resource SecantService.SecNodes.ParameterValueDouble
-    resource SecantService.SecNodes.ParameterValueInt
-    resource SecantService.SecNodes.ParameterValueJson
-    resource SecantService.SecNodes.ParameterValueString
+    resource SecantService.SecNodes.Reading
 
     resource SecantService.SecNodes.Parameter do
       define :get_parameter,
@@ -64,7 +58,7 @@ defmodule SecantService.SecNodes do
 
   @doc """
   The stored readings of a parameter, oldest first. `args` are the arguments
-  of the value resources' `:for_parameter` read (e.g. a time window).
+  of `Reading`'s `:for_parameter` read (e.g. a time window).
   """
   def readings!(parameter, args \\ %{}, opts \\ []) do
     parameter |> readings_query(args, opts) |> Ash.read!()
@@ -88,8 +82,7 @@ defmodule SecantService.SecNodes do
   defp readings_query(parameter, args, opts) do
     opts = Keyword.validate!(opts, [:select])
 
-    parameter
-    |> ParameterValue.get_resource_module()
+    Reading
     |> Ash.Query.for_read(:for_parameter, Map.put(args, :parameter_id, parameter.id))
     |> then(&if(opts[:select], do: Ash.Query.select(&1, opts[:select]), else: &1))
   end
@@ -98,19 +91,45 @@ defmodule SecantService.SecNodes do
   def schedule_cleanup, do: AshOban.schedule(SecNode, :cleanup_old_nodes)
 
   @doc """
-  Inserts readings of one storage type (see `ParameterValue.get_resource_module/1`)
-  in one statement. Rows with a nil value are skipped. Returns the
-  `Ash.BulkResult`.
+  The newest stored reading of each of the given parameters, as
+  `%{parameter_id => reading}`; ties on the timestamp go to the last one
+  stored.
+
+  One query, a `LIMIT 1` per parameter (lateral join), so Postgres walks the
+  `(parameter_id, timestamp)` index backwards and TimescaleDB decompresses
+  only that parameter's segment, however long the history is. Plain Ecto on
+  the resource's schema, because Ash queries can't express a lateral join.
+  """
+  def latest_readings([]), do: %{}
+
+  def latest_readings(parameter_ids) do
+    newest =
+      from(r in Reading,
+        where: r.parameter_id == parent_as(:param).id,
+        order_by: [desc: r.timestamp, desc: r.id],
+        limit: 1
+      )
+
+    from(p in fragment("SELECT unnest(?::bigint[]) AS id", ^parameter_ids),
+      as: :param,
+      inner_lateral_join: r in subquery(newest),
+      on: true,
+      select: r
+    )
+    |> SecantService.Repo.all()
+    |> Map.new(&{&1.parameter_id, &1})
+  end
+
+  @doc """
+  Inserts readings (rows from `Reading.Storage.to_row/4`) in one statement.
+  Returns the `Ash.BulkResult`.
 
   Authorization and notifications are off: this is the node services
-  recording what the node reported, and the value resources have no
-  notifiers. One batch per call: about 20% less time per row than the
-  defaults.
+  recording what the node reported, and readings have no notifiers. One
+  batch per call: about 20% less time per row than the defaults.
   """
-  def insert_readings(storage_type, rows) do
-    rows = Enum.reject(rows, &is_nil(&1.value))
-
-    Ash.bulk_create(rows, ParameterValue.get_resource_module(storage_type), :bulk_create,
+  def insert_readings(rows) do
+    Ash.bulk_create(rows, Reading, :create,
       return_errors?: true,
       stop_on_error?: false,
       return_records?: false,

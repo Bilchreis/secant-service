@@ -1,29 +1,32 @@
 defmodule SecantService.NodeDBWriter do
+  @batch_interval 10_000
+  @max_batch_size 1000
+
+  @moduledoc """
+  Records what a node sends: every value update becomes a `Reading`, written
+  in batches (every #{div(@batch_interval, 1000)} s, or sooner at #{@max_batch_size} readings).
+
+  The record is faithful: a value is stored every time it arrives with a new
+  timestamp, even if it did not change, and two different values with the
+  same timestamp are both stored. Only an exact repeat of the last reading of
+  a parameter (same timestamp and same value) is skipped. Nodes resend their
+  current values with the original timestamps when they are activated again,
+  e.g. after a reconnect; those are repeats. The last stored reading of each
+  parameter is loaded at start, so that also holds across restarts of the
+  node services.
+
+  Values already known when the writer starts (`NodeValues`) are written as
+  well, unless they are not newer than what is stored: `NodeValues` keeps the
+  timestamp of the last *change*, so after a restart of the writer alone it
+  can hold an older reading of a value that has been stored since.
+  """
   use GenServer
   require Logger
 
   alias SecantService.SecNodes
-  alias SecantService.SecNodes.ParameterValue
+  alias SecantService.SecNodes.Reading.Storage
 
   @pubsub_name :secant_client_pubsub
-  # Batch parameter values for 5 seconds
-  @batch_interval 10_000
-  # Safety limit for batch size
-  @max_batch_size 1000
-
-  @batch_list [
-    :batch_int,
-    :batch_double,
-    :batch_bool,
-    :batch_string,
-    :batch_array_int,
-    :batch_array_double,
-    :batch_array_bool,
-    :batch_array_string,
-    :batch_json
-  ]
-
-  # Client API
 
   def start_link(node_db) do
     GenServer.start_link(__MODULE__, node_db,
@@ -31,218 +34,74 @@ defmodule SecantService.NodeDBWriter do
     )
   end
 
-  # Server callbacks
-
   @impl true
   def init(node_db) do
     # Trap exits so terminate/2 runs (and flushes the pending batch) when the
     # node services are shut down, e.g. on a description change.
     Process.flag(:trap_exit, true)
+    Phoenix.PubSub.subscribe(@pubsub_name, node_db.values_pubsub_topic)
 
-    # Subscribe to node's topic for parameter updates
-    topic = node_db.values_pubsub_topic
-    Phoenix.PubSub.subscribe(@pubsub_name, topic)
-
-    Logger.info("Started DB writer for Node: #{node_db.equipment_id} (#{node_db.uuid})")
-
-    # Build parameter cache with full parameter records once at startup
-    parameter_cache = build_parameter_cache(node_db.uuid)
-
-    # Log cache stats
-    cache_size = map_size(parameter_cache)
+    parameters = build_parameter_cache(node_db.uuid)
 
     Logger.info(
-      "Built parameter cache for node #{node_db.equipment_id} with #{cache_size} parameters"
+      "Started DB writer for #{node_db.equipment_id} (#{node_db.uuid}), #{map_size(parameters)} parameters"
     )
 
-    # Start batch flush timer
     schedule_batch_flush()
-
-    # Write initial values after init completes
     send(self(), :write_initial_values)
 
     {:ok,
      %{
-       host: node_db.host,
-       port: node_db.port,
        equipment_id: node_db.equipment_id,
-       uuid: node_db.uuid,
        node_id: node_db.node_id,
-       # Separate batches at top level
-       batch_int: [],
-       batch_double: [],
-       batch_bool: [],
-       batch_string: [],
-       batch_array_int: [],
-       batch_array_double: [],
-       batch_array_bool: [],
-       batch_array_string: [],
-       batch_json: [],
-       # Single counter for total batch size across all types
-       batchsize: 0,
-       # Cache of full parameter records (built once, never updated)
-       parameter_cache: parameter_cache
+       parameters: parameters,
+       last: load_last_readings(parameters),
+       # newest first
+       batch: [],
+       batch_size: 0
      }}
   end
 
   @impl true
-  def handle_cast({:parameter_update, module, parameter, value, timestamp, qualifiers}, state) do
-    case Map.get(state.parameter_cache, {module, parameter}) do
-      nil ->
-        # Parameter not in cache, log once and skip
-        Logger.warning("Parameter not in cache (skipping): #{module}:#{parameter}")
-        {:noreply, state}
-
-      parameter_db ->
-        # Determine storage type for this parameter
-        storage_type = ParameterValue.get_storage_type(parameter_db)
-
-        param_val_map =
-          ParameterValue.create_map(
-            value,
-            parameter_db,
-            timestamp || DateTime.utc_now(),
-            qualifiers || %{}
-          )
-
-        # Get the batch field name for this storage type
-        batch_key = get_batch_key(storage_type)
-
-        # Add to the appropriate batch
-        current_batch = Map.get(state, batch_key)
-        updated_batch = [param_val_map | current_batch]
-
-        # Update state with new batch and increment total size
-        new_state =
-          state
-          |> Map.put(batch_key, updated_batch)
-          |> Map.put(:batchsize, state.batchsize + 1)
-
-        # Check if we need to flush based on total size
-        if new_state.batchsize >= @max_batch_size do
-          flush_all_batches(new_state)
-
-          # Clear all batches and reset counter
-          {:noreply,
-           %{
-             new_state
-             | batch_int: [],
-               batch_double: [],
-               batch_bool: [],
-               batch_string: [],
-               batch_array_int: [],
-               batch_array_double: [],
-               batch_array_bool: [],
-               batch_array_string: [],
-               batch_json: [],
-               batchsize: 0
-           }}
-        else
-          {:noreply, new_state}
-        end
-    end
+  def handle_info({:value_update, module, parameter, [value, qualifiers]}, state) do
+    {:noreply, state |> add(module, parameter, value, qualifiers, :live) |> maybe_flush()}
   end
 
-  @impl true
-  def handle_info({:value_update, module, parameter, data_report}, state) do
-    [value, qualifiers] = data_report
-
-    timestamp =
-      case qualifiers do
-        %{t: t} -> t
-        %{"t" => t} -> t
-        _ -> DateTime.utc_now()
-      end
-
-    handle_cast(
-      {:parameter_update, module, parameter, value, timestamp, qualifiers},
-      state
-    )
-  end
-
-  @impl true
   def handle_info(:flush_parameter_batch, state) do
-    # Schedule the next batch
     schedule_batch_flush()
-
-    # Flush current batches if not empty
-    new_state =
-      if state.batchsize == 0 do
-        state
-      else
-        flush_all_batches(state)
-
-        %{
-          state
-          | batch_int: [],
-            batch_double: [],
-            batch_bool: [],
-            batch_string: [],
-            batch_array_int: [],
-            batch_array_double: [],
-            batch_array_bool: [],
-            batch_array_string: [],
-            batch_json: [],
-            batchsize: 0
-        }
-      end
-
-    {:noreply, new_state}
+    {:noreply, flush(state)}
   end
 
-  @impl true
+  # The node services start after the node was described; whatever the node
+  # reported before that is in NodeValues. Written in this process so it lands
+  # before later batches.
   def handle_info(:write_initial_values, state) do
     case SecantService.NodeValues.get_values(state.node_id) do
       {:ok, values} ->
-        initial_maps =
-          Enum.flat_map(state.parameter_cache, fn {{module_name, param_name}, parameter_db} ->
-            case get_in(values, [module_name, param_name]) do
-              %{data_report: [value, qualifiers]} when not is_nil(value) ->
-                timestamp =
-                  case qualifiers do
-                    %{t: t} -> t
-                    %{"t" => t} -> t
-                    _ -> DateTime.utc_now()
-                  end
-
-                param_val_map =
-                  ParameterValue.create_map(value, parameter_db, timestamp, qualifiers || %{})
-
-                [{ParameterValue.get_storage_type(parameter_db), param_val_map}]
+        state =
+          Enum.reduce(state.parameters, state, fn {{module, param}, _}, state ->
+            case get_in(values, [module, param]) do
+              %{data_report: [value, qualifiers]} ->
+                add(state, module, param, value, qualifiers, :initial)
 
               _ ->
-                []
+                state
             end
           end)
 
-        grouped =
-          Enum.group_by(initial_maps, fn {type, _} -> type end, fn {_, map} -> map end)
-
-        count = length(initial_maps)
-        Logger.info("Writing #{count} initial parameter values for node #{state.equipment_id}")
-
-        # Written in this process (not a separate task): it must not outlive
-        # the node services, and later batches should land after it.
-        Enum.each(grouped, fn {storage_type, maps} ->
-          case SecNodes.insert_readings(storage_type, maps) do
-            %Ash.BulkResult{status: :success} ->
-              :ok
-
-            %Ash.BulkResult{status: status, error_count: error_count} ->
-              Logger.warning("Initial #{storage_type} insert: #{status}, #{error_count} errors")
-          end
-        end)
+        Logger.info("Writing #{state.batch_size} initial values for #{state.equipment_id}")
+        write(state.batch)
+        {:noreply, %{state | batch: [], batch_size: 0}}
 
       {:error, reason} ->
         Logger.warning(
-          "Could not get initial values for node #{state.equipment_id}: #{inspect(reason)}"
+          "Could not get initial values for #{state.equipment_id}: #{inspect(reason)}"
         )
-    end
 
-    {:noreply, state}
+        {:noreply, state}
+    end
   end
 
-  @impl true
   def handle_info(msg, state) do
     Logger.debug("NodeDBWriter received unhandled message: #{inspect(msg)}")
     {:noreply, state}
@@ -250,96 +109,109 @@ defmodule SecantService.NodeDBWriter do
 
   @impl true
   def terminate(reason, state) do
-    # Flush any remaining parameter values. Synchronously, so the values are
-    # stored before the services are gone (e.g. on a description change).
-    if state.batchsize > 0 do
-      write_batches(state)
-    end
-
-    Logger.info("Stopping NodeDBWriter for: #{state.equipment_id} (reason: #{inspect(reason)})")
+    # Synchronously, so the values are stored before the services are gone
+    # (e.g. on a description change).
+    write(state.batch)
+    Logger.info("Stopping NodeDBWriter for #{state.equipment_id} (#{inspect(reason)})")
     :ok
+  end
+
+  # -- batching ----------------------------------------------------------------
+
+  defp add(state, module, param, value, qualifiers, source) do
+    qualifiers = qualifiers || %{}
+
+    with %{} = parameter <- param_or_warn(state, module, param),
+         %{} = row <- Storage.to_row(value, parameter, timestamp(qualifiers), qualifiers),
+         fingerprint = Storage.fingerprint(row),
+         last = Map.get(state.last, parameter.id),
+         true <- keep?(source, fingerprint, last) do
+      %{
+        state
+        | batch: [row | state.batch],
+          batch_size: state.batch_size + 1,
+          last: Map.put(state.last, parameter.id, fingerprint)
+      }
+    else
+      _ -> state
+    end
+  end
+
+  # anything the node sends is kept, except an exact repeat of the last reading
+  defp keep?(_source, _fingerprint, nil), do: true
+  defp keep?(:live, fingerprint, last), do: not Storage.same?(fingerprint, last)
+
+  # a value known from before the writer started is only new if it is newer
+  defp keep?(:initial, {ts, _, _}, {last_ts, _, _}), do: DateTime.compare(ts, last_ts) == :gt
+
+  defp param_or_warn(state, module, param) do
+    case Map.get(state.parameters, {module, param}) do
+      nil ->
+        Logger.warning("Parameter not in cache (skipping): #{module}:#{param}")
+        nil
+
+      parameter ->
+        parameter
+    end
+  end
+
+  defp timestamp(%{t: t}), do: t
+  defp timestamp(%{"t" => t}), do: t
+  defp timestamp(_qualifiers), do: DateTime.utc_now()
+
+  defp maybe_flush(%{batch_size: size} = state) when size >= @max_batch_size, do: flush(state)
+  defp maybe_flush(state), do: state
+
+  defp flush(%{batch: []} = state), do: state
+
+  defp flush(state) do
+    batch = state.batch
+    Task.start(fn -> write(batch) end)
+    %{state | batch: [], batch_size: 0}
   end
 
   defp schedule_batch_flush do
     Process.send_after(self(), :flush_parameter_batch, @batch_interval)
   end
 
-  defp flush_all_batches(state) do
-    Task.start(fn -> write_batches(state) end)
-  end
+  # -- writing -----------------------------------------------------------------
 
-  defp write_batches(state) do
-    @batch_list
-    |> Enum.each(fn batch_key ->
-      batch = Map.get(state, batch_key)
+  defp write([]), do: :ok
 
-      unless Enum.empty?(batch) do
-        storage_type = get_storage_type_from_batch_key(batch_key)
-        log_insert_result(SecNodes.insert_readings(storage_type, batch), storage_type, batch)
-      end
-    end)
-  end
+  defp write(batch) do
+    rows = Enum.reverse(batch)
 
-  defp log_insert_result(%Ash.BulkResult{status: :success}, _storage_type, _batch), do: :ok
+    case SecNodes.insert_readings(rows) do
+      %Ash.BulkResult{status: :success} ->
+        :ok
 
-  defp log_insert_result(
-         %Ash.BulkResult{status: :partial_success, error_count: error_count, errors: errors},
-         storage_type,
-         batch
-       ) do
-    attempted = Enum.count(batch, &(not is_nil(&1.value)))
+      %Ash.BulkResult{status: :partial_success, error_count: errors, errors: samples} ->
+        Logger.warning(
+          "Inserted #{length(rows) - errors}/#{length(rows)} readings; e.g. #{inspect(Enum.take(samples, 3))}"
+        )
 
-    Logger.warning(
-      "Partially inserted #{storage_type} values: #{attempted - error_count}/#{attempted} succeeded"
-    )
-
-    # Only log the first few errors to avoid spam
-    for error <- Enum.take(errors, 3) do
-      Logger.warning("Sample #{storage_type} insert error: #{inspect(error)}")
+      %Ash.BulkResult{errors: errors} ->
+        Logger.error("Failed to insert #{length(rows)} readings: #{inspect(errors)}")
     end
   end
 
-  defp log_insert_result(%Ash.BulkResult{status: :error, errors: errors}, storage_type, _batch) do
-    Logger.error("Failed to insert #{storage_type} values: #{inspect(errors)}")
-  end
-
-  # Build a cache of full parameter records indexed by {module_name, parameter_name}
-  # This is only called once during initialization
+  # {module_name, parameter_name} => parameter
   defp build_parameter_cache(node_uuid) do
     {:ok, parameters} = SecNodes.parameters_of_node(node_uuid)
-
-    # Build a map of {module_name, parameter_name} => parameter
-    Enum.reduce(parameters, %{}, fn parameter, acc ->
-      Map.put(acc, {parameter.module.name, parameter.name}, parameter)
-    end)
+    Map.new(parameters, &{{&1.module.name, &1.name}, &1})
   end
 
-  # Map storage type to batch key name
-  defp get_batch_key(storage_type) do
-    case storage_type do
-      :int -> :batch_int
-      :double -> :batch_double
-      :bool -> :batch_bool
-      :string -> :batch_string
-      :array_int -> :batch_array_int
-      :array_double -> :batch_array_double
-      :array_bool -> :batch_array_bool
-      :array_string -> :batch_array_string
-      :json -> :batch_json
-    end
-  end
-
-  defp get_storage_type_from_batch_key(batch_key) do
-    case batch_key do
-      :batch_int -> :int
-      :batch_double -> :double
-      :batch_bool -> :bool
-      :batch_string -> :string
-      :batch_array_int -> :array_int
-      :batch_array_double -> :array_double
-      :batch_array_bool -> :array_bool
-      :batch_array_string -> :array_string
-      :batch_json -> :json
-    end
+  # parameter_id => fingerprint of its newest stored reading. If this fails
+  # the writer still starts: a few repeats stored beat recording nothing.
+  defp load_last_readings(parameters) do
+    parameters
+    |> Map.values()
+    |> Enum.map(& &1.id)
+    |> SecNodes.latest_readings()
+    |> Map.new(fn {id, reading} -> {id, Storage.fingerprint(reading)} end)
+  rescue
+    error ->
+      Logger.error("Could not load the last readings, repeats may be stored: #{inspect(error)}")
+      %{}
   end
 end

@@ -1,7 +1,7 @@
 defmodule SecantService.PlotDB.Builders do
   alias SecantService.SecNodes
   alias SecantService.PlotDB.History
-  alias SecantService.SecNodes.ParameterValue
+  alias SecantService.SecNodes.Reading.Storage
   alias SecantService.NodeValues
 
   # ---------------------------------------------------------------------------
@@ -23,7 +23,7 @@ defmodule SecantService.PlotDB.Builders do
       %{values: values, timestamps: timestamps} = SecNodes.history_window!(param.id, nil, nil)
       {values, timestamps}
     else
-      get_values(param) |> ParameterValue.extract_value_timestamp_lists(param)
+      get_values(param) |> Storage.value_timestamp_lists()
     end
   end
 
@@ -72,7 +72,7 @@ defmodule SecantService.PlotDB.Builders do
 
     param
     |> SecNodes.readings!(%{end_timestamp: end_ts, limit: 1, order: :desc})
-    |> ParameterValue.extract_value_timestamp_lists(param)
+    |> Storage.value_timestamp_lists()
     |> case do
       {[value | _], _} -> value
       _ -> nil
@@ -108,7 +108,7 @@ defmodule SecantService.PlotDB.Builders do
 
     param
     |> SecNodes.readings!(args)
-    |> ParameterValue.extract_value_timestamp_lists(param)
+    |> Storage.value_timestamp_lists()
   end
 
   defp maybe_put(map, _key, nil), do: map

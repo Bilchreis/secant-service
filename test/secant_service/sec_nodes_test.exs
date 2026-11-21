@@ -9,6 +9,7 @@ defmodule SecantService.SecNodesTest do
 
   alias SecantService.SecNodes
   alias SecantService.SecNodes.{Module, Parameter, SecNode}
+  alias SecantService.SecNodes.Reading.Storage
 
   defp create_node(attrs \\ %{}) do
     node =
@@ -47,15 +48,15 @@ defmodule SecantService.SecNodesTest do
   defp insert_values(parameter, count) do
     rows =
       for i <- 1..count do
-        %{
-          parameter_id: parameter.id,
-          value: i * 1.0,
-          timestamp: DateTime.add(~U[2026-01-01 00:00:00.000000Z], i, :second),
-          qualifiers: %{}
-        }
+        Storage.to_row(
+          i * 1.0,
+          parameter,
+          DateTime.add(~U[2026-01-01 00:00:00.000000Z], i, :second),
+          %{}
+        )
       end
 
-    %Ash.BulkResult{status: :success} = SecNodes.insert_readings(:double, rows)
+    %Ash.BulkResult{status: :success} = SecNodes.insert_readings(rows)
   end
 
   # Walk the node through the real lifecycle actions.
@@ -127,24 +128,18 @@ defmodule SecantService.SecNodesTest do
   test "readings, latest_reading and insert_readings" do
     {_node, parameter} = create_node()
 
-    nil_row = %{
-      parameter_id: parameter.id,
-      value: nil,
-      timestamp: DateTime.utc_now(),
-      qualifiers: %{}
-    }
-
-    assert %Ash.BulkResult{status: :success} = SecNodes.insert_readings(:double, [nil_row])
+    assert Storage.to_row(nil, parameter, DateTime.utc_now(), %{}) == nil
+    assert %Ash.BulkResult{status: :success} = SecNodes.insert_readings([])
     assert {:ok, nil} = SecNodes.latest_reading(parameter)
 
     insert_values(parameter, 3)
 
-    assert {:ok, %{value: newest}} = SecNodes.latest_reading(parameter)
-    assert Decimal.equal?(newest, Decimal.new("3.0"))
+    assert {:ok, %{value_float: 3.0}} = SecNodes.latest_reading(parameter)
 
     before = DateTime.add(~U[2026-01-01 00:00:00.000000Z], 2, :second)
-    assert {:ok, %{value: second}} = SecNodes.latest_reading(parameter, %{end_timestamp: before})
-    assert Decimal.equal?(second, Decimal.new("2.0"))
+
+    assert {:ok, %{value_float: 2.0}} =
+             SecNodes.latest_reading(parameter, %{end_timestamp: before})
 
     assert {:ok, [%{timestamp: %DateTime{}} | _] = rows} =
              SecNodes.readings(parameter, %{order: :asc}, select: [:timestamp])

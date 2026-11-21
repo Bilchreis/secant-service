@@ -7,19 +7,18 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.History
   alias SecantService.PlotDB.DTypes.ArrayLatest
-  alias SecantService.SecNodes.ParameterValue
+  alias SecantService.SecNodes.Reading
+  alias SecantService.SecNodes.Reading.Storage
   alias Phoenix.LiveView.JS
   alias Phoenix.LiveView.AsyncResult
 
   defp get_tabledata(secop_obj, params \\ %{}) do
     parameter = get_parameter(secop_obj)
 
-    resource = ParameterValue.get_resource_module(parameter)
-
     # Ensure default pagination parameters are set
     params_with_defaults = Map.merge(%{limit: 20, page: 1, order_by: ["-timestamp"]}, params)
 
-    case AshPagify.validate_and_run(resource, params_with_defaults, [action: :for_parameter], %{
+    case AshPagify.validate_and_run(Reading, params_with_defaults, [action: :for_parameter], %{
            parameter_id: parameter.id
          }) do
       {:ok, {parameter_values, meta}} ->
@@ -691,9 +690,9 @@ defmodule SecantServiceWeb.Components.HistoryDB do
                     |> Calendar.strftime("%d.%m.%Y %H:%M:%S.%f")}
                   </span>
                 </:col>
-                <:col :let={parameter_value} label="Value" field={:value}>
+                <:col :let={parameter_value} label="Value" field={Storage.column(@parameter)}>
                   <div class="max-w-[24rem] truncate font-mono">
-                    {ParameterValue.get_display_value(parameter_value, @parameter)}
+                    {Storage.display_value(parameter_value, @parameter)}
                   </div>
                 </:col>
               </AshPagify.Components.table>

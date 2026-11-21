@@ -90,7 +90,6 @@ defmodule SecantServiceWeb.Components.Sparkline do
     end)
   end
 
-  defp number(%Decimal{} = v), do: Decimal.to_float(v)
   defp number(v) when is_number(v), do: v
   defp number(_), do: nil
 

@@ -15,7 +15,7 @@ defmodule SecantService.PlotDB.History do
 
   alias SecantService.Repo
   alias SecantService.SecNodes.Parameter
-  alias SecantService.SecNodes.ParameterValue
+  alias SecantService.SecNodes.Reading.Storage
 
   @numeric_types ["double", "int", "scaled"]
 
@@ -53,12 +53,12 @@ defmodule SecantService.PlotDB.History do
   """
   @spec window(Parameter.t(), integer | nil, integer | nil, keyword) :: window
   def window(%Parameter{} = param, from_ms, to_ms, opts \\ []) do
-    table = table(param)
+    col = column(param)
 
     case plan(param, from_ms, to_ms, opts) do
       :empty -> empty()
-      {:raw, from, to} -> raw(table, param.id, from, to)
-      {:buckets, from, to, bucket_ms} -> bucketed(table, param.id, from, to, bucket_ms)
+      {:raw, from, to} -> raw(col, param.id, from, to)
+      {:buckets, from, to, bucket_ms} -> bucketed(col, param.id, from, to, bucket_ms)
     end
   end
 
@@ -87,14 +87,14 @@ defmodule SecantService.PlotDB.History do
   defp plan(param, from_ms, to_ms, opts) do
     max_raw = Keyword.get(opts, :max_raw, @default_max_raw)
     max_buckets = Keyword.get(opts, :max_buckets, @default_max_buckets)
-    table = table(param)
+    col = column(param)
 
-    case bounds(table, param.id, from_ms, to_ms) do
+    case bounds(col, param.id, from_ms, to_ms) do
       nil ->
         :empty
 
       {from, to} ->
-        if count_up_to(table, param.id, from, to, max_raw + 1) > max_raw do
+        if count_up_to(col, param.id, from, to, max_raw + 1) > max_raw do
           span_ms = NaiveDateTime.diff(to, from, :millisecond)
           {:buckets, from, to, bucket_width(span_ms, max_buckets)}
         else
@@ -115,21 +115,21 @@ defmodule SecantService.PlotDB.History do
 
   defp empty, do: %{values: [], timestamps: [], aggregated: false, bucket_ms: nil}
 
-  defp table(param) do
-    param |> ParameterValue.get_resource_module() |> AshPostgres.DataLayer.Info.table()
-  end
+  # the parameter's value column; readings kept in another column (a value
+  # that did not fit the declared type) are not plotted
+  defp column(param), do: Storage.column(param)
 
   # The requested window, with open ends replaced by the parameter's first and
   # last reading. nil when the parameter has no readings.
-  defp bounds(_table, _id, from_ms, to_ms) when is_number(from_ms) and is_number(to_ms) do
+  defp bounds(_col, _id, from_ms, to_ms) when is_number(from_ms) and is_number(to_ms) do
     {to_naive(from_ms), to_naive(to_ms)}
   end
 
-  defp bounds(table, id, from_ms, to_ms) do
+  defp bounds(col, id, from_ms, to_ms) do
     {first, last} =
       Repo.one(
-        from v in table,
-          where: v.parameter_id == ^id,
+        from v in "readings",
+          where: v.parameter_id == ^id and not is_nil(field(v, ^col)),
           select: {min(v.timestamp), max(v.timestamp)}
       )
 
@@ -142,24 +142,26 @@ defmodule SecantService.PlotDB.History do
     ms |> trunc() |> DateTime.from_unix!(:millisecond) |> DateTime.to_naive()
   end
 
-  defp readings(table, id, from, to) do
-    from v in table,
-      where: v.parameter_id == ^id and v.timestamp >= ^from and v.timestamp <= ^to
+  defp readings(col, id, from, to) do
+    from v in "readings",
+      where:
+        v.parameter_id == ^id and v.timestamp >= ^from and v.timestamp <= ^to and
+          not is_nil(field(v, ^col))
   end
 
   # number of readings in the window, counting no further than `limit`
-  defp count_up_to(table, id, from, to, limit) do
-    capped = from v in readings(table, id, from, to), limit: ^limit, select: %{one: 1}
+  defp count_up_to(col, id, from, to, limit) do
+    capped = from v in readings(col, id, from, to), limit: ^limit, select: %{one: 1}
 
     Repo.one(from r in subquery(capped), select: count())
   end
 
-  defp raw(table, id, from, to) do
+  defp raw(col, id, from, to) do
     rows =
       Repo.all(
-        from v in readings(table, id, from, to),
+        from v in readings(col, id, from, to),
           order_by: v.timestamp,
-          select: [v.timestamp, v.value]
+          select: [v.timestamp, field(v, ^col)]
       )
 
     {timestamps, values} = rows |> Enum.map(&point/1) |> Enum.unzip()
@@ -169,23 +171,23 @@ defmodule SecantService.PlotDB.History do
   # Per bucket: the first and last reading, and the readings with the lowest
   # and highest value. `first(a, b)` is TimescaleDB's "a of the row with the
   # smallest b", so `first("timestamp", value)` is when the minimum occurred.
-  defp bucketed(table, id, from, to, bucket_ms) do
+  defp bucketed(col, id, from, to, bucket_ms) do
     width = %Postgrex.Interval{microsecs: bucket_ms * 1000}
 
     rows =
       Repo.all(
-        from v in readings(table, id, from, to),
+        from v in readings(col, id, from, to),
           group_by: fragment("time_bucket(?::interval, ?)", ^width, v.timestamp),
           order_by: min(v.timestamp),
           select: [
             min(v.timestamp),
-            fragment("first(?, ?)", v.value, v.timestamp),
-            fragment("first(?, ?)", v.timestamp, v.value),
-            min(v.value),
-            fragment("last(?, ?)", v.timestamp, v.value),
-            max(v.value),
+            fragment("first(?, ?)", field(v, ^col), v.timestamp),
+            fragment("first(?, ?)", v.timestamp, field(v, ^col)),
+            min(field(v, ^col)),
+            fragment("last(?, ?)", v.timestamp, field(v, ^col)),
+            max(field(v, ^col)),
             max(v.timestamp),
-            fragment("last(?, ?)", v.value, v.timestamp)
+            fragment("last(?, ?)", field(v, ^col), v.timestamp)
           ]
       )
 
@@ -209,8 +211,7 @@ defmodule SecantService.PlotDB.History do
     {ms, number(value)}
   end
 
-  # NaN and infinities can't be plotted
-  defp number(%Decimal{coef: coef}) when coef in [:NaN, :inf], do: nil
-  defp number(%Decimal{} = value), do: Decimal.to_float(value)
-  defp number(value), do: value
+  # NaN and infinities (Postgrex returns them as atoms) can't be plotted
+  defp number(value) when is_number(value), do: value
+  defp number(_nan_or_infinity), do: nil
 end

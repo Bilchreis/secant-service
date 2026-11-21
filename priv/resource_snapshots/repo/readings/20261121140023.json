@@ -17,18 +17,6 @@
       "default": "nil",
       "generated?": false,
       "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "value",
-      "type": "boolean"
-    },
-    {
-      "allow_nil?": false,
-      "default": "nil",
-      "generated?": false,
-      "precision": null,
       "primary_key?": true,
       "references": null,
       "scale": null,
@@ -45,32 +33,128 @@
       "references": null,
       "scale": null,
       "size": null,
-      "source": "qualifiers",
+      "source": "value_float",
+      "type": "float"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "value_int",
+      "type": "bigint"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "value_bool",
+      "type": "boolean"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "value_text",
+      "type": "text"
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "value_float_array",
+      "type": [
+        "array",
+        "float"
+      ]
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "value_int_array",
+      "type": [
+        "array",
+        "bigint"
+      ]
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "value_bool_array",
+      "type": [
+        "array",
+        "boolean"
+      ]
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "value_text_array",
+      "type": [
+        "array",
+        "text"
+      ]
+    },
+    {
+      "allow_nil?": true,
+      "default": "nil",
+      "generated?": false,
+      "precision": null,
+      "primary_key?": false,
+      "references": null,
+      "scale": null,
+      "size": null,
+      "source": "value_json",
       "type": "map"
     },
     {
-      "allow_nil?": false,
-      "default": "fragment(\"(now() AT TIME ZONE 'utc')\")",
+      "allow_nil?": true,
+      "default": "nil",
       "generated?": false,
       "precision": null,
       "primary_key?": false,
       "references": null,
       "scale": null,
       "size": null,
-      "source": "inserted_at",
-      "type": "utc_datetime_usec"
-    },
-    {
-      "allow_nil?": false,
-      "default": "fragment(\"(now() AT TIME ZONE 'utc')\")",
-      "generated?": false,
-      "precision": null,
-      "primary_key?": false,
-      "references": null,
-      "scale": null,
-      "size": null,
-      "source": "updated_at",
-      "type": "utc_datetime_usec"
+      "source": "qualifiers",
+      "type": "map"
     },
     {
       "allow_nil?": false,
@@ -93,7 +177,7 @@
           "global": null,
           "strategy": null
         },
-        "name": "parameter_values_bool_parameter_id_fkey",
+        "name": "readings_parameter_id_fkey",
         "on_delete": "delete",
         "on_update": null,
         "primary_key?": true,
@@ -130,30 +214,7 @@
       "include": null,
       "include_base_filter?": true,
       "message": null,
-      "name": "parameter_values_bool_parameter_id_timestamp_index",
-      "nulls_distinct": true,
-      "prefix": null,
-      "table": null,
-      "unique": false,
-      "using": null,
-      "where": null
-    },
-    {
-      "all_tenants?": false,
-      "concurrently": false,
-      "error_fields": [
-        "timestamp"
-      ],
-      "fields": [
-        {
-          "type": "atom",
-          "value": "timestamp"
-        }
-      ],
-      "include": null,
-      "include_base_filter?": true,
-      "message": null,
-      "name": "parameter_values_bool_timestamp_index",
+      "name": "readings_parameter_id_timestamp_index",
       "nulls_distinct": true,
       "prefix": null,
       "table": null,
@@ -164,7 +225,7 @@
   ],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "117FB760669A5AA8A565A3F8D146DE8FC12D521B6E9A9695EDF598B2391AF3BE",
+  "hash": "DE4364807FA4E1682FC3D762AEE5CDF890C080186DFD4623DAEF5EA97CD7A32E",
   "identities": [],
   "multitenancy": {
     "attribute": null,
@@ -173,6 +234,6 @@
   },
   "repo": "Elixir.SecantService.Repo",
   "schema": null,
-  "table": "parameter_values_bool",
+  "table": "readings",
   "temporal": null
 }
