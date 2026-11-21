@@ -7,6 +7,23 @@ defmodule SecantService.SecNodes.SecNode do
 
   alias SecantService.Util
 
+  # what a stored description sets; shared by :create and :upsert
+  @node_fields [
+    :uuid,
+    :equipment_id,
+    :host,
+    :port,
+    :description,
+    :firmware,
+    :implementor,
+    :timeout,
+    :describe_message,
+    :describe_message_raw,
+    :custom_properties,
+    :check_result,
+    :ophyd_class
+  ]
+
   @ash_pagify_options %{
     default_limit: 10
     # scopes
@@ -37,7 +54,7 @@ defmodule SecantService.SecNodes.SecNode do
 
       trigger :recalculate_storage_on_archive do
         scheduler_cron "0 * * * *"
-        action :recalculate_storage
+        action :finish_archiving
         read_action :read_for_storage_recalc
         where expr(state == :processed)
 
@@ -48,7 +65,7 @@ defmodule SecantService.SecNodes.SecNode do
 
       trigger :recalculate_storage_active do
         scheduler_cron "0 * * * *"
-        action :recalculate_storage
+        action :refresh_storage
         where expr(state == :active)
         read_action :read_for_storage_recalc
         worker_module_name SecantService.SecNodes.SecNode.AshOban.Worker.RecalculateStorageHourly
@@ -83,26 +100,31 @@ defmodule SecantService.SecNodes.SecNode do
     transitions do
       transition :sync_node_state, from: :active, to: :processed
       transition :archive, from: :active, to: :processed
-      transition :recalculate_storage, from: :processed, to: :archived
+      transition :finish_archiving, from: :processed, to: :archived
       transition :trash, from: [:archived, :processed], to: :trashed
       transition :restore, from: :trashed, to: :archived
     end
   end
 
+  # The domain (`SecantService.SecNodes`) is the public interface. This one
+  # exists only because AshPagify calls `SecNode.node_only(args, opts)`.
   code_interface do
-    define :node_only, action: :node_only
-    define :toggle_favourite, action: :toggle_favourite
-    define :archive, action: :archive
-    define :trash, action: :trash
-    define :restore, action: :restore
-    define :recalculate_storage, action: :recalculate_storage
-    define :purge_all_trashed, action: :purge_all_trashed
+    define :node_only, action: :node_only, args: [:state_filter]
   end
 
   actions do
     defaults [:destroy]
 
+    # Listing for the data browser, filtered by tab.
     read :node_only do
+      argument :state_filter, :atom do
+        allow_nil? false
+        constraints one_of: [:all, :active, :archived, :trashed, :favourite]
+        default :all
+      end
+
+      prepare SecantService.SecNodes.Preparations.FilterByTab
+
       prepare build(
                 sort: [{:inserted_at, :desc}],
                 load: [
@@ -183,46 +205,8 @@ defmodule SecantService.SecNodes.SecNode do
               )
     end
 
-    # Check if single UUID exists
-    read :exists_by_uuid do
-      argument :uuid, :uuid do
-        allow_nil? false
-      end
-
-      filter expr(uuid == ^arg(:uuid))
-
-      prepare build(select: [:uuid], load: [])
-
-      get? true
-    end
-
-    # Check which UUIDs exist (for batch checking)
-    read :exists_by_uuids do
-      argument :uuids, {:array, :uuid} do
-        allow_nil? false
-      end
-
-      filter expr(uuid in ^arg(:uuids))
-
-      prepare build(select: [:uuid], load: [])
-    end
-
     create :create do
-      accept [
-        :uuid,
-        :equipment_id,
-        :host,
-        :port,
-        :description,
-        :firmware,
-        :implementor,
-        :timeout,
-        :describe_message,
-        :describe_message_raw,
-        :custom_properties,
-        :check_result,
-        :ophyd_class
-      ]
+      accept @node_fields
 
       argument :modules, {:array, :map}
 
@@ -230,21 +214,7 @@ defmodule SecantService.SecNodes.SecNode do
     end
 
     create :upsert do
-      accept [
-        :uuid,
-        :equipment_id,
-        :host,
-        :port,
-        :description,
-        :firmware,
-        :implementor,
-        :timeout,
-        :describe_message,
-        :describe_message_raw,
-        :custom_properties,
-        :check_result,
-        :ophyd_class
-      ]
+      accept @node_fields
 
       argument :modules, {:array, :map}
 
@@ -272,12 +242,7 @@ defmodule SecantService.SecNodes.SecNode do
 
     update :toggle_favourite do
       accept []
-      require_atomic? false
-
-      change fn changeset, _context ->
-        current = Ash.Changeset.get_attribute(changeset, :favourite)
-        Ash.Changeset.change_attribute(changeset, :favourite, !current)
-      end
+      change atomic_update(:favourite, expr(not favourite))
     end
 
     update :archive do
@@ -300,30 +265,28 @@ defmodule SecantService.SecNodes.SecNode do
       change SecantService.SecNodes.Changes.SyncNodeState
     end
 
-    update :recalculate_storage do
+    # processed -> archived: the final storage count of a finished session
+    update :finish_archiving do
       accept []
       require_atomic? false
+      # recounting reads the value hypertables; no need to hold a transaction
+      transaction? false
+
+      change SecantService.SecNodes.Changes.RecalculateSecNodeStorage
+      change transition_state(:archived)
+    end
+
+    # Hourly storage count of a session that is still recording
+    update :refresh_storage do
+      accept []
+      require_atomic? false
+      transaction? false
 
       change SecantService.SecNodes.Changes.RecalculateSecNodeStorage
     end
 
     action :purge_all_trashed, :map do
-      run fn _input, _context ->
-        trashed_nodes =
-          __MODULE__
-          |> Ash.Query.filter_input(%{state: %{eq: :trashed}})
-          |> Ash.read!()
-
-        {success, failure} =
-          Enum.reduce(trashed_nodes, {0, 0}, fn node, {s, f} ->
-            case Ash.destroy(node) do
-              :ok -> {s + 1, f}
-              {:error, _} -> {s, f + 1}
-            end
-          end)
-
-        {:ok, %{success: success, failure: failure}}
-      end
+      run SecantService.SecNodes.Actions.PurgeTrashed
     end
   end
 

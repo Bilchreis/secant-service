@@ -1,7 +1,7 @@
 defmodule SecantServiceWeb.DataBrowserLive.Index do
   use SecantServiceWeb, :live_view
 
-  alias SecantService.SecNodes.SecNode
+  alias SecantService.SecNodes
 
   @impl true
   def mount(_params, _session, socket) do
@@ -40,7 +40,7 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
   def handle_event("toggle_favourite", %{"uuid" => uuid}, socket) do
     node = Enum.find(socket.assigns.sec_nodes, fn n -> n.uuid == uuid end)
 
-    case Ash.update(node, %{}, action: :toggle_favourite) do
+    case SecNodes.toggle_sec_node_favourite(node) do
       {:ok, _updated} ->
         {:noreply, push_patch(socket, to: current_path(socket))}
 
@@ -53,7 +53,7 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
   def handle_event("trash_node", %{"uuid" => uuid}, socket) do
     node = Enum.find(socket.assigns.sec_nodes, fn n -> n.uuid == uuid end)
 
-    case Ash.update(node, %{}, action: :trash) do
+    case SecNodes.trash_sec_node(node) do
       {:ok, _updated} ->
         {:noreply,
          socket
@@ -69,7 +69,7 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
   def handle_event("restore_node", %{"uuid" => uuid}, socket) do
     node = Enum.find(socket.assigns.sec_nodes, fn n -> n.uuid == uuid end)
 
-    case Ash.update(node, %{}, action: :restore) do
+    case SecNodes.restore_sec_node(node) do
       {:ok, _updated} ->
         {:noreply,
          socket
@@ -106,7 +106,7 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
   def handle_event("trigger_cleanup", _params, socket) do
     # The trigger's jobs run in the background (queues are not drained outside
     # tests), so there is no result to report yet.
-    AshOban.schedule(SecNode, :cleanup_old_nodes)
+    SecNodes.schedule_cleanup()
 
     {:noreply,
      socket
@@ -116,7 +116,7 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
 
   @impl true
   def handle_event("trigger_purge", _params, socket) do
-    %{success: success, failure: failure} = SecNode.purge_all_trashed!()
+    %{success: success, failure: failure} = SecNodes.purge_trashed_sec_nodes!()
 
     total = success + failure
 
@@ -138,21 +138,8 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
      |> push_patch(to: current_path(socket))}
   end
 
-  defp list_sec_nodes(params, state_filter, opts) do
-    query =
-      case state_filter do
-        :all ->
-          SecNode
-
-        :favourite ->
-          SecNode |> Ash.Query.filter_input(%{favourite: %{eq: true}})
-
-        filter_state ->
-          SecNode |> Ash.Query.filter_input(%{state: %{eq: filter_state}})
-      end
-
-    AshPagify.validate_and_run(query, params, [action: :node_only] ++ opts)
-  end
+  defp list_sec_nodes(params, state_filter, opts),
+    do: SecNodes.browse_sec_nodes(state_filter, params, opts)
 
   defp parse_state_filter("archived"), do: :archived
   defp parse_state_filter("trashed"), do: :trashed

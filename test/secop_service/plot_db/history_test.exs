@@ -1,6 +1,7 @@
 defmodule SecantService.PlotDB.HistoryTest do
   use SecantService.DataCase, async: false
 
+  alias SecantService.SecNodes
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.History
   alias SecantService.Repo
@@ -219,14 +220,14 @@ defmodule SecantService.PlotDB.HistoryTest do
       insert_readings(parameter, ParameterValueInt, 600, & &1)
       limits = %{max_raw: 100, max_buckets: 60}
 
-      thinned = Parameter.history_window!(parameter.id, nil, nil, limits)
+      thinned = SecNodes.history_window!(parameter.id, nil, nil, limits)
       assert thinned == History.window(parameter, nil, nil, Map.to_list(limits))
       assert thinned.aggregated
 
-      assert Parameter.history_resolution!(parameter.id, nil, nil, limits) ==
+      assert SecNodes.history_resolution!(parameter.id, nil, nil, limits) ==
                %{aggregated: true, bucket_ms: 10_000}
 
-      zoomed = Parameter.history_window!(parameter.id, ms(10), ms(20))
+      zoomed = SecNodes.history_window!(parameter.id, ms(10), ms(20))
       assert zoomed.values == Enum.to_list(10..20)
       refute zoomed.aggregated
     end
@@ -234,9 +235,9 @@ defmodule SecantService.PlotDB.HistoryTest do
     test "refuse parameters that are not plain numbers, and unknown ones" do
       parameter = create_parameter(%{"type" => "string"})
 
-      assert {:error, %Ash.Error.Invalid{}} = Parameter.history_window(parameter.id, nil, nil)
-      assert {:error, %Ash.Error.Invalid{}} = Parameter.history_resolution(parameter.id, nil, nil)
-      assert {:error, %Ash.Error.Invalid{}} = Parameter.history_window(-1, nil, nil)
+      assert {:error, %Ash.Error.Invalid{}} = SecNodes.history_window(parameter.id, nil, nil)
+      assert {:error, %Ash.Error.Invalid{}} = SecNodes.history_resolution(parameter.id, nil, nil)
+      assert {:error, %Ash.Error.Invalid{}} = SecNodes.history_window(-1, nil, nil)
     end
   end
 

@@ -6,7 +6,7 @@ defmodule SecantServiceWeb.NodeBrowserLive.Index do
   """
   use SecantServiceWeb, :live_view
 
-  alias SecantService.SecNodes.SecNode
+  alias SecantService.SecNodes
   alias SecantServiceWeb.DashboardComponents
 
   import SecantServiceWeb.DashboardComponents
@@ -14,7 +14,7 @@ defmodule SecantServiceWeb.NodeBrowserLive.Index do
   @impl true
   def mount(params, _session, socket) do
     node =
-      case Ash.get(SecNode, params["uuid"]) do
+      case SecNodes.get_sec_node(params["uuid"]) do
         {:ok, node} -> node
         {:error, _reason} -> nil
       end

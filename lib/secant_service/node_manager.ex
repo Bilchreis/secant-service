@@ -27,6 +27,7 @@ defmodule SecantService.NodeManager do
   use GenServer
   require Logger
 
+  alias SecantService.SecNodes
   alias SecantService.SecNodes.SecNode
   alias SecantService.NodeSupervisor
   alias SecantService.DescribeMessageTransformer
@@ -220,20 +221,21 @@ defmodule SecantService.NodeManager do
   end
 
   defp ensure_record(node_state) do
-    case Ash.get(SecNode, node_state.uuid) do
+    case SecNodes.get_sec_node(node_state.uuid) do
       {:ok, node_db} ->
         {:ok, node_db}
 
       {:error, _not_found} ->
         transformed = DescribeMessageTransformer.transform(node_state)
 
-        case SecNode |> Ash.Changeset.for_create(:upsert, transformed) |> Ash.create() do
+        case SecNodes.upsert_sec_node(transformed) do
           {:ok, node} ->
             Logger.info(
               "Stored node: #{node_state.equipment_id} #{node_state.host}:#{node_state.port}"
             )
 
-            Ash.get(SecNode, node.uuid)
+            # reload through the primary read for the modules and calculations
+            SecNodes.get_sec_node(node.uuid)
 
           {:error, error} ->
             Logger.error("Failed to store node #{inspect(node_state.node_id)}: #{inspect(error)}")
@@ -265,8 +267,8 @@ defmodule SecantService.NodeManager do
   end
 
   defp archive_record(uuid) do
-    with {:ok, %SecNode{state: :active} = node} <- Ash.get(SecNode, uuid) do
-      case Ash.update(node, %{}, action: :archive) do
+    with {:ok, %SecNode{state: :active} = node} <- SecNodes.get_sec_node(uuid) do
+      case SecNodes.archive_sec_node(node) do
         {:ok, _} ->
           Logger.info("NodeManager: archived node record #{uuid}")
 

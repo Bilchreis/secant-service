@@ -14,6 +14,7 @@ defmodule SecantServiceWeb.ExportController do
   use SecantServiceWeb, :controller
 
   alias SecantService.NexusExport
+  alias SecantService.SecNodes
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.ParameterValue
   alias SecantService.SecNodes.SecNode
@@ -21,10 +22,7 @@ defmodule SecantServiceWeb.ExportController do
   def parameter(conn, %{"id" => id} = params) do
     with {id, ""} <- Integer.parse(id),
          %Parameter{} = parameter <- get_parameter(id) do
-      values =
-        ParameterValue.get_resource_module(parameter)
-        |> Ash.Query.for_read(:for_parameter, read_args(parameter.id, params))
-        |> Ash.read!()
+      values = SecNodes.readings!(parameter, read_args(params))
 
       conn
       |> put_resp_content_type("text/csv")
@@ -39,7 +37,7 @@ defmodule SecantServiceWeb.ExportController do
   end
 
   def node(conn, %{"uuid" => uuid} = params) do
-    with {:ok, %SecNode{} = node} <- Ash.get(SecNode, uuid, not_found_error?: false),
+    with {:ok, %SecNode{} = node} <- SecNodes.get_sec_node(uuid, not_found_error?: false),
          {:ok, file} <- NexusExport.node_file(node, time_range(params)) do
       conn
       |> put_resp_content_type("application/x-hdf5", nil)
@@ -56,14 +54,13 @@ defmodule SecantServiceWeb.ExportController do
   end
 
   defp get_parameter(id) do
-    Parameter
-    |> Ash.Query.for_read(:get_with_context, %{id: id})
-    |> Ash.read_first!()
+    case SecNodes.get_parameter(id, not_found_error?: false) do
+      {:ok, parameter} -> parameter
+      _ -> nil
+    end
   end
 
-  defp read_args(parameter_id, params) do
-    Map.merge(time_range(params), %{parameter_id: parameter_id, order: :asc})
-  end
+  defp read_args(params), do: Map.put(time_range(params), :order, :asc)
 
   defp time_range(params) do
     %{}

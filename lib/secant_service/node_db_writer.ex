@@ -2,6 +2,7 @@ defmodule SecantService.NodeDBWriter do
   use GenServer
   require Logger
 
+  alias SecantService.SecNodes
   alias SecantService.SecNodes.ParameterValue
 
   @pubsub_name :secant_client_pubsub
@@ -223,21 +224,12 @@ defmodule SecantService.NodeDBWriter do
         # Written in this process (not a separate task): it must not outlive
         # the node services, and later batches should land after it.
         Enum.each(grouped, fn {storage_type, maps} ->
-          resource_module = ParameterValue.get_resource_module(storage_type)
-          valid = Enum.reject(maps, fn m -> is_nil(m.value) end)
+          case SecNodes.insert_readings(storage_type, maps) do
+            %Ash.BulkResult{status: :success} ->
+              :ok
 
-          unless Enum.empty?(valid) do
-            case Ash.bulk_create(valid, resource_module, :bulk_create,
-                   return_errors?: true,
-                   stop_on_error?: false,
-                   return_records?: false
-                 ) do
-              %Ash.BulkResult{status: :success} ->
-                :ok
-
-              %Ash.BulkResult{status: status, error_count: error_count} ->
-                Logger.warning("Initial #{storage_type} insert: #{status}, #{error_count} errors")
-            end
+            %Ash.BulkResult{status: status, error_count: error_count} ->
+              Logger.warning("Initial #{storage_type} insert: #{status}, #{error_count} errors")
           end
         end)
 
@@ -283,58 +275,38 @@ defmodule SecantService.NodeDBWriter do
 
       unless Enum.empty?(batch) do
         storage_type = get_storage_type_from_batch_key(batch_key)
-        resource_module = ParameterValue.get_resource_module(storage_type)
-
-        # Filter out records with nil values before bulk insert
-        valid_batch = Enum.reject(batch, fn record -> is_nil(record.value) end)
-
-        if Enum.empty?(valid_batch) do
-          Logger.debug("Skipping empty batch for #{storage_type} after filtering nil values")
-        else
-          # Use Ash bulk_create for efficient batch insertion
-          # authorize?/notify? off and one batch per flush: about 20% less
-          # time per row than the defaults (these resources have no policies
-          # and no notifiers).
-          case Ash.bulk_create(valid_batch, resource_module, :bulk_create,
-                 return_errors?: true,
-                 stop_on_error?: false,
-                 return_records?: false,
-                 authorize?: false,
-                 notify?: false,
-                 batch_size: @max_batch_size
-               ) do
-            %Ash.BulkResult{status: :success} ->
-              Logger.debug("Successfully inserted #{length(valid_batch)} #{storage_type} values")
-
-            %Ash.BulkResult{status: :partial_success, error_count: error_count, errors: errors} ->
-              Logger.warning(
-                "Partially inserted #{storage_type} values: #{length(valid_batch) - error_count}/#{length(valid_batch)} succeeded"
-              )
-
-              # Log details about the first few errors for debugging
-              errors
-              # Only log first 3 to avoid spam
-              |> Enum.take(3)
-              |> Enum.each(fn error ->
-                Logger.warning("Sample #{storage_type} insert error: #{inspect(error)}")
-              end)
-
-            %Ash.BulkResult{status: :error, errors: errors} ->
-              Logger.error("Failed to insert #{storage_type} values: #{inspect(errors)}")
-          end
-        end
+        log_insert_result(SecNodes.insert_readings(storage_type, batch), storage_type, batch)
       end
     end)
+  end
+
+  defp log_insert_result(%Ash.BulkResult{status: :success}, _storage_type, _batch), do: :ok
+
+  defp log_insert_result(
+         %Ash.BulkResult{status: :partial_success, error_count: error_count, errors: errors},
+         storage_type,
+         batch
+       ) do
+    attempted = Enum.count(batch, &(not is_nil(&1.value)))
+
+    Logger.warning(
+      "Partially inserted #{storage_type} values: #{attempted - error_count}/#{attempted} succeeded"
+    )
+
+    # Only log the first few errors to avoid spam
+    for error <- Enum.take(errors, 3) do
+      Logger.warning("Sample #{storage_type} insert error: #{inspect(error)}")
+    end
+  end
+
+  defp log_insert_result(%Ash.BulkResult{status: :error, errors: errors}, storage_type, _batch) do
+    Logger.error("Failed to insert #{storage_type} values: #{inspect(errors)}")
   end
 
   # Build a cache of full parameter records indexed by {module_name, parameter_name}
   # This is only called once during initialization
   defp build_parameter_cache(node_uuid) do
-    # Use Ash to query parameters by node UUID
-    {:ok, parameters} =
-      SecantService.SecNodes.Parameter
-      |> Ash.Query.for_read(:by_node_uuid, %{node_uuid: node_uuid})
-      |> Ash.read()
+    {:ok, parameters} = SecNodes.parameters_of_node(node_uuid)
 
     # Build a map of {module_name, parameter_name} => parameter
     Enum.reduce(parameters, %{}, fn parameter, acc ->

@@ -84,7 +84,7 @@ defmodule SecantService.SecNodes.SecNodeCleanupTest do
       assert length(nodes_to_cleanup) == 2
 
       # Simulate the trigger's :trash action
-      Enum.each(nodes_to_cleanup, &SecNode.trash!/1)
+      Enum.each(nodes_to_cleanup, &SecantService.SecNodes.trash_sec_node!/1)
 
       states = SecNode |> Ash.read!() |> Map.new(&{&1.uuid, &1.state})
       assert states[recent_node.uuid] == :archived

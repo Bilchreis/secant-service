@@ -9,6 +9,7 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
   """
 
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
+  alias SecantService.SecNodes
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.ParameterValue
 
@@ -22,9 +23,8 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
 
   @doc "Latest stored reading of `param` as `{list, ms}`, or nil."
   def fetch_latest(param) do
-    ParameterValue.get_resource_module(param)
-    |> Ash.Query.for_read(:for_parameter, %{parameter_id: param.id, limit: 1, order: :desc})
-    |> Ash.read_first()
+    param
+    |> SecNodes.latest_reading()
     |> case do
       {:ok, nil} ->
         nil
@@ -47,14 +47,8 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
   def fetch_at(param, ms) when is_integer(ms) do
     until = ms |> DateTime.from_unix!(:millisecond) |> DateTime.add(999, :microsecond)
 
-    ParameterValue.get_resource_module(param)
-    |> Ash.Query.for_read(:for_parameter, %{
-      parameter_id: param.id,
-      end_timestamp: until,
-      limit: 1,
-      order: :desc
-    })
-    |> Ash.read_first()
+    param
+    |> SecNodes.latest_reading(%{end_timestamp: until})
     |> case do
       {:ok, nil} ->
         nil
@@ -72,14 +66,8 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
 
   @doc "Times (ms, ascending) of the most recent `@max_times` readings, for the slider."
   def reading_times(param) do
-    ParameterValue.get_resource_module(param)
-    |> Ash.Query.for_read(:for_parameter, %{
-      parameter_id: param.id,
-      limit: @max_times,
-      order: :desc
-    })
-    |> Ash.Query.select([:timestamp])
-    |> Ash.read()
+    param
+    |> SecNodes.readings(%{limit: @max_times, order: :desc}, select: [:timestamp])
     |> case do
       {:ok, records} ->
         records |> Enum.map(&DateTime.to_unix(&1.timestamp, :millisecond)) |> Enum.reverse()
