@@ -153,7 +153,7 @@ defmodule SecantService.ReadingStorageTest do
       assert [reading] = SecNodes.readings!(p)
       assert Storage.raw_value(reading) == value
       assert Storage.same?(Storage.fingerprint(reading), Storage.fingerprint(row))
-      assert Jason.decode!(reading.qualifiers["json"]) == %{"note" => "q\u0000"}
+      assert Storage.qualifiers(reading) == %{"note" => "q\u0000"}
     end
   end
 

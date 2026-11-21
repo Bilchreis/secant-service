@@ -8,9 +8,10 @@ defmodule SecantService.SecNodes.Reading.Storage do
   coerced: it is kept as it was sent in `value_json`. Reading a value back
   therefore never needs the datainfo; it is whichever column is set.
 
-  Postgres text and jsonb cannot hold a NUL character. A value (or
-  qualifiers) containing one is stored as its JSON text instead, which
-  escapes it as `\\u0000`, and decoded again when read.
+  Postgres text and jsonb cannot hold a NUL character. A value containing
+  one is stored as its JSON text instead (`%{"type" => ..., "json" => text}`
+  in `value_json`), which escapes it as `\\u0000`; qualifiers containing one
+  as `%{"_json" => text}`. `raw_value/1` and `qualifiers/1` decode them.
   """
 
   alias SecantService.SecNodes.{Parameter, Reading}
@@ -18,6 +19,9 @@ defmodule SecantService.SecNodes.Reading.Storage do
   require Logger
 
   @int_types ["int", "scaled", "enum"]
+  # columns that can hold a string, so a NUL character
+  @string_columns [:value_text, :value_text_array, :value_json]
+  @nul_qualifiers "_json"
   @int64 Bitwise.bsl(1, 63)
   # largest integer that still converts to a float
   @max_float_int trunc(1.7976931348623157e308)
@@ -61,13 +65,19 @@ defmodule SecantService.SecNodes.Reading.Storage do
   @doc "The value of a reading, as the node sent it."
   def raw_value(%Reading{} = reading) do
     case Enum.find_value(Reading.value_columns(), &value_of(reading, &1)) do
-      {:json, %{"json" => text}} -> Jason.decode!(text)
+      {:json, %{"type" => _, "json" => text}} when is_binary(text) -> Jason.decode!(text)
       {:json, %{"value" => value}} -> value
       {:json, value} -> value
       {_column, value} -> value
       nil -> nil
     end
   end
+
+  @doc "The qualifiers of a reading, as the node sent them (without `t`)."
+  def qualifiers(%Reading{qualifiers: %{@nul_qualifiers => text}}) when is_binary(text),
+    do: Jason.decode!(text)
+
+  def qualifiers(%Reading{qualifiers: qualifiers}), do: qualifiers
 
   @doc """
   What makes two readings the same reading: timestamp, column and value, as
@@ -137,10 +147,17 @@ defmodule SecantService.SecNodes.Reading.Storage do
   defp place(raw, datainfo) do
     column = column(datainfo)
 
+    fits? = fits?(column, raw)
+
     cond do
-      nul?(raw) -> {:value_json, %{"type" => datainfo["type"], "json" => Jason.encode!(raw)}}
-      fits?(column, raw) -> {column, cast(column, raw)}
-      true -> {:value_json, %{"type" => datainfo["type"], "value" => raw}}
+      (column in @string_columns or not fits?) and nul?(raw) ->
+        {:value_json, %{"type" => datainfo["type"], "json" => Jason.encode!(raw)}}
+
+      fits? ->
+        {column, cast(column, raw)}
+
+      true ->
+        {:value_json, %{"type" => datainfo["type"], "value" => raw}}
     end
   end
 
@@ -171,7 +188,7 @@ defmodule SecantService.SecNodes.Reading.Storage do
 
   defp drop_t(qualifiers) when is_map(qualifiers) do
     qualifiers = Map.drop(qualifiers, [:t, "t"])
-    if nul?(qualifiers), do: %{"json" => Jason.encode!(qualifiers)}, else: qualifiers
+    if nul?(qualifiers), do: %{@nul_qualifiers => Jason.encode!(qualifiers)}, else: qualifiers
   end
 
   defp drop_t(qualifiers), do: %{"unexpected" => inspect(qualifiers)}

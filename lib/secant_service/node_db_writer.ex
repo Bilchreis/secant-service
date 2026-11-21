@@ -1,8 +1,14 @@
 defmodule SecantService.NodeDBWriter do
   @batch_interval 10_000
   @max_batch_size 1000
-  @max_buffered 100_000
+  # A reading costs @row_weight plus one per array element (or 8 bytes of
+  # text), so the buffer is bounded by memory, not count: about 50k scalar
+  # readings or 1k spectra of 1000 points.
+  @row_weight 20
+  @max_buffered_weight 1_000_000
   @max_retry_delay 30_000
+  # what terminate/2 may take; the child's shutdown is a little longer
+  @stop_budget 25_000
 
   @moduledoc """
   Records what a node sends: every value update becomes a `Reading`, written
@@ -26,24 +32,38 @@ defmodule SecantService.NodeDBWriter do
 
   One write is in flight at a time, in a task, so a slow database neither
   blocks this process nor piles up connections. Readings arriving meanwhile
-  are buffered and go out with the next write, oldest first.
+  are buffered and go out with the next write, oldest first, at most
+  #{@max_batch_size} per statement. Each statement is a transaction: all of
+  it is stored or none.
 
-    * When the database can't be reached, the batch goes back to the front
-      of the buffer and is retried, backing off up to #{div(@max_retry_delay, 1000)} s.
-    * When the database rejects a batch for its data (say a reading of a
-      parameter that was deleted meanwhile), it is split until the rejected
-      readings are found; only those are dropped, and logged.
-    * The buffer holds at most #{@max_buffered} readings. Beyond that, during a
-      long outage, the oldest are dropped, and logged.
+    * When a write fails because the database can't be reached (or for a
+      reason that may pass), the readings go back to the front of the buffer
+      and are retried, backing off up to #{div(@max_retry_delay, 1000)} s.
+    * When a write fails for any other reason, the batch is split until the
+      failing readings are found. A single reading is dropped, and logged,
+      only if the database answers otherwise: a reading of a parameter that
+      was deleted, say, or one the code can't write.
+    * The buffer is bounded by size (about 50k scalar readings, fewer for
+      arrays). During an outage long enough to fill it, the oldest readings
+      are dropped, and logged.
+    * On stop (e.g. a description change) the buffer is written before the
+      writer exits, within #{div(@stop_budget, 1000)} s.
 
-  Each write emits `[:secant_service, :node_db_writer, :write]` telemetry
-  (`duration`, `rows`, `dropped`); dropping readings from a full
-  buffer emits `[:secant_service, :node_db_writer, :overflow]` (`dropped`).
+  Delivery is at least once: a write cut off while committing may be sent
+  again, so in rare cases a reading is stored twice.
+
+  Telemetry:
+
+    * `[:secant_service, :node_db_writer, :write]`: `duration`, `stored`
+      readings; metadata `equipment_id`, `result` (`:ok` or `:retry`).
+    * `[:secant_service, :node_db_writer, :dropped]`: `count`; metadata
+      `equipment_id`, `reason` (`:rejected`, `:overflow` or `:stop`).
   """
   use GenServer
   require Logger
 
   alias SecantService.SecNodes
+  alias SecantService.SecNodes.Reading
   alias SecantService.SecNodes.Reading.Storage
 
   @pubsub_name :secant_client_pubsub
@@ -54,9 +74,12 @@ defmodule SecantService.NodeDBWriter do
     )
   end
 
-  # Time to store the buffer when the node services stop
   def child_spec(node_db) do
-    %{id: __MODULE__, start: {__MODULE__, :start_link, [node_db]}, shutdown: 30_000}
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [node_db]},
+      shutdown: @stop_budget + 5_000
+    }
   end
 
   @impl true
@@ -81,13 +104,16 @@ defmodule SecantService.NodeDBWriter do
        node_id: node_db.node_id,
        parameters: parameters,
        last: load_last_readings(parameters),
-       # newest first
-       batch: [],
-       batch_size: 0,
+       # oldest first
+       queue: :queue.new(),
+       queued: 0,
+       weight: 0,
+       max_weight: config(:writer_max_buffered_weight, @max_buffered_weight),
        # %{task: Task.t(), rows: rows} of the write in flight
        in_flight: nil,
-       # delay of the pending retry after a failed write, nil when none
-       retry_delay: nil
+       # delay of the last retry while writes fail, nil once one succeeds
+       retry_delay: nil,
+       retry_pending?: false
      }}
   end
 
@@ -102,7 +128,7 @@ defmodule SecantService.NodeDBWriter do
   end
 
   def handle_info(:retry_write, state) do
-    {:noreply, flush(%{state | retry_delay: nil}, :retry)}
+    {:noreply, flush(%{state | retry_pending?: false})}
   end
 
   # The write in flight is done
@@ -116,7 +142,7 @@ defmodule SecantService.NodeDBWriter do
         %{in_flight: %{task: %{ref: ref}}} = state
       ) do
     Logger.error("Writing readings of #{state.equipment_id} crashed: #{inspect(reason)}")
-    {:noreply, written(state, {:retry, state.in_flight.rows, 0})}
+    {:noreply, written(state, {:retry, state.in_flight.rows, []})}
   end
 
   # The node services start after the node was described; whatever the node
@@ -125,7 +151,7 @@ defmodule SecantService.NodeDBWriter do
   def handle_info(:write_initial_values, state) do
     case SecantService.NodeValues.get_values(state.node_id) do
       {:ok, values} ->
-        before = state.batch_size
+        before = state.queued
 
         state =
           Enum.reduce(state.parameters, state, fn {{module, param}, _}, state ->
@@ -138,10 +164,7 @@ defmodule SecantService.NodeDBWriter do
             end
           end)
 
-        Logger.info(
-          "Writing #{state.batch_size - before} initial values for #{state.equipment_id}"
-        )
-
+        Logger.info("Writing #{state.queued - before} initial values for #{state.equipment_id}")
         {:noreply, flush(state)}
 
       {:error, reason} ->
@@ -160,34 +183,68 @@ defmodule SecantService.NodeDBWriter do
 
   @impl true
   def terminate(reason, state) do
-    # Synchronously, so the values are stored before the services are gone
-    # (e.g. on a description change). The write in flight finishes first.
+    # Before the services are gone (e.g. on a description change): the write
+    # in flight finishes, then the buffer is written, all within the budget.
+    deadline = System.monotonic_time(:millisecond) + @stop_budget
+
     unsent =
       case state.in_flight do
         nil ->
           []
 
         %{task: task, rows: rows} ->
-          case Task.yield(task, 10_000) || Task.shutdown(task) do
-            {:ok, {:ok, _dropped}} -> []
-            {:ok, {:retry, left, _dropped}} -> left
-            _ -> rows
-          end
+          unsent(state, task, rows, deadline)
       end
 
-    rows = unsent ++ Enum.reverse(state.batch)
-
-    case insert(rows) do
-      {:ok, _dropped} ->
+    case write_by(unsent ++ :queue.to_list(state.queue), deadline, state) do
+      0 ->
         :ok
 
-      {:retry, left, _dropped} ->
-        Logger.error("Lost #{length(left)} readings of #{state.equipment_id} on stop")
+      lost ->
+        Logger.error(
+          "Lost #{lost} readings of #{state.equipment_id}: could not write them on stop"
+        )
+
+        dropped(state, :stop, lost)
     end
 
     Logger.info("Stopping NodeDBWriter for #{state.equipment_id} (#{inspect(reason)})")
     :ok
   end
+
+  # Writes the rows in statements of @max_batch_size until the deadline;
+  # returns how many could not be written.
+  defp write_by(rows, deadline, state) do
+    rows
+    |> Enum.chunk_every(@max_batch_size)
+    |> Enum.reduce(0, fn
+      chunk, 0 ->
+        task = Task.Supervisor.async_nolink(SecantService.TaskSupervisor, fn -> insert(chunk) end)
+        state |> unsent(task, chunk, deadline) |> length()
+
+      chunk, lost ->
+        lost + length(chunk)
+    end)
+  end
+
+  # The rows of a write that are not stored once it is done or the deadline
+  # passed. A write cut off is rolled back, so all its rows are unsent.
+  defp unsent(state, task, rows, deadline) do
+    case Task.yield(task, remaining(deadline)) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:ok, rejected}} ->
+        report_rejected(state, rejected)
+        []
+
+      {:ok, {:retry, left, rejected}} ->
+        report_rejected(state, rejected)
+        left
+
+      _ ->
+        rows
+    end
+  end
+
+  defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
 
   # -- batching ----------------------------------------------------------------
 
@@ -199,12 +256,13 @@ defmodule SecantService.NodeDBWriter do
          fingerprint = Storage.fingerprint(row),
          last = Map.get(state.last, parameter.id),
          true <- keep?(source, fingerprint, last) do
-      # `last` is what was received, not what is stored yet: a reading still
-      # buffered is retried until it is stored, so a repeat of it is a repeat.
+      # `last` is the newest reading received and not dropped: a buffered
+      # reading is retried until it is stored, so a repeat of it is a repeat.
       %{
         state
-        | batch: [row | state.batch],
-          batch_size: state.batch_size + 1,
+        | queue: :queue.in(row, state.queue),
+          queued: state.queued + 1,
+          weight: state.weight + weight(row),
           last: Map.put(state.last, parameter.id, fingerprint)
       }
       |> limit_buffer()
@@ -220,22 +278,56 @@ defmodule SecantService.NodeDBWriter do
   # a value known from before the writer started is only new if it is newer
   defp keep?(:initial, {ts, _, _}, {last_ts, _, _}), do: DateTime.compare(ts, last_ts) == :gt
 
-  # Trims in chunks, not on every reading, so a full buffer costs O(1) per reading
-  defp limit_buffer(%{batch_size: size} = state) when size > @max_buffered + @max_batch_size do
-    dropped = size - @max_buffered
+  # How much a buffered reading costs, roughly in machine words
+  defp weight(row) do
+    @row_weight +
+      case Enum.find_value(Reading.value_columns(), &Map.get(row, &1)) do
+        %{} = json -> json |> Map.values() |> Enum.map(&elements/1) |> Enum.sum()
+        value -> elements(value)
+      end
+  end
+
+  defp elements(list) when is_list(list), do: length(list)
+  defp elements(text) when is_binary(text), do: div(byte_size(text), 8)
+  defp elements(_other), do: 1
+
+  # Over the limit, drops the oldest readings down to 90% of it, so a full
+  # buffer trims (and logs) once per many readings, not on every one.
+  defp limit_buffer(%{weight: weight, max_weight: max} = state) when weight > max do
+    {state, count} = drop_oldest(state, div(max * 9, 10), 0)
 
     Logger.error(
-      "Readings of #{state.equipment_id} can't be written, dropped the oldest #{dropped}"
+      "Readings of #{state.equipment_id} can't be written, dropped the oldest #{count}"
     )
 
-    :telemetry.execute([:secant_service, :node_db_writer, :overflow], %{dropped: dropped}, %{
-      equipment_id: state.equipment_id
-    })
-
-    %{state | batch: Enum.take(state.batch, @max_buffered), batch_size: @max_buffered}
+    dropped(state, :overflow, count)
+    state
   end
 
   defp limit_buffer(state), do: state
+
+  defp drop_oldest(%{weight: weight} = state, target, count) when weight <= target,
+    do: {state, count}
+
+  defp drop_oldest(state, target, count) do
+    {{:value, row}, queue} = :queue.out(state.queue)
+
+    # never stored: a resend of it must not count as a repeat
+    last =
+      if Map.get(state.last, row.parameter_id) == Storage.fingerprint(row),
+        do: Map.delete(state.last, row.parameter_id),
+        else: state.last
+
+    state = %{
+      state
+      | queue: queue,
+        queued: state.queued - 1,
+        weight: state.weight - weight(row),
+        last: last
+    }
+
+    drop_oldest(state, target, count + 1)
+  end
 
   defp param_or_warn(state, module, param) do
     case Map.get(state.parameters, {module, param}) do
@@ -252,7 +344,7 @@ defmodule SecantService.NodeDBWriter do
   defp timestamp(%{"t" => t}), do: t
   defp timestamp(_qualifiers), do: DateTime.utc_now()
 
-  defp maybe_flush(%{batch_size: size} = state) when size >= @max_batch_size, do: flush(state)
+  defp maybe_flush(%{queued: queued} = state) when queued >= @max_batch_size, do: flush(state)
   defp maybe_flush(state), do: state
 
   defp schedule_batch_flush do
@@ -263,37 +355,44 @@ defmodule SecantService.NodeDBWriter do
 
   # Starts a write of the oldest buffered readings, unless one is in flight
   # or a retry is pending (then that comes first).
-  defp flush(state, trigger \\ :batch)
-  defp flush(%{batch: []} = state, _trigger), do: state
-  defp flush(%{in_flight: %{}} = state, _trigger), do: state
-  defp flush(%{retry_delay: delay} = state, :batch) when delay != nil, do: state
+  defp flush(%{queued: 0} = state), do: state
+  defp flush(%{in_flight: %{}} = state), do: state
+  defp flush(%{retry_pending?: true} = state), do: state
 
-  defp flush(state, _trigger) do
-    {newer, oldest} = Enum.split(state.batch, Kernel.max(state.batch_size - @max_batch_size, 0))
-    rows = Enum.reverse(oldest)
+  defp flush(state) do
+    count = min(state.queued, @max_batch_size)
+    {taken, rest} = :queue.split(count, state.queue)
+    rows = :queue.to_list(taken)
+    equipment_id = state.equipment_id
 
     task =
-      Task.Supervisor.async_nolink(SecantService.TaskSupervisor, fn -> timed_insert(rows) end)
+      Task.Supervisor.async_nolink(SecantService.TaskSupervisor, fn ->
+        timed_insert(rows, equipment_id)
+      end)
 
     %{
       state
-      | batch: newer,
-        batch_size: length(newer),
+      | queue: rest,
+        queued: state.queued - count,
+        weight: state.weight - Enum.sum_by(rows, &weight/1),
         in_flight: %{task: task, rows: rows}
     }
   end
 
-  defp written(state, {:ok, _dropped}) do
+  defp written(state, {:ok, rejected}) do
+    report_rejected(state, rejected)
     state = %{state | in_flight: nil, retry_delay: nil}
     # more than a batch was buffered (e.g. after an outage): keep going
-    if state.batch_size >= @max_batch_size, do: flush(state), else: state
+    if state.queued >= @max_batch_size, do: flush(state), else: state
   end
 
-  defp written(state, {:retry, rows, _dropped}) do
+  defp written(state, {:retry, rows, rejected}) do
+    report_rejected(state, rejected)
+
     delay =
       if state.retry_delay,
         do: min(state.retry_delay * 2, @max_retry_delay),
-        else: Application.get_env(:secant_service, :writer_retry_delay, 1_000)
+        else: config(:writer_retry_delay, 1_000)
 
     Logger.warning(
       "Could not write #{length(rows)} readings of #{state.equipment_id}, retrying in #{delay} ms"
@@ -305,61 +404,89 @@ defmodule SecantService.NodeDBWriter do
       state
       | in_flight: nil,
         retry_delay: delay,
+        retry_pending?: true,
         # back in front of the buffer: they are older than anything in it
-        batch: state.batch ++ Enum.reverse(rows),
-        batch_size: state.batch_size + length(rows)
+        queue: :queue.join(:queue.from_list(rows), state.queue),
+        queued: state.queued + length(rows),
+        weight: state.weight + Enum.sum_by(rows, &weight/1)
     }
     |> limit_buffer()
   end
 
-  defp timed_insert(rows) do
+  defp report_rejected(_state, []), do: :ok
+
+  defp report_rejected(state, rejected) do
+    Logger.error(
+      "Dropped #{length(rejected)} readings of #{state.equipment_id} that can't be stored, e.g. " <>
+        hd(rejected)
+    )
+
+    dropped(state, :rejected, length(rejected))
+  end
+
+  defp dropped(state, reason, count) do
+    :telemetry.execute([:secant_service, :node_db_writer, :dropped], %{count: count}, %{
+      equipment_id: state.equipment_id,
+      reason: reason
+    })
+  end
+
+  defp timed_insert(rows, equipment_id) do
     start = System.monotonic_time()
     result = insert(rows)
 
-    dropped = elem(result, tuple_size(result) - 1)
+    {stored, outcome} =
+      case result do
+        {:ok, rejected} -> {length(rows) - length(rejected), :ok}
+        {:retry, left, rejected} -> {length(rows) - length(left) - length(rejected), :retry}
+      end
 
     :telemetry.execute(
       [:secant_service, :node_db_writer, :write],
-      %{duration: System.monotonic_time() - start, rows: length(rows), dropped: dropped},
-      %{}
+      %{duration: System.monotonic_time() - start, stored: stored},
+      %{equipment_id: equipment_id, result: outcome}
     )
 
     result
   end
 
   @doc false
-  # Inserts the rows: `{:ok, dropped}`, or `{:retry, unsent_rows, dropped}`
-  # when the database could not be reached. Rows the database rejects are
-  # found by splitting the batch, and dropped.
-  def insert([]), do: {:ok, 0}
+  # Inserts the rows: `{:ok, rejected}`, or `{:retry, unsent_rows, rejected}`
+  # when the database could not be reached. `rejected` describes the rows
+  # dropped because they can't be stored; they are found by splitting the
+  # batch.
+  def insert([]), do: {:ok, []}
 
   def insert(rows) do
     case attempt(rows) do
       :ok ->
-        {:ok, 0}
+        {:ok, []}
 
-      {:rows_rejected, count} ->
-        {:ok, count}
+      {:partial, rejected} ->
+        {:ok, rejected}
 
       :unreachable ->
-        {:retry, rows, 0}
+        {:retry, rows, []}
 
-      {:rejected, error} when length(rows) == 1 ->
-        Logger.error("Dropped a reading the database rejects: #{inspect(rows)}: #{error}")
-        {:ok, 1}
+      {:failed, reason} when length(rows) == 1 ->
+        # A failure we can't tell from an outage: drop the row only if the
+        # database answers otherwise
+        if db_reachable?(),
+          do: {:ok, ["#{inspect(hd(rows))}: #{reason}"]},
+          else: {:retry, rows, []}
 
-      {:rejected, _error} ->
+      {:failed, _reason} ->
         {first, second} = Enum.split(rows, div(length(rows), 2))
 
         case insert(first) do
-          {:ok, dropped} ->
+          {:ok, rejected} ->
             case insert(second) do
-              {:ok, more} -> {:ok, dropped + more}
-              {:retry, left, more} -> {:retry, left, dropped + more}
+              {:ok, more} -> {:ok, rejected ++ more}
+              {:retry, left, more} -> {:retry, left, rejected ++ more}
             end
 
-          {:retry, left, dropped} ->
-            {:retry, left ++ second, dropped}
+          {:retry, left, rejected} ->
+            {:retry, left ++ second, rejected}
         end
     end
   end
@@ -370,54 +497,55 @@ defmodule SecantService.NodeDBWriter do
         :ok
 
       # rows Ash itself refused (e.g. a value it can't cast); the others are stored
-      %Ash.BulkResult{status: :partial_success, error_count: count, errors: errors} ->
-        Logger.error(
-          "Dropped #{count}/#{length(rows)} readings; e.g. #{inspect(Enum.take(errors, 3))}"
-        )
-
-        {:rows_rejected, count}
+      %Ash.BulkResult{status: :partial_success, errors: errors} ->
+        {:partial, Enum.map(errors, &describe/1)}
 
       %Ash.BulkResult{errors: errors} ->
-        if rejected?(errors), do: {:rejected, Exception.message(hd(errors))}, else: :unreachable
+        if transient?(errors), do: :unreachable, else: {:failed, describe(errors)}
     end
   rescue
-    error ->
-      Logger.warning("Writing readings raised: #{Exception.message(error)}")
-      :unreachable
+    error -> if transient?(error), do: :unreachable, else: {:failed, Exception.message(error)}
   catch
-    :exit, reason ->
-      Logger.warning("Writing readings exited: #{inspect(reason, limit: 5)}")
-      :unreachable
+    # e.g. no connection checked out in time
+    :exit, _reason -> :unreachable
+    kind, reason -> {:failed, "#{kind}: #{inspect(reason, limit: 5)}"}
   end
 
-  # The data was refused: Ash maps constraint violations (e.g. a deleted
-  # parameter) to Invalid errors; otherwise SQLSTATE class 22 (data exception)
-  # or 23 (integrity violation). Anything else (connection, timeout, ...) may
-  # pass when retried.
-  defp rejected?(errors) do
-    Enum.any?(errors, &is_struct(&1, Ash.Error.Invalid)) or
-      match?(
-        %Postgrex.Error{postgres: %{pg_code: <<class::binary-size(2), _::binary>>}}
-        when class in ["22", "23"],
-        find_postgrex_error(errors)
-      )
+  defp describe([error | _]), do: describe(error)
+  defp describe(error) when is_exception(error), do: Exception.message(error)
+  defp describe(error), do: inspect(error, limit: 5)
+
+  # Positive evidence that the failure may pass: no connection, or Postgres
+  # saying so (SQLSTATE 08 connection, 40 rollback, 53 resources, 57
+  # operator intervention, 55P03 lock not available).
+  defp transient?(%DBConnection.ConnectionError{}), do: true
+  defp transient?(%Ash.Error.Invalid.Unavailable{}), do: true
+
+  defp transient?(%Postgrex.Error{
+         postgres: %{pg_code: <<class::binary-size(2), _::binary>> = code}
+       }),
+       do: class in ["08", "40", "53", "57"] or code == "55P03"
+
+  defp transient?(list) when is_list(list), do: Enum.any?(list, &transient?/1)
+  defp transient?(%{} = map), do: map |> Map.delete(:__struct__) |> Map.values() |> transient?()
+  # AshPostgres keeps some errors only as their formatted text
+  defp transient?(text) when is_binary(text),
+    do: String.contains?(text, "DBConnection.ConnectionError")
+
+  defp transient?(_other), do: false
+
+  defp db_reachable? do
+    match?({:ok, _}, SecantService.Repo.query("SELECT 1"))
+  rescue
+    _ -> false
+  catch
+    :exit, _ -> false
   end
 
-  defp find_postgrex_error(%Postgrex.Error{} = error), do: error
-
-  defp find_postgrex_error(list) when is_list(list),
-    do: Enum.find_value(list, &find_postgrex_error/1)
-
-  defp find_postgrex_error(%{} = map) do
-    map |> Map.delete(:__struct__) |> Map.values() |> find_postgrex_error()
-  end
-
-  defp find_postgrex_error(_other), do: nil
-
-  # A seam for tests that need a failing database
-  defp inserter do
-    Application.get_env(:secant_service, :insert_readings, &SecNodes.insert_readings/1)
-  end
+  # Tests swap in a failing insert (`:insert_readings`) and shorten the
+  # retry delay (`:writer_retry_delay`) and buffer (`:writer_max_buffered_weight`).
+  defp inserter, do: config(:insert_readings, &SecNodes.insert_readings/1)
+  defp config(key, default), do: Application.get_env(:secant_service, key, default)
 
   # {module_name, parameter_name} => parameter
   defp build_parameter_cache(node_uuid) do

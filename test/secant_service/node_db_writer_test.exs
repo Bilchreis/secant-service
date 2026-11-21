@@ -110,46 +110,148 @@ defmodule SecantService.NodeDBWriterTest do
   end
 
   describe "writing" do
-    # logs the failed writes
-    @tag :capture_log
-    test "a batch the database could not take is retried until it is stored",
-         %{node_id: node_id, uuid: uuid, temp: temp} do
+    setup %{temp: temp} do
+      # the initial value is stored before each test starts
       eventually(fn -> length(SecNodes.readings!(temp)) == 1 end)
-      failures = :counters.new(1, [])
-
-      failing = fn rows ->
-        if :counters.get(failures, 1) < 2 do
-          :counters.add(failures, 1, 1)
-          raise DBConnection.ConnectionError, "connection not available"
-        else
-          SecNodes.insert_readings(rows)
-        end
-      end
-
-      Application.put_env(:secant_service, :insert_readings, failing)
-      Application.put_env(:secant_service, :writer_retry_delay, 10)
 
       on_exit(fn ->
-        Application.delete_env(:secant_service, :insert_readings)
-        Application.delete_env(:secant_service, :writer_retry_delay)
+        for key <- [:insert_readings, :writer_retry_delay, :writer_max_buffered_weight] do
+          Application.delete_env(:secant_service, key)
+        end
       end)
 
-      send_value_update(node_id, "temp", "value", [5.0, %{t: 1_700_000_100.0}])
-      send_value_update(node_id, "temp", "value", [6.0, %{t: 1_700_000_101.0}])
+      Application.put_env(:secant_service, :writer_retry_delay, 10)
+      :ok
+    end
 
-      assert flush_and_read(uuid, temp, 3) == [
+    # An insert that can't reach the database while `down?` returns true,
+    # recording the time of each attempt.
+    defp outage(down?) do
+      test_pid = self()
+
+      Application.put_env(:secant_service, :insert_readings, fn rows ->
+        send(test_pid, {:attempt, System.monotonic_time(:millisecond), length(rows)})
+
+        if down?.(),
+          do: raise(DBConnection.ConnectionError, "connection not available"),
+          else: SecNodes.insert_readings(rows)
+      end)
+    end
+
+    defp stored(temp) do
+      temp
+      |> SecNodes.readings!()
+      |> Enum.sort_by(& &1.id)
+      |> Enum.map(&{DateTime.to_unix(&1.timestamp), Storage.raw_value(&1)})
+    end
+
+    # logs the failed writes
+    @tag :capture_log
+    test "readings the database could not take are retried, in the order they came",
+         %{node_id: node_id, uuid: uuid, temp: temp} do
+      down = :counters.new(1, [])
+      :counters.put(down, 1, 1)
+      outage(fn -> :counters.get(down, 1) == 1 end)
+
+      send_value_update(node_id, "temp", "value", [5.0, %{t: 1_700_000_100.0}])
+      send(writer(uuid), :flush_parameter_batch)
+      assert_receive {:attempt, _, 1}
+
+      # arrives while the first write is being retried
+      send_value_update(node_id, "temp", "value", [6.0, %{t: 1_700_000_101.0}])
+      assert_receive {:attempt, _, 2}
+      :counters.put(down, 1, 0)
+
+      eventually(fn -> length(SecNodes.readings!(temp)) == 3 end)
+
+      assert stored(temp) == [
                {1_700_000_000, 1.0},
                {1_700_000_100, 5.0},
                {1_700_000_101, 6.0}
              ]
-
-      assert :counters.get(failures, 1) == 2
     end
 
-    # logs the dropped reading
+    # logs the failed writes
+    @tag :capture_log
+    test "retries back off", %{node_id: node_id, uuid: uuid} do
+      outage(fn -> true end)
+
+      send_value_update(node_id, "temp", "value", [5.0, %{t: 1_700_000_100.0}])
+      send(writer(uuid), :flush_parameter_batch)
+
+      times =
+        for _ <- 1..5 do
+          assert_receive {:attempt, t, _}, 2_000
+          t
+        end
+
+      gaps = times |> Enum.chunk_every(2, 1, :discard) |> Enum.map(fn [a, b] -> b - a end)
+
+      # 10, 20, 40, 80 ms
+      assert gaps == Enum.sort(gaps)
+      assert List.last(gaps) >= 70
+    end
+
+    # logs the failed writes and the overflow
+    @tag :capture_log
+    test "a full buffer drops the oldest readings; a resend of one is stored",
+         %{node_id: node_id, temp: temp} do
+      # room for 6 scalar readings (21 each); trimmed to 117
+      Application.put_env(:secant_service, :writer_max_buffered_weight, 130)
+      NodeSupervisor.stop_node_services(node_id)
+      NodeManager.sync_nodes!()
+      assert_receive {:node_services_ready, ^node_id, uuid}, 5_000
+      eventually(fn -> match?(%{in_flight: nil, queued: 0}, :sys.get_state(writer(uuid))) end)
+
+      {:ok, parameters} = SecNodes.parameters_of_node(uuid)
+      status = Enum.find(parameters, &(&1.module.name == "temp" and &1.name == "status"))
+      statuses_before = length(SecNodes.readings!(status))
+      status_report = [[100, "ok"], %{t: 1_700_000_050.0}]
+
+      down = :counters.new(1, [])
+      :counters.put(down, 1, 1)
+      outage(fn -> :counters.get(down, 1) == 1 end)
+
+      # the newest status reading is the oldest in the buffer...
+      send_value_update(node_id, "temp", "status", status_report)
+
+      for t <- 1..6 do
+        send_value_update(node_id, "temp", "value", [t * 1.0, %{t: 1_700_000_100.0 + t}])
+      end
+
+      # ...and is dropped (with temp 1) when the 6th temp fills the buffer.
+      # The node resends it, e.g. after a reconnect: it was never stored, so
+      # it is no repeat.
+      :counters.put(down, 1, 0)
+      send_value_update(node_id, "temp", "status", status_report)
+      send(writer(uuid), :flush_parameter_batch)
+
+      eventually(fn -> {1_700_000_106, 6.0} in stored(temp) end)
+      assert length(SecNodes.readings!(status)) == statuses_before + 1
+
+      new = for {t, v} <- stored(temp), t > 1_700_000_100, do: v
+      assert new == [2.0, 3.0, 4.0, 5.0, 6.0]
+    end
+
+    test "on stop the whole buffer is written, in statements of at most 1000",
+         %{node_id: node_id, temp: temp} do
+      outage(fn -> false end)
+
+      for t <- 1..2_500 do
+        send_value_update(node_id, "temp", "value", [t * 1.0, %{t: 1_700_000_000.0 + t}])
+      end
+
+      NodeSupervisor.stop_node_services(node_id)
+
+      assert length(SecNodes.readings!(temp)) == 2_501
+      sizes = for {:attempt, _, n} <- flush_messages(), do: n
+      assert Enum.sum(sizes) == 2_500
+      assert Enum.max(sizes) <= 1_000
+    end
+
+    # logs the dropped readings
     @tag :capture_log
     test "only the readings the database rejects are dropped", %{temp: temp} do
-      eventually(fn -> length(SecNodes.readings!(temp)) == 1 end)
       gone = %{temp | id: -1}
 
       rows =
@@ -157,10 +259,53 @@ defmodule SecantService.NodeDBWriterTest do
           Storage.to_row(t * 1.0, parameter, 1_700_000_000.0 + t, %{})
         end
 
-      assert NodeDBWriter.insert(rows) == {:ok, 2}
+      assert {:ok, rejected} = NodeDBWriter.insert(rows)
+      assert length(rejected) == 2
 
       assert temp |> SecNodes.readings!() |> Enum.map(&Storage.raw_value/1) |> Enum.sort() ==
                [1.0, 1.0, 3.0, 4.0]
+    end
+
+    # logs the dropped reading
+    @tag :capture_log
+    test "an outage while splitting a batch keeps the rest for the retry", %{temp: temp} do
+      gone = %{temp | id: -1}
+
+      [ok1, bad, ok3, ok4] =
+        for {parameter, t} <- [{temp, 1}, {gone, 2}, {temp, 3}, {temp, 4}] do
+          Storage.to_row(t * 1.0, parameter, 1_700_000_000.0 + t, %{})
+        end
+
+      # the database goes away once the first half is done
+      Application.put_env(:secant_service, :insert_readings, fn rows ->
+        if ok3 in rows and length(rows) < 4,
+          do: raise(DBConnection.ConnectionError, "connection not available"),
+          else: SecNodes.insert_readings(rows)
+      end)
+
+      assert {:retry, [^ok3, ^ok4], [_rejected]} = NodeDBWriter.insert([ok1, bad, ok3, ok4])
+    end
+
+    # logs the dropped reading
+    @tag :capture_log
+    test "a reading the code can't write is dropped, not retried forever", %{temp: temp} do
+      [ok, broken] =
+        for v <- [2.0, 3.0], do: Storage.to_row(v, temp, 1_700_000_000.0 + v, %{})
+
+      Application.put_env(:secant_service, :insert_readings, fn rows ->
+        if broken in rows, do: raise("a bug"), else: SecNodes.insert_readings(rows)
+      end)
+
+      assert {:ok, [_rejected]} = NodeDBWriter.insert([ok, broken])
+      assert 2.0 in Enum.map(SecNodes.readings!(temp), &Storage.raw_value/1)
+    end
+  end
+
+  defp flush_messages do
+    receive do
+      message -> [message | flush_messages()]
+    after
+      0 -> []
     end
   end
 end
