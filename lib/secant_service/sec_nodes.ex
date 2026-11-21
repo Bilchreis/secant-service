@@ -39,7 +39,9 @@ defmodule SecantService.SecNodes do
     resource SecantService.SecNodes.SecNode do
       define :get_sec_node, action: :read, get_by: [:uuid]
       define :upsert_sec_node, action: :upsert
+      define :active_sec_nodes, action: :active
       define :archive_sec_node, action: :archive
+      define :reactivate_sec_node, action: :reactivate
       define :trash_sec_node, action: :trash
       define :restore_sec_node, action: :restore
       define :toggle_sec_node_favourite, action: :toggle_favourite

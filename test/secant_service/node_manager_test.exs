@@ -229,6 +229,71 @@ defmodule SecantService.NodeManagerTest do
     end
   end
 
+  describe "sessions" do
+    # Sessions end only when their services stop; the jobs that used to
+    # archive "sessions without services" raced with starting services and
+    # archived sessions that kept recording, which cleanup later deleted.
+
+    test "a session left active by a previous run is archived" do
+      stale =
+        SecNode
+        |> Ash.Changeset.for_create(:create, %{
+          uuid: Ecto.UUID.generate(),
+          equipment_id: "previous_run",
+          host: "localhost",
+          port: 1
+        })
+        |> Ash.create!()
+
+      assert :ok = NodeManager.sync_nodes!()
+      assert record_state(stale.uuid) == :processed
+    end
+
+    test "the background jobs never end a live session", %{node_id: node_id} do
+      state = connect(node_id, @desc_a)
+
+      AshOban.Test.schedule_and_run_triggers(SecNode)
+      assert :ok = NodeManager.sync_nodes!()
+
+      assert record_state(state.uuid) == :active
+    end
+
+    test "a live session whose services stopped is restarted, not archived",
+         %{node_id: node_id} do
+      state = connect(node_id, @desc_a)
+      NodeSupervisor.stop_node_services(node_id)
+
+      assert :ok = NodeManager.sync_nodes!()
+
+      assert_receive {:node_services_ready, ^node_id, uuid}, 5_000
+      assert uuid == state.uuid
+      assert record_state(state.uuid) == :active
+      writer_idle(uuid)
+    end
+
+    test "an ended session the node still reports is reactivated", %{node_id: node_id} do
+      state = connect(node_id, @desc_a)
+      NodeSupervisor.stop_node_services(node_id)
+
+      state.uuid
+      |> SecantService.SecNodes.get_sec_node!()
+      |> SecantService.SecNodes.archive_sec_node!()
+      |> Ash.update!(%{}, action: :finish_archiving)
+
+      assert :ok = NodeManager.sync_nodes!()
+
+      assert_receive {:node_services_ready, ^node_id, _}, 5_000
+      assert NodeSupervisor.running_uuid(node_id) == state.uuid
+      assert record_state(state.uuid) == :active
+      assert [_] = active_records(node_id)
+      writer_idle(state.uuid)
+    end
+  end
+
+  # The new writer stores the initial values first; let it finish before the
+  # test (and its sandbox) ends.
+  defp writer_idle(uuid), do: :sys.get_state({:via, Registry, {Registry.NodeDBWriter, uuid}})
+
   describe "robustness" do
     # logs the expected timeout / start failure
     @tag :capture_log

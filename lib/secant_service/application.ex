@@ -16,7 +16,6 @@ defmodule SecantService.Application do
          Application.fetch_env!(:secant_service, :ash_domains),
          Application.fetch_env!(:secant_service, Oban)
        )},
-      SecantService.StartupTriggerRunner,
       # Start the Finch HTTP client for sending emails
       {Phoenix.PubSub, name: SecantService.PubSub},
       {Finch, name: SecantService.Finch},

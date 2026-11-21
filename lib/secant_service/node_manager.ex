@@ -16,6 +16,16 @@ defmodule SecantService.NodeManager do
   The running services are the source of truth for "which uuid is live", so no
   separate bookkeeping is kept here that could drift out of sync.
 
+  This is the only place that ends a session (moves its record out of
+  `:active`), and every sync checks the records against what runs:
+
+    * an `:active` record whose services do not run, and that the client does
+      not report as current, is archived. On boot that is every record left
+      active by the previous run.
+    * a record the client still reports as current but that is no longer
+      `:active` is reactivated before its services start, so a session that
+      keeps recording is never cleaned up or purged.
+
   Whenever services for a node have been (re)started or stopped, this is
   broadcast on `SecantService.PubSub`, topic `services_topic/0`:
 
@@ -184,7 +194,22 @@ defmodule SecantService.NodeManager do
     |> Enum.reject(&MapSet.member?(known, &1))
     |> Enum.each(&retire_services/1)
 
+    current = for {_id, s} <- node_states, described?(s), into: MapSet.new(), do: s.uuid
+    close_ended_sessions(MapSet.union(current, NodeSupervisor.running_uuids()))
+
     if Enum.all?(results, &(&1 == :ok)), do: :ok, else: {:error, :incomplete}
+  end
+
+  # Archives the active records that are not live: no services run for them
+  # and the client does not report them as current. The live set is taken
+  # after (re)starting services, and this process is the only one that starts
+  # services, so a session can't start between the two.
+  defp close_ended_sessions(live) do
+    {:ok, active} = SecNodes.active_sec_nodes()
+
+    active
+    |> Enum.reject(&MapSet.member?(live, &1.uuid))
+    |> Enum.each(&archive/1)
   end
 
   # Only nodes that completed a describe can be stored and served.
@@ -222,8 +247,11 @@ defmodule SecantService.NodeManager do
 
   defp ensure_record(node_state) do
     case SecNodes.get_sec_node(node_state.uuid) do
-      {:ok, node_db} ->
+      {:ok, %SecNode{state: :active} = node_db} ->
         {:ok, node_db}
+
+      {:ok, node_db} ->
+        reactivate(node_db)
 
       {:error, _not_found} ->
         transformed = DescribeMessageTransformer.transform(node_state)
@@ -268,16 +296,32 @@ defmodule SecantService.NodeManager do
 
   defp archive_record(uuid) do
     with {:ok, %SecNode{state: :active} = node} <- SecNodes.get_sec_node(uuid) do
-      case SecNodes.archive_sec_node(node) do
-        {:ok, _} ->
-          Logger.info("NodeManager: archived node record #{uuid}")
-
-        {:error, error} ->
-          Logger.warning("NodeManager: failed to archive node #{uuid}: #{inspect(error)}")
-      end
+      archive(node)
     end
 
     :ok
+  end
+
+  defp archive(node) do
+    case SecNodes.archive_sec_node(node) do
+      {:ok, _} ->
+        Logger.info("NodeManager: archived node record #{node.uuid}")
+
+      {:error, error} ->
+        Logger.warning("NodeManager: failed to archive node #{node.uuid}: #{inspect(error)}")
+    end
+  end
+
+  # The client still reports this uuid, so the node is still recording into
+  # this session: it must not stay archived (and later be cleaned up).
+  defp reactivate(node_db) do
+    Logger.warning(
+      "NodeManager: session #{node_db.uuid} is #{node_db.state} but still live, reactivating"
+    )
+
+    with {:ok, _} <- SecNodes.reactivate_sec_node(node_db) do
+      SecNodes.get_sec_node(node_db.uuid)
+    end
   end
 
   # A node state machine blocks while handshaking, don't let one node stall all others
