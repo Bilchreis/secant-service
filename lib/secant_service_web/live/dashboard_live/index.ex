@@ -13,7 +13,11 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
   alias SecantClient.NodeStatem
   import SecantServiceWeb.SECoPComponents
-  import SecantServiceWeb.DashboardComponents
+  import SecantServiceWeb.DashboardComponents.NodeTabs
+  import SecantServiceWeb.DashboardComponents.NodeHeader
+  import SecantServiceWeb.DashboardComponents.ModuleRail
+  import SecantServiceWeb.DashboardComponents.ModuleGrid
+  import SecantServiceWeb.DashboardComponents.ModuleDetail
 
   defp subscribe_to_node(node_id) do
     Phoenix.PubSub.subscribe(SecantService.PubSub, Topics.processed_values(node_id))
