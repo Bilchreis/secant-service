@@ -1,141 +1,86 @@
-defmodule SecantService.PlotCacheSupervisor do
+defmodule SecantService.PlotCache do
   @moduledoc """
-  Supervises one `SecantService.PlotCache` per parameter of a node.
+  Collects the live values of one node for the dashboard plots and publishes
+  them in one batch every 3 s, so a chart is updated a few times per
+  minute instead of on every reading.
 
-  The caches are derived from the node description, so they are started as
-  static children: they come back with the rest of the node services after a
-  restart instead of depending on someone calling a start function afterwards.
+  One process per node: it subscribes to the node's value topic itself and
+  keeps the readings of all parameters of the description in one buffer.
+  The batch is broadcast as `{:plot_data, [{module, parameter, reports}]}` on
+  `"plot_data:host:port"`, reports oldest first.
   """
-  use Supervisor
-  alias SecantService.PlotCache
+  use GenServer
+
+  @client_pubsub :secant_client_pubsub
+  @service_pubsub SecantService.PubSub
+  @publish_interval 3000
 
   def start_link(node_db) do
-    Supervisor.start_link(__MODULE__, node_db,
-      name: {:via, Registry, {Registry.PlotCacheSupervisor, node_db.node_id}}
+    GenServer.start_link(__MODULE__, node_db,
+      name: {:via, Registry, {Registry.PlotCache, node_db.node_id}}
     )
+  end
+
+  @doc "The `{module, parameter}` pairs this cache collects. For tests and debugging."
+  def parameters(node_id), do: call(node_id, :parameters)
+
+  @doc "Publish the buffered readings now instead of at the next interval."
+  def flush(node_id), do: call(node_id, :flush)
+
+  defp call(node_id, msg) do
+    case Registry.lookup(Registry.PlotCache, node_id) do
+      [{pid, _}] -> GenServer.call(pid, msg)
+      [] -> {:error, :not_found}
+    end
   end
 
   @impl true
   def init(node_db) do
-    node_id = node_db.node_id
+    {host, port} = node_db.node_id
+    Phoenix.PubSub.subscribe(@client_pubsub, "value_update:#{host}:#{port}")
+    Process.send_after(self(), :publish, @publish_interval)
 
-    children =
-      for module <- node_db.modules, parameter <- module.parameters do
-        Supervisor.child_spec(
-          {PlotCache, %{node_id: node_id, module: module.name, parameter: parameter.name}},
-          id: {module.name, parameter.name}
-        )
+    known =
+      for module <- node_db.modules, parameter <- module.parameters, into: MapSet.new() do
+        {module.name, parameter.name}
       end
 
-    Supervisor.init(children, strategy: :one_for_one)
-  end
-end
-
-defmodule SecantService.PlotCacheDispatcher do
-  use GenServer
-  require Logger
-
-  @client_pubsub_name :secant_client_pubsub
-
-  def start_link(node_id) do
-    GenServer.start_link(__MODULE__, node_id,
-      name: {:via, Registry, {Registry.PlotCacheDispatcher, node_id}}
-    )
-  end
-
-  @impl true
-  def init(node_id) do
-    values_pubsub_topic = "value_update:#{elem(node_id, 0)}:#{elem(node_id, 1)}"
-    Phoenix.PubSub.subscribe(@client_pubsub_name, values_pubsub_topic)
-
-    {:ok, %{node_id: node_id}}
+    {:ok, %{topic: "plot_data:#{host}:#{port}", known: known, buffer: %{}}}
   end
 
   @impl true
   def handle_info({:value_update, module, parameter, data_report}, state) do
-    case Registry.lookup(Registry.PlotCache, {state.node_id, module, parameter}) do
-      [{pid, _}] ->
-        send(pid, {:value_update, module, parameter, data_report})
+    key = {module, parameter}
 
-      [] ->
-        # PlotCache not found, ignore
-        :ok
+    if MapSet.member?(state.known, key) do
+      {:noreply,
+       %{state | buffer: Map.update(state.buffer, key, [data_report], &[data_report | &1])}}
+    else
+      {:noreply, state}
     end
-
-    {:noreply, state}
   end
 
-  # Only value updates are expected on this topic. Ignore anything else
-  # rather than crash: under :rest_for_one a crash here would also restart
-  # the NodeDBWriter.
+  def handle_info(:publish, state) do
+    Process.send_after(self(), :publish, @publish_interval)
+    {:noreply, publish(state)}
+  end
+
+  # Only value updates are expected on the topic; ignore anything else.
   def handle_info(_msg, state), do: {:noreply, state}
-end
-
-defmodule SecantService.PlotCache do
-  use GenServer
-  require Logger
-
-  @service_pubsub_name SecantService.PubSub
-  @publish_interval 3000
-
-  def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts,
-      name:
-        {:via, Registry, {Registry.PlotCache, {opts[:node_id], opts[:module], opts[:parameter]}}}
-    )
-  end
 
   @impl true
-  def init(%{node_id: node_id, module: module, parameter: parameter}) do
-    state = %{
-      node_id: node_id,
-      module: module,
-      parameter: parameter,
-      data_cache: []
-    }
+  def handle_call(:parameters, _from, state), do: {:reply, state.known, state}
+  def handle_call(:flush, _from, state), do: {:reply, :ok, publish(state)}
 
-    Process.send_after(self(), :publish_data, @publish_interval)
+  defp publish(%{buffer: buffer} = state) when map_size(buffer) == 0, do: state
 
-    {:ok, state}
-  end
-
-  @impl true
-  def handle_info(
-        {:value_update, module, parameter, data_report},
-        %{module: module, parameter: parameter} = state
-      ) do
-    # This will only match if the incoming module and parameter match the ones in state
-    data_cache = [data_report | state.data_cache]
-    {:noreply, Map.put(state, :data_cache, data_cache)}
-  end
-
-  def handle_info({:value_update, module, parameter, data_report}, state) do
-    # This catches updates for other module/parameter combinations (do nothing here)
-    Logger.warning(
-      "received value update for the wrong module and parameter: #{state.module} - #{state.parameter}, got #{inspect({module, parameter, data_report})}."
-    )
-
-    {:noreply, state}
-  end
-
-  def handle_info(:publish_data, state) do
-    state =
-      case state.data_cache do
-        [] ->
-          state
-
-        data_cache ->
-          # Publish the cached data
-          Phoenix.PubSub.broadcast(
-            @service_pubsub_name,
-            "plot_data:#{elem(state.node_id, 0)}:#{elem(state.node_id, 1)}",
-            {:plot_data, state.module, state.parameter, Enum.reverse(data_cache)}
-          )
-
-          Map.put(state, :data_cache, [])
+  defp publish(state) do
+    batch =
+      for {{module, parameter}, reports} <- state.buffer do
+        {module, parameter, Enum.reverse(reports)}
       end
 
-    Process.send_after(self(), :publish_data, @publish_interval)
-    {:noreply, state}
+    Phoenix.PubSub.broadcast(@service_pubsub, state.topic, {:plot_data, batch})
+    %{state | buffer: %{}}
   end
 end

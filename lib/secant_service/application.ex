@@ -23,8 +23,6 @@ defmodule SecantService.Application do
       {Registry, keys: :unique, name: Registry.NodeDBWriter},
       {Registry, keys: :unique, name: Registry.NodeValues},
       {Registry, keys: :unique, name: Registry.NodeServices},
-      {Registry, keys: :unique, name: Registry.PlotCacheSupervisor},
-      {Registry, keys: :unique, name: Registry.PlotCacheDispatcher},
       {Registry, keys: :unique, name: Registry.PlotCache},
       SecantClient.Supervisor,
       {SecantService.NodeSupervisor, []}

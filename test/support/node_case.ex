@@ -12,7 +12,7 @@ defmodule SecantService.NodeCase do
   using do
     quote do
       import SecantService.NodeFixtures
-      alias SecantService.{NodeManager, NodeSupervisor, NodeValues, FakeNodeStatem}
+      alias SecantService.{NodeManager, NodeSupervisor, NodeValues, FakeNodeStatem, PlotCache}
       alias SecantService.SecNodes.SecNode
     end
   end

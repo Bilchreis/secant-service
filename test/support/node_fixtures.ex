@@ -98,9 +98,9 @@ defmodule SecantService.NodeFixtures do
   The node reconnects with a new description: secant_client issues a new uuid
   and broadcasts `:description_change`. Returns the new node state.
   """
-  def change_description(node_id, raw_description) do
+  def change_description(node_id, raw_description, uuid \\ Ecto.UUID.generate()) do
     seed_node_table(node_id, raw_description)
-    state = node_state(node_id, raw_description)
+    state = node_state(node_id, raw_description, uuid)
     FakeNodeStatem.put_state(node_id, state)
     broadcast("descriptive_data_change", {:description_change, topic(node_id), state})
     state
