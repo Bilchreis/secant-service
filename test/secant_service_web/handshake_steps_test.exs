@@ -1,10 +1,10 @@
 defmodule SecantServiceWeb.HandshakeStepsTest do
   use ExUnit.Case, async: true
 
-  alias SecantServiceWeb.DashboardComponents
+  alias SecantServiceWeb.DashboardComponents.NodeTabs
 
   defp statuses(node) do
-    node |> DashboardComponents.handshake_steps() |> Enum.map(&{&1.id, &1.status})
+    node |> NodeTabs.handshake_steps() |> Enum.map(&{&1.id, &1.status})
   end
 
   test "a node that refuses the connection hangs at connect" do
