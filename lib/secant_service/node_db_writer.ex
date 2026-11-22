@@ -42,7 +42,9 @@ defmodule SecantService.NodeDBWriter do
     * When a write fails for any other reason, the batch is split until the
       failing readings are found. A single reading is dropped, and logged,
       only if the database answers otherwise: a reading of a parameter that
-      was deleted, say, or one the code can't write.
+      was deleted, say, or one the code can't write. A deleted parameter is
+      no longer recorded: its buffered readings are dropped and later ones
+      ignored.
     * The buffer is bounded by size (about 50k scalar readings, fewer for
       arrays). During an outage long enough to fill it, the oldest readings
       are dropped, and logged.
@@ -50,7 +52,8 @@ defmodule SecantService.NodeDBWriter do
       writer exits, within #{div(@stop_budget, 1000)} s.
 
   Delivery is at least once: a write cut off while committing may be sent
-  again, so in rare cases a reading is stored twice.
+  again, so in rare cases a reading is stored twice. A write that crashes
+  while splitting a batch sends again only the readings it had not stored.
 
   Telemetry:
 
@@ -105,12 +108,15 @@ defmodule SecantService.NodeDBWriter do
        node_id: node_db.node_id,
        parameters: parameters,
        last: load_last_readings(parameters),
+       # ids of parameters deleted while recording
+       deleted: MapSet.new(),
        # oldest first
        queue: :queue.new(),
        queued: 0,
        weight: 0,
        max_weight: config(:writer_max_buffered_weight, @max_buffered_weight),
-       # %{task: Task.t(), rows: rows} of the write in flight
+       # %{task: Task.t(), rows: rows, settled: n} of the write in flight;
+       # the first `settled` rows are stored or dropped
        in_flight: nil,
        # delay of the last retry while writes fail, nil once one succeeds
        retry_delay: nil,
@@ -132,6 +138,11 @@ defmodule SecantService.NodeDBWriter do
     {:noreply, flush(%{state | retry_pending?: false})}
   end
 
+  # The write in flight is done with its first rows (see insert/2)
+  def handle_info({:settled, pid, count}, %{in_flight: %{task: %{pid: pid}}} = state) do
+    {:noreply, update_in(state.in_flight.settled, &(&1 + count))}
+  end
+
   # The write in flight is done
   def handle_info({ref, result}, %{in_flight: %{task: %{ref: ref}}} = state) do
     Process.demonitor(ref, [:flush])
@@ -143,7 +154,9 @@ defmodule SecantService.NodeDBWriter do
         %{in_flight: %{task: %{ref: ref}}} = state
       ) do
     Logger.error("Writing readings of #{state.equipment_id} crashed: #{inspect(reason)}")
-    {:noreply, written(state, {:retry, state.in_flight.rows, []})}
+    # what it stored or dropped before (its messages come before the :DOWN)
+    %{rows: rows, settled: settled} = state.in_flight
+    {:noreply, written(state, {:retry, Enum.drop(rows, settled), []})}
   end
 
   # The node services start after the node was described; whatever the node
@@ -193,8 +206,8 @@ defmodule SecantService.NodeDBWriter do
         nil ->
           []
 
-        %{task: task, rows: rows} ->
-          unsent(state, task, rows, deadline)
+        %{task: task, rows: rows, settled: settled} ->
+          unsent(state, task, rows, settled, deadline)
       end
 
     case write_by(unsent ++ :queue.to_list(state.queue), deadline, state) do
@@ -220,8 +233,14 @@ defmodule SecantService.NodeDBWriter do
     |> Enum.chunk_every(@max_batch_size)
     |> Enum.reduce(0, fn
       chunk, 0 ->
-        task = Task.Supervisor.async_nolink(SecantService.TaskSupervisor, fn -> insert(chunk) end)
-        state |> unsent(task, chunk, deadline) |> length()
+        parent = self()
+
+        task =
+          Task.Supervisor.async_nolink(SecantService.TaskSupervisor, fn ->
+            insert(chunk, &send(parent, {:settled, self(), &1}))
+          end)
+
+        state |> unsent(task, chunk, 0, deadline) |> length()
 
       chunk, lost ->
         lost + length(chunk)
@@ -229,8 +248,9 @@ defmodule SecantService.NodeDBWriter do
   end
 
   # The rows of a write that are not stored once it is done or the deadline
-  # passed. A write cut off is rolled back, so all its rows are unsent.
-  defp unsent(state, task, rows, deadline) do
+  # passed. A statement cut off is rolled back, so the rows after those the
+  # write had settled are unsent.
+  defp unsent(state, task, rows, settled, deadline) do
     case Task.yield(task, remaining(deadline)) || Task.shutdown(task, :brutal_kill) do
       {:ok, {:ok, rejected}} ->
         report_rejected(state, rejected)
@@ -241,7 +261,15 @@ defmodule SecantService.NodeDBWriter do
         left
 
       _ ->
-        rows
+        Enum.drop(rows, receive_settled(task.pid, settled))
+    end
+  end
+
+  defp receive_settled(pid, settled) do
+    receive do
+      {:settled, ^pid, count} -> receive_settled(pid, settled + count)
+    after
+      0 -> settled
     end
   end
 
@@ -337,7 +365,8 @@ defmodule SecantService.NodeDBWriter do
         nil
 
       parameter ->
-        parameter
+        # deleted while recording, see forget_deleted/2
+        if parameter.id in state.deleted, do: nil, else: parameter
     end
   end
 
@@ -365,10 +394,11 @@ defmodule SecantService.NodeDBWriter do
     {taken, rest} = :queue.split(count, state.queue)
     rows = :queue.to_list(taken)
     equipment_id = state.equipment_id
+    parent = self()
 
     task =
       Task.Supervisor.async_nolink(SecantService.TaskSupervisor, fn ->
-        timed_insert(rows, equipment_id)
+        timed_insert(rows, equipment_id, &send(parent, {:settled, self(), &1}))
       end)
 
     %{
@@ -376,19 +406,21 @@ defmodule SecantService.NodeDBWriter do
       | queue: rest,
         queued: state.queued - count,
         weight: state.weight - Enum.sum_by(rows, &weight/1),
-        in_flight: %{task: task, rows: rows}
+        in_flight: %{task: task, rows: rows, settled: 0}
     }
   end
 
   defp written(state, {:ok, rejected}) do
     report_rejected(state, rejected)
-    state = %{state | in_flight: nil, retry_delay: nil}
+    state = %{state | in_flight: nil, retry_delay: nil} |> forget_deleted(rejected)
     # more than a batch was buffered (e.g. after an outage): keep going
     if state.queued >= @max_batch_size, do: flush(state), else: state
   end
 
   defp written(state, {:retry, rows, rejected}) do
     report_rejected(state, rejected)
+    state = forget_deleted(state, rejected)
+    rows = without_deleted(state, rows)
 
     delay =
       if state.retry_delay,
@@ -416,13 +448,56 @@ defmodule SecantService.NodeDBWriter do
 
   defp report_rejected(_state, []), do: :ok
 
-  defp report_rejected(state, rejected) do
+  defp report_rejected(state, [%{reason: reason} | _] = rejected) do
     Logger.error(
       "Dropped #{length(rejected)} readings of #{state.equipment_id} that can't be stored, e.g. " <>
-        hd(rejected)
+        reason
     )
 
     dropped(state, :rejected, length(rejected))
+  end
+
+  # A parameter the database no longer has (deleted while recording) is not
+  # recorded any more: each of its readings would only fail a statement and
+  # be dropped after splitting the batch.
+  defp forget_deleted(state, rejected) do
+    case for(%{deleted: id} <- rejected, id not in state.deleted, uniq: true, do: id) do
+      [] ->
+        state
+
+      ids ->
+        names =
+          for {{module, param}, %{id: id}} <- state.parameters,
+              id in ids,
+              do: "#{module}:#{param}"
+
+        Logger.warning(
+          "Parameters of #{state.equipment_id} were deleted, no longer recording them: " <>
+            Enum.join(names, ", ")
+        )
+
+        state = %{
+          state
+          | deleted: MapSet.union(state.deleted, MapSet.new(ids)),
+            last: Map.drop(state.last, ids)
+        }
+
+        buffered = without_deleted(state, :queue.to_list(state.queue))
+
+        %{
+          state
+          | queue: :queue.from_list(buffered),
+            queued: length(buffered),
+            weight: Enum.sum_by(buffered, &weight/1)
+        }
+    end
+  end
+
+  # The rows that are not of a deleted parameter
+  defp without_deleted(%{deleted: deleted}, rows) do
+    if MapSet.size(deleted) == 0,
+      do: rows,
+      else: Enum.reject(rows, &(&1.parameter_id in deleted))
   end
 
   defp dropped(state, reason, count) do
@@ -432,9 +507,9 @@ defmodule SecantService.NodeDBWriter do
     })
   end
 
-  defp timed_insert(rows, equipment_id) do
+  defp timed_insert(rows, equipment_id, on_settled) do
     start = System.monotonic_time()
-    result = insert(rows)
+    result = insert(rows, on_settled)
 
     {stored, outcome} =
       case result do
@@ -453,35 +528,48 @@ defmodule SecantService.NodeDBWriter do
 
   @doc false
   # Inserts the rows: `{:ok, rejected}`, or `{:retry, unsent_rows, rejected}`
-  # when the database could not be reached. `rejected` describes the rows
-  # dropped because they can't be stored; they are found by splitting the
-  # batch.
-  def insert([]), do: {:ok, []}
+  # when the database could not be reached. `rejected` lists the rows dropped
+  # because they can't be stored, as `%{reason: text}`, with `deleted:
+  # parameter_id` when the parameter is gone; they are found by splitting the
+  # batch. The rows are settled (stored or dropped) in order, and
+  # `on_settled` is called with the count each time some are.
+  def insert(rows, on_settled \\ fn _count -> :ok end)
 
-  def insert(rows) do
+  def insert([], _on_settled), do: {:ok, []}
+
+  def insert(rows, on_settled) do
     case attempt(rows) do
       :ok ->
-        {:ok, []}
+        settled({:ok, []}, rows, on_settled)
 
       {:partial, rejected} ->
-        {:ok, rejected}
+        settled({:ok, rejected}, rows, on_settled)
 
       :unreachable ->
         {:retry, rows, []}
 
-      {:failed, reason} when length(rows) == 1 ->
+      {:deleted, reason} when length(rows) == 1 ->
+        [row] = rows
+
+        settled(
+          {:ok, [%{reason: describe_row(row, reason), deleted: row.parameter_id}]},
+          rows,
+          on_settled
+        )
+
+      {_failed, reason} when length(rows) == 1 ->
         # A failure we can't tell from an outage: drop the row only if the
         # database answers otherwise
         if db_reachable?(),
-          do: {:ok, ["#{inspect(hd(rows))}: #{reason}"]},
+          do: settled({:ok, [%{reason: describe_row(hd(rows), reason)}]}, rows, on_settled),
           else: {:retry, rows, []}
 
-      {:failed, _reason} ->
+      {_failed, _reason} ->
         {first, second} = Enum.split(rows, div(length(rows), 2))
 
-        case insert(first) do
+        case insert(first, on_settled) do
           {:ok, rejected} ->
-            case insert(second) do
+            case insert(second, on_settled) do
               {:ok, more} -> {:ok, rejected ++ more}
               {:retry, left, more} -> {:retry, left, rejected ++ more}
             end
@@ -492,6 +580,13 @@ defmodule SecantService.NodeDBWriter do
     end
   end
 
+  defp settled(result, rows, on_settled) do
+    on_settled.(length(rows))
+    result
+  end
+
+  defp describe_row(row, reason), do: "#{inspect(row)}: #{reason}"
+
   defp attempt(rows) do
     case inserter().(rows) do
       %Ash.BulkResult{status: :success} ->
@@ -499,10 +594,14 @@ defmodule SecantService.NodeDBWriter do
 
       # rows Ash itself refused (e.g. a value it can't cast); the others are stored
       %Ash.BulkResult{status: :partial_success, errors: errors} ->
-        {:partial, Enum.map(errors, &describe/1)}
+        {:partial, Enum.map(errors, &%{reason: describe(&1)})}
 
       %Ash.BulkResult{errors: errors} ->
-        if transient?(errors), do: :unreachable, else: {:failed, describe(errors)}
+        cond do
+          transient?(errors) -> :unreachable
+          parameter_deleted?(errors) -> {:deleted, describe(errors)}
+          true -> {:failed, describe(errors)}
+        end
     end
   rescue
     error -> if transient?(error), do: :unreachable, else: {:failed, Exception.message(error)}
@@ -511,6 +610,16 @@ defmodule SecantService.NodeDBWriter do
     :exit, _reason -> :unreachable
     kind, reason -> {:failed, "#{kind}: #{inspect(reason, limit: 5)}"}
   end
+
+  # The database refused a reading because its parameter is not there
+  defp parameter_deleted?(errors) when is_list(errors),
+    do: Enum.any?(errors, &parameter_deleted?/1)
+
+  defp parameter_deleted?(%Ash.Error.Changes.InvalidAttribute{field: :parameter_id} = error),
+    do: error.private_vars[:constraint_type] == :foreign_key
+
+  defp parameter_deleted?(%{errors: errors}), do: parameter_deleted?(errors)
+  defp parameter_deleted?(_error), do: false
 
   defp describe([error | _]), do: describe(error)
   defp describe(error) when is_exception(error), do: Exception.message(error)

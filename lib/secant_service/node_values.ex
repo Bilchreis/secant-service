@@ -2,8 +2,9 @@ defmodule SecantService.NodeValues do
   @moduledoc """
   The current value of every parameter of one node, processed for display.
 
-  Changed values are not broadcast one by one. They are collected, latest per
-  parameter, and published together once per `:values_publish_interval`
+  Changed values are not broadcast one by one. They are collected, the
+  current value per parameter (its latest reading and, if one came after it,
+  the latest error), and published together once per `:values_publish_interval`
   (250 ms by default) as
   `{:value_updates, node_id, %{{module, parameter} => processed}}` on
   `SecantService.Topics.processed_values/1`. Every dashboard viewer of the
@@ -219,18 +220,33 @@ defmodule SecantService.NodeValues do
         else
           insert_parameter_value(table, module, accessible, merged_param_val)
 
-          {:ok, :updated, put_in(values, [module, accessible], merged_param_val), new_param_val}
+          {:ok, :updated, put_in(values, [module, accessible], merged_param_val),
+           merged_param_val}
         end
     end
   end
 
-  # Remove timestamp from data_report qualifiers for comparison
-  defp remove_timestamp(%{data_report: [value, qualifiers]} = param_val)
-       when is_map(qualifiers) do
-    Map.put(param_val, :data_report, [value, Map.drop(qualifiers, [:t])])
+  # A report that only differs in its timestamp is not a change: drop the
+  # timestamp from the qualifiers (the last element) of the reading and of
+  # the error.
+  defp remove_timestamp(param_val) do
+    param_val
+    |> without_t(:data_report)
+    |> without_t(:error_report)
   end
 
-  defp remove_timestamp(param_val), do: param_val
+  defp without_t(param_val, key) do
+    case Map.get(param_val, key) do
+      [_ | _] = report ->
+        Map.put(param_val, key, List.update_at(report, -1, &drop_t/1))
+
+      _ ->
+        param_val
+    end
+  end
+
+  defp drop_t(qualifiers) when is_map(qualifiers), do: Map.drop(qualifiers, [:t, "t"])
+  defp drop_t(other), do: other
 
   # Error reports come first: they can arrive for any accessible, including
   # "status", whose clause below expects a [value, qualifiers] data report.

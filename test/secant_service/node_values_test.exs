@@ -82,22 +82,57 @@ defmodule SecantService.NodeValuesTest do
     refute_receive {:value_updates, _, %{{"temp", "value"} => _}}, 200
   end
 
-  test "changes are published in batches, latest per parameter",
-       %{node_id: node_id, values_pid: pid} do
-    # A longer interval than the test default, so a slow machine cannot split
-    # the batch. Suspending NodeValues queues all four updates; on resume they
-    # are handled back to back, inside one interval.
+  test "an error repeated with only a new timestamp is not broadcast again",
+       %{node_id: node_id} do
+    send_error_update(node_id, "temp", "value", @error)
+    assert_receive {:value_updates, _, %{{"temp", "value"} => _}}
+
+    [cls, msg, _qualifiers] = @error
+    send_error_update(node_id, "temp", "value", [cls, msg, %{t: 1_700_000_201.0}])
+    refute_receive {:value_updates, _, %{{"temp", "value"} => _}}, 200
+
+    send_error_update(node_id, "temp", "value", [cls, "sensor broken", %{t: 1_700_000_202.0}])
+
+    assert_receive {:value_updates, _,
+                    %{{"temp", "value"} => %{error_report: [_, "sensor broken", _]}}}
+  end
+
+  # Runs `send_updates` while NodeValues is suspended, so all the updates are
+  # handled back to back on resume, inside one publish interval. The interval
+  # is longer than the test default, so a slow machine cannot split the batch.
+  defp in_one_interval(pid, send_updates) do
     previous = Application.fetch_env!(:secant_service, :values_publish_interval)
     Application.put_env(:secant_service, :values_publish_interval, 200)
     on_exit(fn -> Application.put_env(:secant_service, :values_publish_interval, previous) end)
     :sys.suspend(pid)
-
-    for {v, t} <- [{1.0, 1}, {2.0, 2}, {3.0, 3}] do
-      send_value_update(node_id, "temp", "value", [v, %{t: 1_700_000_500.0 + t}])
-    end
-
-    send_value_update(node_id, "temp", "target", [5.0, %{t: 1_700_000_504.0}])
+    send_updates.()
     :sys.resume(pid)
+  end
+
+  test "a value and then an error inside one interval are published together",
+       %{node_id: node_id, values_pid: pid} do
+    in_one_interval(pid, fn ->
+      send_value_update(node_id, "temp", "value", [6.0, %{t: 1_700_000_600.0}])
+      send_error_update(node_id, "temp", "value", @error)
+    end)
+
+    assert_receive {:value_updates, ^node_id, batch}, 1_000
+    assert %{data_report: [6.0, _], error_report: @error} = batch[{"temp", "value"}]
+    assert {:ok, current} = NodeValues.get_value(node_id, "temp", "value")
+
+    assert Map.take(current, [:data_report, :error_report]) ==
+             Map.take(batch[{"temp", "value"}], [:data_report, :error_report])
+  end
+
+  test "changes are published in batches, latest per parameter",
+       %{node_id: node_id, values_pid: pid} do
+    in_one_interval(pid, fn ->
+      for {v, t} <- [{1.0, 1}, {2.0, 2}, {3.0, 3}] do
+        send_value_update(node_id, "temp", "value", [v, %{t: 1_700_000_500.0 + t}])
+      end
+
+      send_value_update(node_id, "temp", "target", [5.0, %{t: 1_700_000_504.0}])
+    end)
 
     assert_receive {:value_updates, ^node_id, batch}, 1_000
     assert %{data_report: [3.0, _]} = batch[{"temp", "value"}]
