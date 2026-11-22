@@ -23,7 +23,19 @@ defmodule SecantService.SecNodes do
         default_options: [load: [sec_node: [:node_id]]]
     end
 
-    resource SecantService.SecNodes.Reading
+    resource SecantService.SecNodes.Reading do
+      # A parameter's readings, oldest first unless `order: :desc`. Readings
+      # are many and can be large arrays: select the columns you need
+      # (`query: [select: ...]`), and don't load relationships on them.
+      define :readings, action: :for_parameter, args: [:parameter_id]
+
+      # The newest reading (at or before `end_timestamp`), or nil
+      define :latest_reading,
+        action: :latest_for_parameter,
+        args: [:parameter_id],
+        get?: true,
+        not_found_error?: false
+    end
 
     resource SecantService.SecNodes.Parameter do
       define :get_parameter,
@@ -75,37 +87,6 @@ defmodule SecantService.SecNodes do
     AshPagify.validate_and_run(Reading, params, [action: :for_parameter] ++ opts, %{
       parameter_id: parameter.id
     })
-  end
-
-  @doc """
-  The stored readings of a parameter, oldest first. `args` are the arguments
-  of `Reading`'s `:for_parameter` read (e.g. a time window).
-  """
-  def readings!(parameter, args \\ %{}, opts \\ []) do
-    parameter |> readings_query(args, opts) |> Ash.read!()
-  end
-
-  @doc "Like `readings!/3`, returning `{:ok, readings}` or `{:error, error}`."
-  def readings(parameter, args \\ %{}, opts \\ []) do
-    parameter |> readings_query(args, opts) |> Ash.read()
-  end
-
-  @doc """
-  The newest reading of a parameter (optionally before `args.end_timestamp`):
-  `{:ok, reading}`, `{:ok, nil}` when there is none, or `{:error, error}`.
-  """
-  def latest_reading(parameter, args \\ %{}) do
-    parameter
-    |> readings_query(Map.merge(args, %{limit: 1, order: :desc}), [])
-    |> Ash.read_first()
-  end
-
-  defp readings_query(parameter, args, opts) do
-    opts = Keyword.validate!(opts, [:select])
-
-    Reading
-    |> Ash.Query.for_read(:for_parameter, Map.put(args, :parameter_id, parameter.id))
-    |> then(&if(opts[:select], do: Ash.Query.select(&1, opts[:select]), else: &1))
   end
 
   @doc "Schedule the cleanup trigger now (old sessions move to the trash in the background)."

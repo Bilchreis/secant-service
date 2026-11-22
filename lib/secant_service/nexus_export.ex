@@ -73,8 +73,8 @@ defmodule SecantService.NexusExport do
   end
 
   defp read_values(parameter, time_range) do
-    SecNodes.readings!(parameter, Map.put(time_range, :order, :asc),
-      select: [:timestamp | Reading.value_columns()]
+    SecNodes.readings!(parameter.id, Map.put(time_range, :order, :asc),
+      query: [select: [:timestamp | Reading.value_columns()]]
     )
   end
 
