@@ -159,6 +159,8 @@
         "destination_attribute_default": null,
         "destination_attribute_generated": null,
         "index?": false,
+        "index_where": null,
+        "match_tenant?": false,
         "match_type": null,
         "match_with": null,
         "multitenancy": {
@@ -185,7 +187,7 @@
   "custom_indexes": [],
   "custom_statements": [],
   "has_create_action": true,
-  "hash": "172DB7CC9072347BD9E70673AFAB3984CB342B32151A1FA31409252E31E2C700",
+  "hash": "B3D851F8E1F10710693908F4E0ACCECB548CFFF3A2E41D70D83A8F2511035769",
   "identities": [
     {
       "all_tenants?": false,
@@ -213,5 +215,6 @@
   },
   "repo": "Elixir.SecantService.Repo",
   "schema": null,
-  "table": "modules"
+  "table": "modules",
+  "temporal": null
 }

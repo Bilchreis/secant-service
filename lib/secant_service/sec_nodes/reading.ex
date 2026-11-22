@@ -9,9 +9,22 @@ defmodule SecantService.SecNodes.Reading do
   they decode several times faster than JSON and spectra take a third less
   space.
 
-  The hypertable and its compression are set up by a hand-written migration
-  (`create_readings_hypertable`); Ash's migration generator does not know
-  about hypertables.
+  The hypertable and its compression are custom statements below, so the
+  migration generator and the snapshots know about them. They follow the
+  pattern in ash_postgres#169, with the current columnstore API:
+
+  - One-day chunks, compressed once they are a day old.
+  - Compressed batches are segmented by `parameter_id`, so each parameter's
+    readings are stored together; that is what plots filter on, and the
+    `value_*` columns a parameter does not use compress to almost nothing.
+  - `id` is in the ordering because it is part of the primary key, and
+    TimescaleDB needs unique-key columns there to check uniqueness in
+    compressed data.
+
+  Changing `segmentby` or `orderby` later needs a hand-edited migration: the
+  generator would run the old `down` first, and compression can't be turned
+  off while compressed chunks exist. The policy statement regenerates
+  cleanly.
   """
   use Ash.Resource,
     domain: SecantService.SecNodes,
@@ -48,6 +61,38 @@ defmodule SecantService.SecNodes.Reading do
     custom_indexes do
       index [:parameter_id, :timestamp] do
         name "readings_parameter_id_timestamp_index"
+      end
+    end
+
+    custom_statements do
+      # Dropping the table drops the hypertable, so there is nothing to undo.
+      statement :readings_hypertable do
+        up """
+        SELECT create_hypertable(
+          'readings',
+          by_range('timestamp', INTERVAL '1 day'),
+          create_default_indexes => false
+        )
+        """
+
+        down "SELECT 1"
+      end
+
+      statement :readings_columnstore do
+        up """
+        ALTER TABLE readings SET (
+          timescaledb.enable_columnstore = true,
+          timescaledb.segmentby = 'parameter_id',
+          timescaledb.orderby = 'timestamp DESC, id DESC'
+        )
+        """
+
+        down "ALTER TABLE readings SET (timescaledb.enable_columnstore = false)"
+      end
+
+      statement :readings_columnstore_policy do
+        up "CALL add_columnstore_policy('readings', after => INTERVAL '1 day')"
+        down "CALL remove_columnstore_policy('readings')"
       end
     end
   end

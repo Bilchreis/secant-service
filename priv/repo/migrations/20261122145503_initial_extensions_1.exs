@@ -101,6 +101,21 @@ defmodule SecantService.Repo.Migrations.InitialExtensions1 do
     """)
 
     execute("""
+    CREATE OR REPLACE FUNCTION ash_required(value ANYCOMPATIBLE, payload jsonb)
+    RETURNS ANYCOMPATIBLE AS $$
+    BEGIN
+      IF value IS NULL THEN
+        RAISE EXCEPTION 'ash_error: %', payload::text;
+      END IF;
+
+      RETURN value;
+    END;
+    $$ LANGUAGE plpgsql
+    STABLE
+    SET search_path = '';
+    """)
+
+    execute("""
     CREATE OR REPLACE FUNCTION uuid_generate_v7()
     RETURNS UUID
     AS $$
@@ -129,15 +144,17 @@ defmodule SecantService.Repo.Migrations.InitialExtensions1 do
     """)
 
     execute("CREATE EXTENSION IF NOT EXISTS \"citext\"")
+    execute("CREATE EXTENSION IF NOT EXISTS \"timescaledb\"")
   end
 
   def down do
     # Uncomment this if you actually want to uninstall the extensions
     # when this migration is rolled back:
     execute(
-      "DROP FUNCTION IF EXISTS uuid_generate_v7(), timestamp_from_uuid_v7(uuid), ash_raise_error(jsonb), ash_raise_error(jsonb, ANYCOMPATIBLE), ash_elixir_and(BOOLEAN, ANYCOMPATIBLE), ash_elixir_and(ANYCOMPATIBLE, ANYCOMPATIBLE), ash_elixir_or(ANYCOMPATIBLE, ANYCOMPATIBLE), ash_elixir_or(BOOLEAN, ANYCOMPATIBLE), ash_trim_whitespace(text[])"
+      "DROP FUNCTION IF EXISTS uuid_generate_v7(), ash_raise_error(jsonb), ash_raise_error(jsonb, ANYCOMPATIBLE), ash_elixir_and(BOOLEAN, ANYCOMPATIBLE), ash_elixir_and(ANYCOMPATIBLE, ANYCOMPATIBLE), ash_elixir_or(ANYCOMPATIBLE, ANYCOMPATIBLE), ash_elixir_or(BOOLEAN, ANYCOMPATIBLE), ash_trim_whitespace(text[]), ash_required(ANYCOMPATIBLE, jsonb)"
     )
 
     # execute("DROP EXTENSION IF EXISTS \"citext\"")
+    # execute("DROP EXTENSION IF EXISTS \"timescaledb\"")
   end
 end
