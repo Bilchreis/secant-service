@@ -190,8 +190,8 @@ defmodule SecantService.SecNodes.SecNode do
 
       argument :modules, {:array, :map}
 
+      # conflicts on the primary key, uuid
       upsert? true
-      upsert_identity :unique_uuid
 
       upsert_fields [
         :equipment_id,
@@ -365,9 +365,5 @@ defmodule SecantService.SecNodes.SecNode do
   aggregates do
     sum :datapoint_count, [:modules, :parameters], :datapoint_count
     sum :disk_size_bytes, [:modules, :parameters], :disk_size_bytes
-  end
-
-  identities do
-    identity :unique_uuid, [:uuid]
   end
 end
