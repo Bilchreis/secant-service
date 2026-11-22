@@ -30,15 +30,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Same image as the db services in docker-compose.yml and compose.dev.yml
-      # (Postgres + TimescaleDB), on the port config/test.exs expects. It's
-      # built here rather than used as a job service because services can't be
-      # built from a Dockerfile. Started now, waited for before the tests.
+      # (Postgres + TimescaleDB), on the port config/test.exs expects. Started
+      # now rather than as a job service so it boots while Elixir is set up;
+      # waited for before the tests.
       - name: Start Postgres with TimescaleDB
         run: |
-          docker build -t secant-postgres docker/postgres
           docker run -d --name postgres \
             -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
-            -p 5435:5432 secant-postgres
+            -e TIMESCALEDB_TELEMETRY=off \
+            -p 5435:5432 timescale/timescaledb:2.32.1-pg18
 
       - uses: ./.github/actions/setup-elixir
 
