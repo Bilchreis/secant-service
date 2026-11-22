@@ -12,6 +12,10 @@ runs:
         version-type: strict
 
     # deps/ and _build/ are tied to the exact OTP/Elixir versions and mix.lock.
+    # The vN prefix drops every old cache, fallbacks included. Bump it when a
+    # build has to start fresh without mix.lock changing: v2 because igniter
+    # became a test dep, and Mix doesn't recompile the deps it's optional for
+    # (ash, ash_oban, ...), whose mix task list `usage_rules.sync` records.
     # ~/.cache/pythonx holds the Python env pythonx builds at compile time from
     # the uv_init config in config/config.exs.
     - name: Restore build cache
@@ -22,9 +26,9 @@ runs:
           deps
           _build
           ~/.cache/pythonx
-        key: mix-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('mix.lock', 'config/config.exs') }}
+        key: mix-v2-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('mix.lock', 'config/config.exs') }}
         restore-keys: |
-          mix-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-
+          mix-v2-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-
 
     - name: Fetch dependencies
       shell: bash

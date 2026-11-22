@@ -51,6 +51,11 @@ jobs:
       - name: Check formatting
         run: mix format --check-formatted
 
+      # AGENTS.md and the generated skills in .claude/skills must match the
+      # usage rules of the locked deps; `mix precommit` regenerates them.
+      - name: Check agent usage rules are in sync
+        run: mix usage_rules.sync --check
+
       # Only Credo's warning category gates for now; the readability and
       # refactoring backlog can be tightened later.
       - name: Credo
