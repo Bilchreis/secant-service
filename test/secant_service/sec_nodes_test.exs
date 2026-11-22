@@ -183,6 +183,34 @@ defmodule SecantService.SecNodesTest do
       assert {:ok, %{datapoint_count: 3}} = Ash.get(Parameter, parameter.id)
     end
 
+    # logs the failed recount
+    @tag :capture_log
+    test "a failing size query keeps the old counts" do
+      {node, parameter} = create_node()
+      insert_values(parameter, 4)
+      Ash.update!(node, %{}, action: :refresh_storage)
+
+      assert {:ok, %{datapoint_count: 4, disk_size_bytes: size}} =
+               Ash.get(Parameter, parameter.id)
+
+      assert size > 0
+
+      # more values, then a temp view shadowing `readings` in this (sandboxed,
+      # rolled back) connection: pg_column_size(r) of its rows fails
+      insert_values(parameter, 2)
+
+      SecantService.Repo.query!(
+        "CREATE TEMP VIEW readings AS SELECT id AS parameter_id, 1 / (id - id) AS boom FROM parameters"
+      )
+
+      assert %SecNode{state: :active} = Ash.update!(node, %{}, action: :refresh_storage)
+
+      SecantService.Repo.query!("DROP VIEW pg_temp.readings")
+
+      assert {:ok, %{datapoint_count: 4, disk_size_bytes: ^size}} =
+               Ash.get(Parameter, parameter.id)
+    end
+
     test "the on-archive trigger counts the values and archives the node" do
       {node, parameter} = create_node()
       insert_values(parameter, 6)

@@ -146,6 +146,7 @@
               <div class="tooltip-content text-left bg-transparent">
                 <%!-- flush against the tags: pre-line would show the newlines --%>
                 <div
+                  id={"description-#{sec_node.uuid}"}
                   class="rounded-box border border-line bg-base-100 p-3 text-base-content shadow-sm whitespace-pre-line"
                   phx-no-format
                 >{description_text(sec_node)}</div>
