@@ -34,9 +34,10 @@ runs:
       shell: bash
       run: mix deps.get
 
-    # pythonx bakes the uv_init config in at compile time, and Mix refuses to
-    # run with a build from a different config. A fallback cache may hold one.
-    - name: Drop a stale pythonx build
+    # pythonx (the uv_init config) and mime (the :mime types and extensions)
+    # bake their config in at compile time, and Mix refuses to run with a
+    # build from a different config. A fallback cache may hold one.
+    - name: Drop stale compile-time-config builds
       if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
-      run: mix deps.clean pythonx --build
+      run: mix deps.clean pythonx mime --build

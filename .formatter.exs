@@ -7,7 +7,6 @@
     :ash_authentication_phoenix,
     :ash_authentication,
     :ash_postgres,
-    :ash_json_api,
     :ash_phoenix,
     :ash,
     :reactor,

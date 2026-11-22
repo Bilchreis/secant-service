@@ -24,14 +24,6 @@ config :secant_service, Oban,
   ],
   repo: SecantService.Repo
 
-config :mime,
-  extensions: %{"json" => "application/vnd.api+json"},
-  types: %{"application/vnd.api+json" => ["json"]}
-
-config :ash_json_api,
-  show_public_calculations_when_loaded?: false,
-  authorize_update_destroy_with_error?: true
-
 config :ash,
   allow_forbidden_field_for_relationships_by_default?: true,
   include_embedded_source_by_default?: false,
@@ -55,7 +47,6 @@ config :spark,
         :token,
         :user_identity,
         :postgres,
-        :json_api,
         :resource,
         :code_interface,
         :actions,
@@ -75,7 +66,6 @@ config :spark,
     "Ash.Domain": [
       section_order: [
         :admin,
-        :json_api,
         :resources,
         :policies,
         :authorization,
