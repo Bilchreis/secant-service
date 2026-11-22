@@ -59,7 +59,7 @@ defmodule SecantService.ReadingsHypertableTest do
   end
 
   defp values_for(parameter) do
-    parameter |> SecNodes.readings!() |> Enum.map(&{&1.timestamp, Storage.raw_value(&1)})
+    parameter.id |> SecNodes.readings!() |> Enum.map(&{&1.timestamp, Storage.raw_value(&1)})
   end
 
   test "readings is a hypertable with compression segmented by parameter" do
@@ -106,7 +106,7 @@ defmodule SecantService.ReadingsHypertableTest do
   test "the qualifier t is not stored twice" do
     {_node, parameter} = create_parameter("sim_qualifiers")
     insert_readings(parameter, 1)
-    assert [%{qualifiers: qualifiers}] = SecNodes.readings!(parameter)
+    assert [%{qualifiers: qualifiers}] = SecNodes.readings!(parameter.id)
     refute Map.has_key?(qualifiers, "t")
   end
 

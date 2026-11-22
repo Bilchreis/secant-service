@@ -70,8 +70,9 @@ defmodule SecantService.PlotDB.Builders do
   defp last_before(param, from_ms) do
     end_ts = DateTime.from_unix!(trunc(from_ms) - 1, :millisecond)
 
-    param
-    |> SecNodes.readings!(%{end_timestamp: end_ts, limit: 1, order: :desc})
+    param.id
+    |> SecNodes.latest_reading!(%{end_timestamp: end_ts})
+    |> List.wrap()
     |> Storage.value_timestamp_lists()
     |> case do
       {[value | _], _} -> value
@@ -85,7 +86,7 @@ defmodule SecantService.PlotDB.Builders do
   "empty because nothing has ever been recorded" without re-fetching full history.
   """
   def any_data?(param) do
-    case SecNodes.latest_reading(param) do
+    case SecNodes.latest_reading(param.id) do
       {:ok, nil} -> false
       {:ok, _record} -> true
       # Transient DB error: assume data exists rather than trigger a spurious device read.
@@ -106,7 +107,7 @@ defmodule SecantService.PlotDB.Builders do
       |> maybe_put(:start_timestamp, from_ms && DateTime.from_unix!(trunc(from_ms), :millisecond))
       |> maybe_put(:end_timestamp, to_ms && DateTime.from_unix!(trunc(to_ms), :millisecond))
 
-    param
+    param.id
     |> SecNodes.readings!(args)
     |> Storage.value_timestamp_lists()
   end
@@ -114,7 +115,7 @@ defmodule SecantService.PlotDB.Builders do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp get_values(parameter), do: SecNodes.readings!(parameter)
+  defp get_values(parameter), do: SecNodes.readings!(parameter.id)
 
   # Nothing recorded yet for a live plot: start from the value the node
   # services already hold. Never reads from the device.

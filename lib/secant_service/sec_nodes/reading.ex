@@ -121,7 +121,6 @@ defmodule SecantService.SecNodes.Reading do
       argument :parameter_id, :integer, allow_nil?: false
       argument :start_timestamp, :utc_datetime_usec
       argument :end_timestamp, :utc_datetime_usec
-      argument :limit, :integer
 
       argument :order, :atom do
         default :asc
@@ -141,10 +140,23 @@ defmodule SecantService.SecNodes.Reading do
       # id second: readings with the same timestamp keep the order they were
       # stored in, which also keeps offset pagination stable
       prepare build(sort: [{:timestamp, arg(:order)}, {:id, arg(:order)}])
+    end
 
-      prepare build(limit: arg(:limit)) do
-        where present(:limit)
+    # The newest reading of a parameter, optionally at or before
+    # `end_timestamp`. The limit is part of the action: a `get?` interface
+    # reads with `Ash.read_one`, which adds none, and without it the read
+    # would decompress the parameter's whole history.
+    read :latest_for_parameter do
+      argument :parameter_id, :integer, allow_nil?: false
+      argument :end_timestamp, :utc_datetime_usec
+
+      filter expr(parameter_id == ^arg(:parameter_id))
+
+      prepare build(filter: expr(timestamp <= ^arg(:end_timestamp))) do
+        where present(:end_timestamp)
       end
+
+      prepare build(sort: [timestamp: :desc, id: :desc], limit: 1)
     end
   end
 

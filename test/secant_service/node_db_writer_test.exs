@@ -31,9 +31,9 @@ defmodule SecantService.NodeDBWriterTest do
   defp flush_and_read(uuid, temp, expected_count) do
     send(writer(uuid), :flush_parameter_batch)
 
-    eventually(fn -> length(SecNodes.readings!(temp)) == expected_count end)
+    eventually(fn -> length(SecNodes.readings!(temp.id)) == expected_count end)
 
-    temp
+    temp.id
     |> SecNodes.readings!()
     |> Enum.map(&{DateTime.to_unix(&1.timestamp), Storage.raw_value(&1)})
     # readings with the same timestamp have no defined order
@@ -112,7 +112,7 @@ defmodule SecantService.NodeDBWriterTest do
   describe "writing" do
     setup %{temp: temp} do
       # the initial value is stored before each test starts
-      eventually(fn -> length(SecNodes.readings!(temp)) == 1 end)
+      eventually(fn -> length(SecNodes.readings!(temp.id)) == 1 end)
 
       on_exit(fn ->
         for key <- [:insert_readings, :writer_retry_delay, :writer_max_buffered_weight] do
@@ -139,7 +139,7 @@ defmodule SecantService.NodeDBWriterTest do
     end
 
     defp stored(temp) do
-      temp
+      temp.id
       |> SecNodes.readings!()
       |> Enum.sort_by(& &1.id)
       |> Enum.map(&{DateTime.to_unix(&1.timestamp), Storage.raw_value(&1)})
@@ -162,7 +162,7 @@ defmodule SecantService.NodeDBWriterTest do
       assert_receive {:attempt, _, 2}
       :counters.put(down, 1, 0)
 
-      eventually(fn -> length(SecNodes.readings!(temp)) == 3 end)
+      eventually(fn -> length(SecNodes.readings!(temp.id)) == 3 end)
 
       assert stored(temp) == [
                {1_700_000_000, 1.0},
@@ -205,7 +205,7 @@ defmodule SecantService.NodeDBWriterTest do
 
       parameters = SecNodes.parameters_of_node!(uuid)
       status = Enum.find(parameters, &(&1.module.name == "temp" and &1.name == "status"))
-      statuses_before = length(SecNodes.readings!(status))
+      statuses_before = length(SecNodes.readings!(status.id))
       status_report = [[100, "ok"], %{t: 1_700_000_050.0}]
 
       down = :counters.new(1, [])
@@ -227,7 +227,7 @@ defmodule SecantService.NodeDBWriterTest do
       send(writer(uuid), :flush_parameter_batch)
 
       eventually(fn -> {1_700_000_106, 6.0} in stored(temp) end)
-      assert length(SecNodes.readings!(status)) == statuses_before + 1
+      assert length(SecNodes.readings!(status.id)) == statuses_before + 1
 
       new = for {t, v} <- stored(temp), t > 1_700_000_100, do: v
       assert new == [2.0, 3.0, 4.0, 5.0, 6.0]
@@ -243,7 +243,7 @@ defmodule SecantService.NodeDBWriterTest do
 
       NodeSupervisor.stop_node_services(node_id)
 
-      assert length(SecNodes.readings!(temp)) == 2_501
+      assert length(SecNodes.readings!(temp.id)) == 2_501
       sizes = for {:attempt, _, n} <- flush_messages(), do: n
       assert Enum.sum(sizes) == 2_500
       assert Enum.max(sizes) <= 1_000
@@ -263,7 +263,7 @@ defmodule SecantService.NodeDBWriterTest do
       # the database says why: the parameter is gone
       assert [%{deleted: -1}, %{deleted: -1}] = rejected
 
-      assert temp |> SecNodes.readings!() |> Enum.map(&Storage.raw_value/1) |> Enum.sort() ==
+      assert SecNodes.readings!(temp.id) |> Enum.map(&Storage.raw_value/1) |> Enum.sort() ==
                [1.0, 1.0, 3.0, 4.0]
     end
 
@@ -300,13 +300,13 @@ defmodule SecantService.NodeDBWriterTest do
       assert {:ok, [rejected]} = NodeDBWriter.insert([ok, broken])
       # a bad reading does not stop the recording of its parameter
       refute Map.has_key?(rejected, :deleted)
-      assert 2.0 in Enum.map(SecNodes.readings!(temp), &Storage.raw_value/1)
+      assert 2.0 in Enum.map(SecNodes.readings!(temp.id), &Storage.raw_value/1)
     end
   end
 
   describe "parameters deleted and writes that crash" do
     setup %{temp: temp} do
-      eventually(fn -> length(SecNodes.readings!(temp)) == 1 end)
+      eventually(fn -> length(SecNodes.readings!(temp.id)) == 1 end)
 
       on_exit(fn ->
         for key <- [:insert_readings, :writer_retry_delay] do

@@ -22,7 +22,7 @@ defmodule SecantServiceWeb.ExportController do
   def parameter(conn, %{"id" => id} = params) do
     with {id, ""} <- Integer.parse(id),
          %Parameter{} = parameter <- get_parameter(id) do
-      values = SecNodes.readings!(parameter, read_args(params))
+      values = SecNodes.readings!(parameter.id, read_args(params))
 
       conn
       |> put_resp_content_type("text/csv")

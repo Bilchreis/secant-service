@@ -23,7 +23,7 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
 
   @doc "Latest stored reading of `param` as `{list, ms}`, or nil."
   def fetch_latest(param) do
-    param
+    param.id
     |> SecNodes.latest_reading()
     |> case do
       {:ok, nil} ->
@@ -47,7 +47,7 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
   def fetch_at(param, ms) when is_integer(ms) do
     until = ms |> DateTime.from_unix!(:millisecond) |> DateTime.add(999, :microsecond)
 
-    param
+    param.id
     |> SecNodes.latest_reading(%{end_timestamp: until})
     |> case do
       {:ok, nil} ->
@@ -66,8 +66,8 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
 
   @doc "Times (ms, ascending) of the most recent `@max_times` readings, for the slider."
   def reading_times(param) do
-    param
-    |> SecNodes.readings(%{limit: @max_times, order: :desc}, select: [:timestamp])
+    param.id
+    |> SecNodes.readings(%{order: :desc}, query: [limit: @max_times, select: [:timestamp]])
     |> case do
       {:ok, records} ->
         records |> Enum.map(&DateTime.to_unix(&1.timestamp, :millisecond)) |> Enum.reverse()

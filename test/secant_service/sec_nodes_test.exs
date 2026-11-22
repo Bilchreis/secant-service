@@ -132,9 +132,9 @@ defmodule SecantService.SecNodesTest do
 
     assert {:ok, nil} = SecNodes.get_sec_node(trashed_a.uuid, not_found_error?: false)
     assert {:ok, nil} = SecNodes.get_sec_node(trashed_b.uuid, not_found_error?: false)
-    assert {:ok, []} = SecNodes.readings(param_a)
+    assert {:ok, []} = SecNodes.readings(param_a.id)
     assert {:ok, %SecNode{state: :archived}} = SecNodes.get_sec_node(kept.uuid)
-    assert {:ok, kept_values} = SecNodes.readings(kept_param)
+    assert {:ok, kept_values} = SecNodes.readings(kept_param.id)
     assert length(kept_values) == 4
   end
 
@@ -143,22 +143,46 @@ defmodule SecantService.SecNodesTest do
 
     assert Storage.to_row(nil, parameter, DateTime.utc_now(), %{}) == nil
     assert %Ash.BulkResult{status: :success} = SecNodes.insert_readings([])
-    assert {:ok, nil} = SecNodes.latest_reading(parameter)
+    assert {:ok, nil} = SecNodes.latest_reading(parameter.id)
 
     insert_values(parameter, 3)
 
-    assert {:ok, %{value_float: 3.0}} = SecNodes.latest_reading(parameter)
+    assert {:ok, %{value_float: 3.0}} = SecNodes.latest_reading(parameter.id)
 
     before = DateTime.add(~U[2026-01-01 00:00:00.000000Z], 2, :second)
 
     assert {:ok, %{value_float: 2.0}} =
-             SecNodes.latest_reading(parameter, %{end_timestamp: before})
+             SecNodes.latest_reading(parameter.id, %{end_timestamp: before})
 
-    assert {:ok, [%{timestamp: %DateTime{}} | _] = rows} =
-             SecNodes.readings(parameter, %{order: :asc}, select: [:timestamp])
+    assert {:ok, [%{timestamp: %DateTime{}, value_float: %Ash.NotLoaded{}} | _] = rows} =
+             SecNodes.readings(parameter.id, %{order: :asc}, query: [select: [:timestamp]])
 
     assert length(rows) == 3
-    assert_raise ArgumentError, fn -> SecNodes.readings(parameter, %{}, load: [:parameter]) end
+  end
+
+  test "latest_reading asks the database for one row" do
+    {_node, parameter} = create_node()
+    insert_values(parameter, 3)
+
+    ref = make_ref()
+    me = self()
+
+    :telemetry.attach(
+      {__MODULE__, ref},
+      [:secant_service, :repo, :query],
+      fn _event, _measurements, %{query: sql}, _ -> send(me, {ref, sql}) end,
+      nil
+    )
+
+    try do
+      assert {:ok, %{value_float: 3.0}} = SecNodes.latest_reading(parameter.id)
+    after
+      :telemetry.detach({__MODULE__, ref})
+    end
+
+    # a get? interface adds no limit of its own: the action must
+    assert_received {^ref, sql}
+    assert sql =~ ~r/FROM "readings".*LIMIT/s
   end
 
   describe "storage counts" do

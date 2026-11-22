@@ -69,7 +69,7 @@ defmodule SecantService.ReadingStorageTest do
       assert Map.has_key?(row, column), "#{inspect(value)} should go to #{column}"
       assert %Ash.BulkResult{status: :success} = SecNodes.insert_readings([row])
 
-      assert [reading] = SecNodes.readings!(parameter)
+      assert [reading] = SecNodes.readings!(parameter.id)
       expected = if column == :value_float, do: value * 1.0, else: value
       assert Storage.raw_value(reading) == expected, "#{inspect(datainfo)}: #{inspect(value)}"
       assert reading.timestamp == ~U[2023-11-14 22:13:20.500000Z]
@@ -82,7 +82,7 @@ defmodule SecantService.ReadingStorageTest do
     row = Storage.to_row(%{x: 1.5}, parameter, 1_700_000_000.0, %{})
     SecNodes.insert_readings([row])
 
-    assert [reading] = SecNodes.readings!(parameter)
+    assert [reading] = SecNodes.readings!(parameter.id)
     assert Storage.raw_value(reading) == %{"x" => 1.5}
     assert Storage.same?(Storage.fingerprint(reading), Storage.fingerprint(row))
   end
@@ -102,7 +102,7 @@ defmodule SecantService.ReadingStorageTest do
 
     assert [[1.5], ["on"], [[1.0, 2.0]]] ==
              Enum.map([float, text, spectrum], fn p ->
-               p |> SecNodes.readings!() |> Enum.map(&Storage.raw_value/1)
+               p.id |> SecNodes.readings!() |> Enum.map(&Storage.raw_value/1)
              end)
   end
 
@@ -135,7 +135,7 @@ defmodule SecantService.ReadingStorageTest do
       Storage.to_row(1.0, p, 1_700_000_000.0, %{t: 1_700_000_000.0, e: 0.01})
     ])
 
-    assert [%{qualifiers: %{"e" => 0.01} = qualifiers}] = SecNodes.readings!(p)
+    assert [%{qualifiers: %{"e" => 0.01} = qualifiers}] = SecNodes.readings!(p.id)
     refute Map.has_key?(qualifiers, "t")
   end
 
@@ -150,7 +150,7 @@ defmodule SecantService.ReadingStorageTest do
       row = Storage.to_row(value, p, 1_700_000_000.0, %{"note" => "q\u0000"})
 
       assert %Ash.BulkResult{status: :success} = SecNodes.insert_readings([row])
-      assert [reading] = SecNodes.readings!(p)
+      assert [reading] = SecNodes.readings!(p.id)
       assert Storage.raw_value(reading) == value
       assert Storage.same?(Storage.fingerprint(reading), Storage.fingerprint(row))
       assert Storage.qualifiers(reading) == %{"note" => "q\u0000"}
@@ -164,7 +164,7 @@ defmodule SecantService.ReadingStorageTest do
 
     assert Map.has_key?(row, :value_json)
     SecNodes.insert_readings([row])
-    assert [reading] = SecNodes.readings!(p)
+    assert [reading] = SecNodes.readings!(p.id)
     assert Storage.raw_value(reading) == huge
   end
 
