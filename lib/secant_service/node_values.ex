@@ -230,8 +230,8 @@ defmodule SecantService.NodeValues do
   # timestamp from the qualifiers of the reading and of the error.
   defp remove_timestamp(param_val) do
     param_val
-    |> Map.update(:data_report, nil, &without_t/1)
-    |> Map.update(:error_report, nil, &without_t/1)
+    |> Map.replace_lazy(:data_report, &without_t/1)
+    |> Map.replace_lazy(:error_report, &without_t/1)
   end
 
   # [value, qualifiers] and [class, text, qualifiers]

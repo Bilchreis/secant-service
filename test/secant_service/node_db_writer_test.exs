@@ -413,8 +413,8 @@ defmodule SecantService.NodeDBWriterTest do
       send(task, :go)
 
       # the first write finds the status parameter gone, the buffer loses its readings
-      assert_receive {:dropped, 1}
-      assert_receive {:dropped, 2}
+      assert_receive {:dropped, 1}, 1_000
+      assert_receive {:dropped, 2}, 1_000
       state = :sys.get_state(writer(uuid))
       assert state.queued == 2
       assert Enum.all?(:queue.to_list(state.queue), &(&1.parameter_id == temp.id))

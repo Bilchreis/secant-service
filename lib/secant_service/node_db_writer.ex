@@ -432,10 +432,20 @@ defmodule SecantService.NodeDBWriter do
   end
 
   defp written(state, {:retry, rows, rejected}) do
-    report_rejected(state, rejected)
     state = forget_deleted(state, rejected)
-    rows = without_deleted(state, rows)
 
+    case without_deleted(state, rows) do
+      # all of a parameter just found deleted: nothing to retry
+      [] ->
+        written(state, {:ok, rejected})
+
+      rows ->
+        report_rejected(state, rejected)
+        retry_later(state, rows)
+    end
+  end
+
+  defp retry_later(state, rows) do
     delay =
       if state.retry_delay,
         do: min(state.retry_delay * 2, @max_retry_delay),
