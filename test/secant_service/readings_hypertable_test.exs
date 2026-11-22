@@ -117,7 +117,7 @@ defmodule SecantService.ReadingsHypertableTest do
     kept_rows = insert_readings(kept)
 
     compress_all_chunks()
-    :ok = Ash.destroy(doomed_node)
+    Ash.destroy!(doomed_node)
 
     assert values_for(doomed) == []
     assert length(values_for(kept)) == length(kept_rows)

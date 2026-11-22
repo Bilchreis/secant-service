@@ -174,4 +174,10 @@ defmodule SecantServiceWeb.DataBrowserLive.Index do
   defp state_dot_class(_), do: "bg-st-off"
 
   defp state_label(state), do: state |> to_string() |> String.capitalize()
+
+  # description is optional in SECoP
+  defp description_text(%{description: description}) when description in [nil, ""],
+    do: "No description available."
+
+  defp description_text(%{description: description}), do: description
 end

@@ -2,7 +2,6 @@ defmodule SecantService.SecNodes.SecNode do
   use Ash.Resource,
     domain: SecantService.SecNodes,
     data_layer: AshPostgres.DataLayer,
-    primary_read_warning?: false,
     extensions: [AshOban, AshStateMachine]
 
   alias SecantService.Util
@@ -107,7 +106,7 @@ defmodule SecantService.SecNodes.SecNode do
   end
 
   actions do
-    defaults [:destroy]
+    defaults [:read, :destroy]
 
     # Listing for the data browser, filtered by tab.
     read :node_only do
@@ -124,7 +123,6 @@ defmodule SecantService.SecNodes.SecNode do
                 load: [
                   :node_id,
                   :node_id_str,
-                  :display_description,
                   :display_equipment_id,
                   :datapoint_count,
                   :disk_size_bytes
@@ -135,20 +133,6 @@ defmodule SecantService.SecNodes.SecNode do
                  default_limit: @ash_pagify_options.default_limit,
                  countable: true,
                  required?: false
-    end
-
-    read :read do
-      primary? true
-
-      prepare build(
-                load: [
-                  :node_id,
-                  :node_id_str,
-                  :display_description,
-                  :display_equipment_id,
-                  modules: [:parameters, :commands]
-                ]
-              )
     end
 
     # The sessions marked as recording, for the NodeManager to compare with
@@ -178,8 +162,6 @@ defmodule SecantService.SecNodes.SecNode do
     # Read action for storage recalculation trigger with keyset pagination
     read :read_for_storage_recalc do
       pagination keyset?: true, required?: false
-
-      prepare build(load: [])
     end
 
     # Read action for purge trigger with keyset pagination
@@ -362,16 +344,6 @@ defmodule SecantService.SecNodes.SecNode do
     calculate :node_id, :term, fn records, _context ->
       Enum.map(records, fn record ->
         {String.to_charlist(record.host), record.port}
-      end)
-    end
-
-    calculate :display_description, :string, fn records, _context ->
-      Enum.map(records, fn record ->
-        # description is optional in SECoP
-        (record.description || "")
-        |> String.split("\n")
-        |> Enum.map(&Phoenix.HTML.html_escape/1)
-        |> Enum.intersperse(Phoenix.HTML.raw("<br>"))
       end)
     end
 

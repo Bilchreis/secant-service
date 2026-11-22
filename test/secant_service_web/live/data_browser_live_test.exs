@@ -1,18 +1,24 @@
 defmodule SecantServiceWeb.DataBrowserLiveTest do
-  @moduledoc "The data browser: tabs, favourite, trash and restore."
+  @moduledoc "The data browser: tabs, descriptions, favourite, trash and restore."
   use SecantServiceWeb.ConnCase, async: false
 
   alias SecantService.SecNodes
   alias SecantService.SecNodes.SecNode
 
-  defp create_node do
+  defp create_node(attrs \\ %{}) do
     SecNode
-    |> Ash.Changeset.for_create(:create, %{
-      uuid: Ecto.UUID.generate(),
-      equipment_id: "browse_#{System.unique_integer([:positive])}",
-      host: "localhost",
-      port: 10_800
-    })
+    |> Ash.Changeset.for_create(
+      :create,
+      Map.merge(
+        %{
+          uuid: Ecto.UUID.generate(),
+          equipment_id: "browse_#{System.unique_integer([:positive])}",
+          host: "localhost",
+          port: 10_800
+        },
+        attrs
+      )
+    )
     |> Ash.create!()
   end
 
@@ -30,6 +36,25 @@ defmodule SecantServiceWeb.DataBrowserLiveTest do
 
     assert has_element?(view, "#uuid-#{active.uuid}")
     refute has_element?(view, "#uuid-#{archived.uuid}")
+  end
+
+  test "the description tooltip keeps line breaks, or says there is none", %{conn: conn} do
+    described = create_node(%{description: "Cryostat\nsecond line"})
+    undescribed = create_node()
+
+    {:ok, view, _html} = live(conn, "/browse?state_filter=active&limit=100")
+
+    text = fn node ->
+      view
+      |> element("#description-#{node.uuid}")
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.text()
+    end
+
+    # flush against the tags: whitespace-pre-line would show any other newline
+    assert text.(described) == "Cryostat\nsecond line"
+    assert text.(undescribed) == "No description available."
   end
 
   test "favourite, trash and restore an archived node", %{conn: conn} do

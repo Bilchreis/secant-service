@@ -33,7 +33,7 @@ defmodule SecantService.NodeManagerTest do
 
     SecNode
     |> Ash.Query.filter(host == ^to_string(host) and port == ^port and state == :active)
-    |> Ash.read!()
+    |> Ash.read!(load: [modules: :parameters])
   end
 
   describe "new node" do

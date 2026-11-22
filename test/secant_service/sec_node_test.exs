@@ -1,6 +1,7 @@
 defmodule SecantService.SecNodeTest do
   use SecantService.DataCase, async: true
 
+  alias SecantService.SecNodes
   alias SecantService.SecNodes.SecNode
 
   test "a node without a description can be read back" do
@@ -15,7 +16,7 @@ defmodule SecantService.SecNodeTest do
     })
     |> Ash.create!()
 
-    # the primary read loads the display calculations
-    assert %SecNode{description: nil} = Ash.get!(SecNode, uuid)
+    # get_sec_node loads its calculations and the (empty) module tree
+    assert %SecNode{description: nil, modules: []} = SecNodes.get_sec_node!(uuid)
   end
 end

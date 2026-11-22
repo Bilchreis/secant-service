@@ -76,7 +76,7 @@ defmodule SecantService.SecNodesTest do
       {trashed, _} = create_node()
       set_state(archived, :archived)
       set_state(trashed, :trashed)
-      {:ok, _} = SecNodes.toggle_sec_node_favourite(archived)
+      SecNodes.toggle_sec_node_favourite!(archived)
 
       ids = MapSet.new([active.uuid, archived.uuid, trashed.uuid])
 
@@ -96,6 +96,19 @@ defmodule SecantService.SecNodesTest do
       assert meta.total_count == Ash.count!(Ash.Query.filter(SecNode, state == :trashed))
       assert meta.total_count < Ash.count!(SecNode)
     end
+  end
+
+  test "get_sec_node loads the description; a parameter's node comes without it" do
+    {node, parameter} = create_node()
+
+    assert %SecNode{node_id: {~c"localhost", 10_800}, modules: [%{parameters: [_]}]} =
+             SecNodes.get_sec_node!(node.uuid)
+
+    # relationship loads use the plain primary read
+    assert %{module: %{sec_node: %SecNode{node_id: {~c"localhost", 10_800}} = loaded}} =
+             SecNodes.get_parameter!(parameter.id)
+
+    assert %Ash.NotLoaded{} = loaded.modules
   end
 
   test "toggle_favourite flips the flag each time" do
@@ -168,6 +181,34 @@ defmodule SecantService.SecNodesTest do
 
       assert refreshed.state == :active
       assert {:ok, %{datapoint_count: 3}} = Ash.get(Parameter, parameter.id)
+    end
+
+    # logs the failed recount
+    @tag :capture_log
+    test "a failing size query keeps the old counts" do
+      {node, parameter} = create_node()
+      insert_values(parameter, 4)
+      Ash.update!(node, %{}, action: :refresh_storage)
+
+      assert {:ok, %{datapoint_count: 4, disk_size_bytes: size}} =
+               Ash.get(Parameter, parameter.id)
+
+      assert size > 0
+
+      # more values, then a temp view shadowing `readings` in this (sandboxed,
+      # rolled back) connection: pg_column_size(r) of its rows fails
+      insert_values(parameter, 2)
+
+      SecantService.Repo.query!(
+        "CREATE TEMP VIEW readings AS SELECT id AS parameter_id, 1 / (id - id) AS boom FROM parameters"
+      )
+
+      assert %SecNode{state: :active} = Ash.update!(node, %{}, action: :refresh_storage)
+
+      SecantService.Repo.query!("DROP VIEW pg_temp.readings")
+
+      assert {:ok, %{datapoint_count: 4, disk_size_bytes: ^size}} =
+               Ash.get(Parameter, parameter.id)
     end
 
     test "the on-archive trigger counts the values and archives the node" do

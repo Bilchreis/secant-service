@@ -13,13 +13,18 @@ defmodule SecantService.SecNodes.Actions.PurgeTrashed do
   alias SecantService.SecNodes.SecNode
 
   @impl true
-  def run(_input, _opts, _context) do
-    trashed = Ash.Query.for_read(SecNode, :read_trashed)
-    total = Ash.count!(trashed)
+  def run(_input, _opts, context) do
+    trashed = Ash.Query.for_read(SecNode, :read_trashed, %{}, scope: context)
+    total = Ash.count!(trashed, scope: context)
 
-    result = Ash.bulk_destroy(trashed, :destroy, %{}, strategy: :stream, return_errors?: true)
+    result =
+      Ash.bulk_destroy(trashed, :destroy, %{},
+        strategy: :stream,
+        return_errors?: true,
+        scope: context
+      )
 
-    remaining = Ash.count!(trashed)
+    remaining = Ash.count!(trashed, scope: context)
 
     if remaining > 0 do
       Logger.warning(

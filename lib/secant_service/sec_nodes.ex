@@ -31,13 +31,21 @@ defmodule SecantService.SecNodes do
         get_by: [:id],
         default_options: [load: [module: [sec_node: [:node_id]]]]
 
+      define :recalculate_parameter_storage, action: :recalculate_storage
+
       define :parameters_of_node, action: :by_node_uuid, args: [:node_uuid]
       define :history_window, args: [:parameter_id, :from_ms, :to_ms]
       define :history_resolution, args: [:parameter_id, :from_ms, :to_ms]
     end
 
     resource SecantService.SecNodes.SecNode do
-      define :get_sec_node, action: :read, get_by: [:uuid]
+      # a session with everything it described, as the node services and
+      # the node pages use it
+      define :get_sec_node,
+        action: :read,
+        get_by: [:uuid],
+        default_options: [load: [:node_id, modules: [:parameters, :commands]]]
+
       define :upsert_sec_node, action: :upsert
       define :active_sec_nodes, action: :active
       define :ended_sec_nodes_among, action: :ended_among, args: [:uuids]
@@ -57,6 +65,16 @@ defmodule SecantService.SecNodes do
   """
   def browse_sec_nodes(state_filter, params, opts \\ []) do
     AshPagify.validate_and_run(SecNode, params, [action: :node_only] ++ opts, state_filter)
+  end
+
+  @doc """
+  One page of a parameter's stored readings for the history table, sorted
+  and paginated by the AshPagify `params`.
+  """
+  def browse_readings(parameter, params, opts \\ []) do
+    AshPagify.validate_and_run(Reading, params, [action: :for_parameter] ++ opts, %{
+      parameter_id: parameter.id
+    })
   end
 
   @doc """
