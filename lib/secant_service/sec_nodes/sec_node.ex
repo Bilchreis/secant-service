@@ -4,8 +4,6 @@ defmodule SecantService.SecNodes.SecNode do
     data_layer: AshPostgres.DataLayer,
     extensions: [AshOban, AshStateMachine]
 
-  alias SecantService.Util
-
   # what a stored description sets; shared by :create and :upsert
   @node_fields [
     :uuid,
@@ -123,7 +121,6 @@ defmodule SecantService.SecNodes.SecNode do
                 load: [
                   :node_id,
                   :node_id_str,
-                  :display_equipment_id,
                   :datapoint_count,
                   :disk_size_bytes
                 ]
@@ -341,17 +338,7 @@ defmodule SecantService.SecNodes.SecNode do
               :string,
               expr(^ref(:host) <> ":" <> fragment("CAST(? AS TEXT)", ^ref(:port)))
 
-    calculate :node_id, :term, fn records, _context ->
-      Enum.map(records, fn record ->
-        {String.to_charlist(record.host), record.port}
-      end)
-    end
-
-    calculate :display_equipment_id, :string, fn records, _context ->
-      Enum.map(records, fn record ->
-        Util.display_name(record.equipment_id)
-      end)
-    end
+    calculate :node_id, :term, SecantService.SecNodes.Calculations.NodeId
 
     calculate :should_cleanup,
               :boolean,
