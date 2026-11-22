@@ -9,7 +9,6 @@ defmodule SecantService.SecNodes.Calculations.ParameterDiskSize do
   """
 
   use Ash.Resource.Calculation
-  require Logger
 
   @query """
   SELECT r.parameter_id, COALESCE(SUM(pg_column_size(r)), 0)::bigint
@@ -25,16 +24,11 @@ defmodule SecantService.SecNodes.Calculations.ParameterDiskSize do
   def calculate(parameters, _opts, _context) do
     ids = Enum.map(parameters, & &1.id)
 
-    sizes =
-      case Ecto.Adapters.SQL.query(SecantService.Repo, @query, [ids]) do
-        {:ok, %{rows: rows}} ->
-          Map.new(rows, fn [id, size] -> {id, size} end)
-
-        {:error, error} ->
-          Logger.warning("Failed to calculate disk sizes: #{inspect(error)}")
-          %{}
-      end
-
-    Enum.map(parameters, &Map.get(sizes, &1.id, 0))
+    # An error fails the load: a parameter whose size could not be counted
+    # must not look empty (RecalculateParameterStorage keeps the old count).
+    with {:ok, %{rows: rows}} <- Ecto.Adapters.SQL.query(SecantService.Repo, @query, [ids]) do
+      sizes = Map.new(rows, fn [id, size] -> {id, size} end)
+      {:ok, Enum.map(parameters, &Map.get(sizes, &1.id, 0))}
+    end
   end
 end

@@ -76,7 +76,7 @@ defmodule SecantService.SecNodesTest do
       {trashed, _} = create_node()
       set_state(archived, :archived)
       set_state(trashed, :trashed)
-      {:ok, _} = SecNodes.toggle_sec_node_favourite(archived)
+      SecNodes.toggle_sec_node_favourite!(archived)
 
       ids = MapSet.new([active.uuid, archived.uuid, trashed.uuid])
 
@@ -96,6 +96,19 @@ defmodule SecantService.SecNodesTest do
       assert meta.total_count == Ash.count!(Ash.Query.filter(SecNode, state == :trashed))
       assert meta.total_count < Ash.count!(SecNode)
     end
+  end
+
+  test "get_sec_node loads the description; a parameter's node comes without it" do
+    {node, parameter} = create_node()
+
+    assert %SecNode{node_id: {~c"localhost", 10_800}, modules: [%{parameters: [_]}]} =
+             SecNodes.get_sec_node!(node.uuid)
+
+    # relationship loads use the plain primary read
+    assert %{module: %{sec_node: %SecNode{node_id: {~c"localhost", 10_800}} = loaded}} =
+             SecNodes.get_parameter!(parameter.id)
+
+    assert %Ash.NotLoaded{} = loaded.modules
   end
 
   test "toggle_favourite flips the flag each time" do

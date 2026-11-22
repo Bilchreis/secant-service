@@ -696,7 +696,7 @@ defmodule SecantService.NodeDBWriter do
 
   # {module_name, parameter_name} => parameter
   defp build_parameter_cache(node_uuid) do
-    {:ok, parameters} = SecNodes.parameters_of_node(node_uuid)
+    parameters = SecNodes.parameters_of_node!(node_uuid)
     Map.new(parameters, &{{&1.module.name, &1.name}, &1})
   end
 

@@ -7,7 +7,6 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.History
   alias SecantService.PlotDB.DTypes.ArrayLatest
-  alias SecantService.SecNodes.Reading
   alias SecantService.SecNodes.Reading.Storage
   alias Phoenix.LiveView.JS
   alias Phoenix.LiveView.AsyncResult
@@ -18,9 +17,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     # Ensure default pagination parameters are set
     params_with_defaults = Map.merge(%{limit: 20, page: 1, order_by: ["-timestamp"]}, params)
 
-    case AshPagify.validate_and_run(Reading, params_with_defaults, [action: :for_parameter], %{
-           parameter_id: parameter.id
-         }) do
+    case SecNodes.browse_readings(parameter, params_with_defaults) do
       {:ok, {parameter_values, meta}} ->
         {:ok, %{table_data: %{parameter_values: parameter_values, meta: meta}}}
 

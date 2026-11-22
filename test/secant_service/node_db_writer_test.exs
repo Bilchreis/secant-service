@@ -17,7 +17,7 @@ defmodule SecantService.NodeDBWriterTest do
     state = connect_node(node_id, raw_description("eq-#{elem(node_id, 1)}", @desc))
     assert_receive {:node_services_ready, ^node_id, _}, 5_000
 
-    {:ok, parameters} = SecNodes.parameters_of_node(state.uuid)
+    parameters = SecNodes.parameters_of_node!(state.uuid)
     temp = Enum.find(parameters, &(&1.module.name == "temp" and &1.name == "value"))
     {:ok, node_id: node_id, uuid: state.uuid, temp: temp}
   end
@@ -203,7 +203,7 @@ defmodule SecantService.NodeDBWriterTest do
       assert_receive {:node_services_ready, ^node_id, uuid}, 5_000
       eventually(fn -> match?(%{in_flight: nil, queued: 0}, :sys.get_state(writer(uuid))) end)
 
-      {:ok, parameters} = SecNodes.parameters_of_node(uuid)
+      parameters = SecNodes.parameters_of_node!(uuid)
       status = Enum.find(parameters, &(&1.module.name == "temp" and &1.name == "status"))
       statuses_before = length(SecNodes.readings!(status))
       status_report = [[100, "ok"], %{t: 1_700_000_050.0}]
@@ -330,7 +330,7 @@ defmodule SecantService.NodeDBWriterTest do
     test "a parameter deleted while recording is no longer written",
          %{node_id: node_id, uuid: uuid, temp: temp} do
       idle(uuid)
-      {:ok, parameters} = SecNodes.parameters_of_node(uuid)
+      parameters = SecNodes.parameters_of_node!(uuid)
       status = Enum.find(parameters, &(&1.module.name == "temp" and &1.name == "status"))
       Ash.destroy!(status)
 
@@ -366,7 +366,7 @@ defmodule SecantService.NodeDBWriterTest do
     test "the buffered readings of a deleted parameter are dropped, and counted",
          %{node_id: node_id, uuid: uuid, temp: temp} do
       idle(uuid)
-      {:ok, parameters} = SecNodes.parameters_of_node(uuid)
+      parameters = SecNodes.parameters_of_node!(uuid)
       status = Enum.find(parameters, &(&1.module.name == "temp" and &1.name == "status"))
       Ash.destroy!(status)
 

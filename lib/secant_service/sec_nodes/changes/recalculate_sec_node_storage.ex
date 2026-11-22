@@ -8,28 +8,25 @@ defmodule SecantService.SecNodes.Changes.RecalculateSecNodeStorage do
   use Ash.Resource.Change
   require Logger
 
-  alias SecantService.SecNodes.SecNode
+  alias SecantService.SecNodes
 
   @impl true
-  def change(changeset, _opts, _context) do
+  def change(changeset, _opts, context) do
     Ash.Changeset.before_action(changeset, fn changeset ->
-      recalculate_all_parameter_storage(changeset.data.uuid)
+      recalculate_all_parameter_storage(changeset.data.uuid, Ash.Context.to_opts(context))
       changeset
     end)
   end
 
-  defp recalculate_all_parameter_storage(sec_node_uuid) do
-    case Ash.get(SecNode, sec_node_uuid, load: [modules: [:parameters]], authorize?: false) do
-      {:ok, sec_node} ->
-        parameters =
-          sec_node.modules
-          |> Enum.flat_map(& &1.parameters)
-
+  # `opts`: the actor and authorization of the action, for the nested calls
+  defp recalculate_all_parameter_storage(sec_node_uuid, opts) do
+    case SecNodes.parameters_of_node(sec_node_uuid, opts) do
+      {:ok, parameters} ->
         {success_count, failure_count} =
           parameters
           |> Task.async_stream(
             fn parameter ->
-              case Ash.update(parameter, %{}, action: :recalculate_storage) do
+              case SecNodes.recalculate_parameter_storage(parameter, opts) do
                 {:ok, _updated_parameter} -> :ok
                 {:error, reason} -> {:error, reason}
               end
@@ -49,7 +46,7 @@ defmodule SecantService.SecNodes.Changes.RecalculateSecNodeStorage do
 
       {:error, reason} ->
         Logger.warning(
-          "Failed to load sec node #{sec_node_uuid} for parameter storage recalculation: #{inspect(reason)}"
+          "Failed to load the parameters of sec node #{sec_node_uuid} for storage recalculation: #{inspect(reason)}"
         )
     end
   end

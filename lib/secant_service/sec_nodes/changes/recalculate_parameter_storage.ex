@@ -4,22 +4,23 @@ defmodule SecantService.SecNodes.Changes.RecalculateParameterStorage do
   for a given Parameter by loading the calculated values from aggregates and
   persisting them to the stored attributes.
 
-  This change is designed to be resilient - if calculations fail, it logs the error
-  but allows the changeset to proceed so other changes aren't blocked.
+  This change is designed to be resilient - if calculations fail, it logs the
+  error and keeps the old counts, so other changes aren't blocked.
   """
 
   use Ash.Resource.Change
   require Logger
 
   @impl true
-  def change(changeset, _opts, _context) do
-    Ash.Changeset.before_action(changeset, &put_metrics/1)
+  def change(changeset, _opts, context) do
+    Ash.Changeset.before_action(changeset, &put_metrics(&1, Ash.Context.to_opts(context)))
   end
 
-  defp put_metrics(changeset) do
+  defp put_metrics(changeset, opts) do
     parameter = changeset.data
+    metrics = [:calculated_datapoint_count, :calculated_disk_size_bytes]
 
-    case load_calculated_metrics(parameter) do
+    case Ash.load(parameter, metrics, opts) do
       {:ok, loaded_parameter} ->
         changeset
         |> Ash.Changeset.force_change_attribute(
@@ -36,22 +37,8 @@ defmodule SecantService.SecNodes.Changes.RecalculateParameterStorage do
           "Failed to calculate storage metrics for parameter #{parameter.id}: #{inspect(reason)}"
         )
 
-        # Return changeset unchanged - allow other changes to proceed
+        # keep the old counts, let the other changes proceed
         changeset
-    end
-  end
-
-  defp load_calculated_metrics(parameter) do
-    try do
-      # Load the parameter with the calculations
-      loaded =
-        parameter
-        |> Ash.load!([:calculated_datapoint_count, :calculated_disk_size_bytes])
-
-      {:ok, loaded}
-    rescue
-      e ->
-        {:error, Exception.message(e)}
     end
   end
 end
