@@ -79,13 +79,12 @@ defmodule SecantService.MixProject do
           ],
           "ash-framework": [
             description:
-              "Ash Framework rules: resources, actions, code interfaces, policies, relationships, calculations, AshPostgres migrations, AshPhoenix forms, AshOban triggers, AshJsonApi and AshAuthentication. Load before changing anything in lib/secant_service/ (domains and resources using Ash.Resource or Ash.Domain), running `mix ash.codegen`, or debugging Ash.Error.* errors.",
+              "Ash Framework rules: resources, actions, code interfaces, policies, relationships, calculations, AshPostgres migrations, AshPhoenix forms, AshOban triggers and AshAuthentication. Load before changing anything in lib/secant_service/ (domains and resources using Ash.Resource or Ash.Domain), running `mix ash.codegen`, or debugging Ash.Error.* errors.",
             usage_rules: [
               :ash,
               :ash_postgres,
               :ash_phoenix,
               :ash_oban,
-              :ash_json_api,
               :ash_authentication
             ]
           ]
@@ -107,13 +106,11 @@ defmodule SecantService.MixProject do
       {:ash_oban, "~> 0.7"},
       {:picosat_elixir, "~> 0.2"},
       {:sourceror, "~> 1.8", only: [:dev, :test]},
-      {:open_api_spex, "~> 3.0"},
       {:ash_state_machine, "~> 0.2"},
       {:ash_admin, "~> 1.4"},
       {:ash_authentication_phoenix, "~> 2.0"},
       {:ash_authentication, "~> 4.0"},
       {:ash_postgres, "~> 2.0"},
-      {:ash_json_api, "~> 1.0"},
       {:ash_phoenix, "~> 2.0"},
       {:ash_pagify, "~> 1.4"},
       {:ash, "~> 3.0"},

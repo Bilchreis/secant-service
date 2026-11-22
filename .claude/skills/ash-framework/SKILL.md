@@ -1,6 +1,6 @@
 ---
 name: ash-framework
-description: "Ash Framework rules: resources, actions, code interfaces, policies, relationships, calculations, AshPostgres migrations, AshPhoenix forms, AshOban triggers, AshJsonApi and AshAuthentication. Load before changing anything in lib/secant_service/ (domains and resources using Ash.Resource or Ash.Domain), running `mix ash.codegen`, or debugging Ash.Error.* errors."
+description: "Ash Framework rules: resources, actions, code interfaces, policies, relationships, calculations, AshPostgres migrations, AshPhoenix forms, AshOban triggers and AshAuthentication. Load before changing anything in lib/secant_service/ (domains and resources using Ash.Resource or Ash.Domain), running `mix ash.codegen`, or debugging Ash.Error.* errors."
 metadata:
   managed-by: usage-rules
 ---
@@ -63,10 +63,6 @@ metadata:
 - [triggering_jobs_programmatically](references/ash_oban/triggering_jobs_programmatically.md)
 - [working_with_actors](references/ash_oban/working_with_actors.md)
 
-### ash_json_api
-
-- [ash_json_api](references/ash_json_api/ash_json_api.md)
-
 ### ash_authentication
 
 - [ash_authentication](references/ash_authentication/ash_authentication.md)
@@ -74,7 +70,7 @@ metadata:
 ## Searching Documentation
 
 ```sh
-mix usage_rules.search_docs "search term" -p ash -p ash_postgres -p ash_phoenix -p ash_oban -p ash_json_api -p ash_authentication
+mix usage_rules.search_docs "search term" -p ash -p ash_postgres -p ash_phoenix -p ash_oban -p ash_authentication
 ```
 
 ## Available Mix Tasks
@@ -120,8 +116,6 @@ mix usage_rules.search_docs "search term" -p ash -p ash_postgres -p ash_phoenix 
 - `mix ash_phoenix.install` - Installs AshPhoenix into a project. Should be called with `mix igniter.install ash_phoenix`
 - `mix ash_oban.install` - Installs AshOban and Oban
 - `mix ash_oban.set_default_module_names` - Set module names to their default values for triggers and scheduled actions
-- `mix ash_json_api.install` - Installs AshJsonApi. Should be run with `mix igniter.install ash_json_api`
-- `mix ash_json_api.routes` - Prints all routes by AshJsonApiRouter
 - `mix ash_authentication.add_add_on` - Adds the provided add-on to your user resource
 - `mix ash_authentication.add_strategy` - Adds the provided strategy or strategies to your user resource
 - `mix ash_authentication.install` - Installs AshAuthentication. Invoke with `mix igniter.install ash_authentication`
