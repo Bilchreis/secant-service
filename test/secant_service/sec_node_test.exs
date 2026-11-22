@@ -12,18 +12,9 @@ defmodule SecantService.SecNodeTest do
   end
 
   test "node_id loads the address it needs, whatever the query selects" do
-    uuid = Ecto.UUID.generate()
-
-    SecNode
-    |> Ash.Changeset.for_create(:create, %{
-      uuid: uuid,
-      equipment_id: "selected",
-      host: "10.0.0.7",
-      port: 10_767
-    })
-    |> Ash.create!()
+    node = generate(sec_node(host: "10.0.0.7", port: 10_767))
 
     assert %SecNode{node_id: {~c"10.0.0.7", 10_767}} =
-             SecNodes.get_sec_node!(uuid, query: [select: [:uuid]], load: [:node_id])
+             SecNodes.get_sec_node!(node.uuid, query: [select: [:uuid]], load: [:node_id])
   end
 end
