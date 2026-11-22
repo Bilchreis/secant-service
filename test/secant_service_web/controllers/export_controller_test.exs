@@ -5,7 +5,6 @@ defmodule SecantServiceWeb.ExportControllerTest do
   import Phoenix.ConnTest
 
   alias SecantService.SecNodes
-  alias SecantService.SecNodes.{Module, Parameter, SecNode}
   alias SecantService.SecNodes.Reading.Storage
 
   @endpoint SecantServiceWeb.Endpoint
@@ -57,39 +56,21 @@ defmodule SecantServiceWeb.ExportControllerTest do
     }
   end
 
-  defp create_node(attrs \\ %{}) do
+  defp create_node(attrs \\ []) do
     node =
-      SecNode
-      |> Ash.Changeset.for_create(
-        :create,
-        Map.merge(
-          %{
-            uuid: Ecto.UUID.generate(),
-            equipment_id: "test cryo",
-            description: "test cryostat",
-            host: "localhost",
-            port: 10_800,
-            describe_message: describe_message()
-          },
-          attrs
-        )
-      )
-      |> Ash.create!()
+      [
+        equipment_id: "test cryo",
+        description: "test cryostat",
+        describe_message: describe_message()
+      ]
+      |> Keyword.merge(attrs)
+      |> sec_node()
+      |> generate()
 
-    module =
-      Module
-      |> Ash.Changeset.for_create(:create, %{name: "T", sec_node_id: node.uuid})
-      |> Ash.create!()
+    module = generate(sec_module(name: "T", sec_node_id: node.uuid))
 
     for {name, datainfo} <- @parameters do
-      parameter =
-        Parameter
-        |> Ash.Changeset.for_create(:create, %{
-          name: name,
-          datainfo: datainfo,
-          module_id: module.id
-        })
-        |> Ash.create!()
+      parameter = generate(parameter(name: name, datainfo: datainfo, module_id: module.id))
 
       @readings
       |> Map.fetch!(name)
@@ -230,7 +211,7 @@ defmodule SecantServiceWeb.ExportControllerTest do
     end
 
     test "responds with 404 when the node has no describe message" do
-      node = create_node(%{describe_message: nil})
+      node = create_node(describe_message: nil)
 
       assert get(build_conn(), "/export/node/#{node.uuid}").status == 404
     end

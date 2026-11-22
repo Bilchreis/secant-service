@@ -6,7 +6,7 @@ defmodule SecantService.ReadingStorageTest do
   use SecantService.DataCase, async: true
 
   alias SecantService.SecNodes
-  alias SecantService.SecNodes.{Module, Parameter, Reading, SecNode}
+  alias SecantService.SecNodes.Reading
   alias SecantService.SecNodes.Reading.Storage
 
   @int %{"type" => "int"}
@@ -40,30 +40,9 @@ defmodule SecantService.ReadingStorageTest do
     {%{"type" => "array", "members" => @double}, [1.0, "oops"], :value_json}
   ]
 
-  defp parameter(datainfo) do
-    node =
-      SecNode
-      |> Ash.Changeset.for_create(:create, %{
-        uuid: Ecto.UUID.generate(),
-        equipment_id: "storage_#{System.unique_integer([:positive])}",
-        host: "localhost",
-        port: 10_800
-      })
-      |> Ash.create!()
-
-    module =
-      Module
-      |> Ash.Changeset.for_create(:create, %{name: "m", sec_node_id: node.uuid})
-      |> Ash.create!()
-
-    Parameter
-    |> Ash.Changeset.for_create(:create, %{name: "p", datainfo: datainfo, module_id: module.id})
-    |> Ash.create!()
-  end
-
   test "each type goes to its column and reads back as sent" do
     for {datainfo, value, column} <- @cases do
-      parameter = parameter(datainfo)
+      parameter = generate(parameter(datainfo: datainfo))
       row = Storage.to_row(value, parameter, 1_700_000_000.5, %{e: 0.01})
 
       assert Map.has_key?(row, column), "#{inspect(value)} should go to #{column}"
@@ -78,7 +57,9 @@ defmodule SecantService.ReadingStorageTest do
   end
 
   test "struct keys decoded as atoms by the client are stored as strings" do
-    parameter = parameter(%{"type" => "struct", "members" => %{"x" => @double}})
+    parameter =
+      generate(parameter(datainfo: %{"type" => "struct", "members" => %{"x" => @double}}))
+
     row = Storage.to_row(%{x: 1.5}, parameter, 1_700_000_000.0, %{})
     SecNodes.insert_readings([row])
 
@@ -88,9 +69,9 @@ defmodule SecantService.ReadingStorageTest do
   end
 
   test "one batch can hold readings of different columns" do
-    float = parameter(@double)
-    text = parameter(%{"type" => "string"})
-    spectrum = parameter(%{"type" => "array", "members" => @double})
+    float = generate(parameter(datainfo: @double))
+    text = generate(parameter(datainfo: %{"type" => "string"}))
+    spectrum = generate(parameter(datainfo: %{"type" => "array", "members" => @double}))
 
     rows = [
       Storage.to_row(1.5, float, 1_700_000_000.0, %{}),
@@ -107,9 +88,9 @@ defmodule SecantService.ReadingStorageTest do
   end
 
   test "latest_readings: newest per parameter, the last stored on a tie, none for no readings" do
-    a = parameter(@double)
-    b = parameter(@double)
-    empty = parameter(@double)
+    a = generate(parameter(datainfo: @double))
+    b = generate(parameter(datainfo: @double))
+    empty = generate(parameter(datainfo: @double))
 
     SecNodes.insert_readings([
       Storage.to_row(1.0, a, 1_700_000_000.0, %{}),
@@ -129,7 +110,7 @@ defmodule SecantService.ReadingStorageTest do
   end
 
   test "qualifiers are stored, except t" do
-    p = parameter(@double)
+    p = generate(parameter(datainfo: @double))
 
     SecNodes.insert_readings([
       Storage.to_row(1.0, p, 1_700_000_000.0, %{t: 1_700_000_000.0, e: 0.01})
@@ -146,7 +127,7 @@ defmodule SecantService.ReadingStorageTest do
           {%{"type" => "struct", "members" => %{"s" => %{"type" => "string"}}},
            %{"s" => "x\u0000"}}
         ] do
-      p = parameter(datainfo)
+      p = generate(parameter(datainfo: datainfo))
       row = Storage.to_row(value, p, 1_700_000_000.0, %{"note" => "q\u0000"})
 
       assert %Ash.BulkResult{status: :success} = SecNodes.insert_readings([row])
@@ -159,7 +140,7 @@ defmodule SecantService.ReadingStorageTest do
 
   test "values a column can't hold are kept in value_json" do
     huge = Bitwise.bsl(1, 70)
-    p = parameter(@int)
+    p = generate(parameter(datainfo: @int))
     row = Storage.to_row(huge, p, 1_700_000_000.0, %{})
 
     assert Map.has_key?(row, :value_json)
@@ -170,7 +151,7 @@ defmodule SecantService.ReadingStorageTest do
 
   describe "the history table (AshPagify over :for_parameter)" do
     setup do
-      p = parameter(@double)
+      p = generate(parameter(datainfo: @double))
 
       SecNodes.insert_readings(
         for {v, i} <- Enum.with_index([3.0, 1.0, 2.0]) do

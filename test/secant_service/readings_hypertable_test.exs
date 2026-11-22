@@ -4,36 +4,7 @@ defmodule SecantService.ReadingsHypertableTest do
 
   alias SecantService.Repo
   alias SecantService.SecNodes
-  alias SecantService.SecNodes.{Module, Parameter, SecNode}
   alias SecantService.SecNodes.Reading.Storage
-
-  defp create_parameter(equipment_id, datainfo \\ %{"type" => "double"}) do
-    node =
-      SecNode
-      |> Ash.Changeset.for_create(:create, %{
-        uuid: Ecto.UUID.generate(),
-        equipment_id: equipment_id,
-        host: "localhost",
-        port: 10_800
-      })
-      |> Ash.create!()
-
-    module =
-      Module
-      |> Ash.Changeset.for_create(:create, %{name: "T", sec_node_id: node.uuid})
-      |> Ash.create!()
-
-    parameter =
-      Parameter
-      |> Ash.Changeset.for_create(:create, %{
-        name: "value",
-        datainfo: datainfo,
-        module_id: module.id
-      })
-      |> Ash.create!()
-
-    {node, parameter}
-  end
 
   # One reading per hour over the last three days, so the values span several
   # one-day chunks, with long runs of the same value.
@@ -83,10 +54,13 @@ defmodule SecantService.ReadingsHypertableTest do
   end
 
   test "values read back the same once compressed, scalars and spectra" do
-    {_node, scalar} = create_parameter("sim_compress")
+    {_node, scalar} = node_with_parameter(node: [equipment_id: "sim_compress"])
 
     {_node, spectrum} =
-      create_parameter("sim_spectrum", %{"type" => "array", "members" => %{"type" => "double"}})
+      node_with_parameter(
+        node: [equipment_id: "sim_spectrum"],
+        datainfo: %{"type" => "array", "members" => %{"type" => "double"}}
+      )
 
     rows = insert_readings(scalar)
 
@@ -104,15 +78,15 @@ defmodule SecantService.ReadingsHypertableTest do
   end
 
   test "the qualifier t is not stored twice" do
-    {_node, parameter} = create_parameter("sim_qualifiers")
+    {_node, parameter} = node_with_parameter(node: [equipment_id: "sim_qualifiers"])
     insert_readings(parameter, 1)
     assert [%{qualifiers: qualifiers}] = SecNodes.readings!(parameter.id)
     refute Map.has_key?(qualifiers, "t")
   end
 
   test "destroying a node removes its values from compressed chunks only" do
-    {doomed_node, doomed} = create_parameter("sim_doomed")
-    {_kept_node, kept} = create_parameter("sim_kept")
+    {doomed_node, doomed} = node_with_parameter(node: [equipment_id: "sim_doomed"])
+    {_kept_node, kept} = node_with_parameter(node: [equipment_id: "sim_kept"])
     insert_readings(doomed)
     kept_rows = insert_readings(kept)
 
@@ -124,7 +98,7 @@ defmodule SecantService.ReadingsHypertableTest do
   end
 
   test "storage metrics still work on compressed data" do
-    {_node, parameter} = create_parameter("sim_metrics")
+    {_node, parameter} = node_with_parameter(node: [equipment_id: "sim_metrics"])
     rows = insert_readings(parameter)
     compress_all_chunks()
 
