@@ -6,33 +6,14 @@ defmodule SecantService.PlotDBTest do
   use SecantService.DataCase, async: false
 
   alias SecantService.PlotDB
-  alias SecantService.SecNodes.{Module, Parameter, SecNode}
 
   # No node is connected at this address, so any read from the device fails.
   defp create_module(interface_classes, params) do
-    node =
-      SecNode
-      |> Ash.Changeset.for_create(:create, %{
-        uuid: Ecto.UUID.generate(),
-        equipment_id: "plot_#{System.unique_integer([:positive])}",
-        host: "192.0.2.1",
-        port: 10_800
-      })
-      |> Ash.create!()
-
-    module =
-      Module
-      |> Ash.Changeset.for_create(:create, %{
-        name: "m",
-        sec_node_id: node.uuid,
-        interface_classes: interface_classes
-      })
-      |> Ash.create!()
+    node = generate(sec_node(host: "192.0.2.1"))
+    module = generate(sec_module(sec_node_id: node.uuid, interface_classes: interface_classes))
 
     for {name, datainfo} <- params do
-      Parameter
-      |> Ash.Changeset.for_create(:create, %{name: name, datainfo: datainfo, module_id: module.id})
-      |> Ash.create!()
+      generate(parameter(name: name, datainfo: datainfo, module_id: module.id))
     end
 
     Ash.load!(module, :parameters)
