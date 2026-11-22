@@ -25,6 +25,7 @@ defmodule SecantService.MixProject do
         ignore_warnings: ".dialyzer_ignore.exs"
       ],
       consolidate_protocols: Mix.env() != :dev,
+      usage_rules: usage_rules(),
       hex: [
         # assent 0.2.x: Sign in with Apple callback claims override
         # (GHSA-9fr5-g44g-9526). We only use the password and API key
@@ -47,6 +48,49 @@ defmodule SecantService.MixProject do
     [
       mod: {SecantService.Application, []},
       extra_applications: [:logger, :runtime_tools, :os_mon]
+    ]
+  end
+
+  # Agent rules synced from deps by `mix usage_rules.sync` (part of
+  # `mix precommit`). The packages are listed by name, not `:all`, so the
+  # output doesn't change between dev and test, which have different deps.
+  defp usage_rules do
+    [
+      # Short rules that apply to almost every change, inlined.
+      file: "AGENTS.md",
+      usage_rules: [
+        # docs lookup tasks, plus its Elixir and OTP rules
+        :usage_rules,
+        "phoenix:elixir",
+        "phoenix:phoenix",
+        "phoenix:html",
+        "phoenix:liveview"
+      ],
+      # Larger rule sets, loaded by the agent only when the task needs them.
+      # The sync rewrites a SKILL.md only when its body changes, so after
+      # editing just a description, delete that SKILL.md and sync again.
+      skills: [
+        location: ".claude/skills",
+        build: [
+          "use-sobelow": [
+            description:
+              "Sobelow security rules for Phoenix: XSS, SQL injection, unsafe atom/binary handling, CSRF and config findings. Load when handling user input in controllers, LiveViews or raw SQL, when `mix sobelow` reports a finding, or when editing .sobelow-skips.",
+            usage_rules: [:sobelow]
+          ],
+          "ash-framework": [
+            description:
+              "Ash Framework rules: resources, actions, code interfaces, policies, relationships, calculations, AshPostgres migrations, AshPhoenix forms, AshOban triggers, AshJsonApi and AshAuthentication. Load before changing anything in lib/secant_service/ (domains and resources using Ash.Resource or Ash.Domain), running `mix ash.codegen`, or debugging Ash.Error.* errors.",
+            usage_rules: [
+              :ash,
+              :ash_postgres,
+              :ash_phoenix,
+              :ash_oban,
+              :ash_json_api,
+              :ash_authentication
+            ]
+          ]
+        ]
+      ]
     ]
   end
 
@@ -113,8 +157,9 @@ defmodule SecantService.MixProject do
       {:flame_on, git: "https://github.com/DockYard/flame_on.git", only: :dev},
       {:meck, "~> 1.0", override: true},
       {:benchee, "~> 1.5", only: :dev},
-      {:igniter, "~> 0.6", only: :dev},
-      {:usage_rules, "~> 1.3", only: :dev}
+      # test too: `mix precommit` (test env) runs usage_rules.sync
+      {:igniter, "~> 0.6", only: [:dev, :test]},
+      {:usage_rules, "~> 1.3", only: [:dev, :test]}
     ]
   end
 
@@ -134,6 +179,7 @@ defmodule SecantService.MixProject do
       precommit: [
         "compile --warnings-as-errors",
         "deps.unlock --unused",
+        "usage_rules.sync --yes",
         "format",
         "credo --only warning --strict",
         "ash.codegen --check",
