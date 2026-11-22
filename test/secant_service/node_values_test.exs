@@ -124,6 +124,18 @@ defmodule SecantService.NodeValuesTest do
              Map.take(batch[{"temp", "value"}], [:data_report, :error_report])
   end
 
+  test "an error and then a value inside one interval publish just the value",
+       %{node_id: node_id, values_pid: pid} do
+    in_one_interval(pid, fn ->
+      send_error_update(node_id, "temp", "value", @error)
+      send_value_update(node_id, "temp", "value", [7.0, %{t: 1_700_000_700.0}])
+    end)
+
+    assert_receive {:value_updates, ^node_id, batch}, 1_000
+    assert %{data_report: [7.0, _]} = current = batch[{"temp", "value"}]
+    refute Map.has_key?(current, :error_report)
+  end
+
   test "changes are published in batches, latest per parameter",
        %{node_id: node_id, values_pid: pid} do
     in_one_interval(pid, fn ->

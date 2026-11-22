@@ -361,6 +361,74 @@ defmodule SecantService.NodeDBWriterTest do
       assert [1.0, 2.0] = temp |> stored() |> tl() |> Enum.map(&elem(&1, 1))
     end
 
+    # logs the dropped readings and the deleted parameter
+    @tag :capture_log
+    test "the buffered readings of a deleted parameter are dropped, and counted",
+         %{node_id: node_id, uuid: uuid, temp: temp} do
+      idle(uuid)
+      {:ok, parameters} = SecNodes.parameters_of_node(uuid)
+      status = Enum.find(parameters, &(&1.module.name == "temp" and &1.name == "status"))
+      Ash.destroy!(status)
+
+      test_pid = self()
+      handler = "dropped-#{inspect(test_pid)}"
+
+      :telemetry.attach(
+        handler,
+        [:secant_service, :node_db_writer, :dropped],
+        fn _, m, _, _ ->
+          send(test_pid, {:dropped, m.count})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+      first? = :counters.new(1, [])
+
+      # the first write waits for the test, so more readings pile up behind it
+      Application.put_env(:secant_service, :insert_readings, fn rows ->
+        if :counters.get(first?, 1) == 0 do
+          :counters.add(first?, 1, 1)
+          send(test_pid, {:blocked, self()})
+          receive do: (:go -> :ok)
+        end
+
+        send(test_pid, {:attempt, rows |> Enum.map(& &1.parameter_id) |> Enum.uniq()})
+        SecNodes.insert_readings(rows)
+      end)
+
+      send_reading = fn t ->
+        send_value_update(node_id, "temp", "status", [[100, "ok #{t}"], %{t: 1_700_000_000.0 + t}])
+
+        send_value_update(node_id, "temp", "value", [t * 1.0, %{t: 1_700_000_000.0 + t}])
+      end
+
+      send_reading.(1)
+      send(writer(uuid), :flush_parameter_batch)
+      assert_receive {:blocked, task}
+
+      send_reading.(2)
+      send_reading.(3)
+      assert :sys.get_state(writer(uuid)).queued == 4
+      send(task, :go)
+
+      # the first write finds the status parameter gone, the buffer loses its readings
+      assert_receive {:dropped, 1}
+      assert_receive {:dropped, 2}
+      state = :sys.get_state(writer(uuid))
+      assert state.queued == 2
+      assert Enum.all?(:queue.to_list(state.queue), &(&1.parameter_id == temp.id))
+
+      flush_messages()
+      send(writer(uuid), :flush_parameter_batch)
+      idle(uuid)
+      assert :sys.get_state(writer(uuid)).weight == 0
+      assert_received {:attempt, [id]}
+      assert id == temp.id
+      refute_received {:attempt, _}
+      assert [1.0, 2.0, 3.0] = temp |> stored() |> tl() |> Enum.map(&elem(&1, 1))
+    end
+
     # logs the crash
     @tag :capture_log
     test "a write that crashes while splitting a batch resends only what it had not stored",

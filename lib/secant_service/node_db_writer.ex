@@ -115,8 +115,9 @@ defmodule SecantService.NodeDBWriter do
        queued: 0,
        weight: 0,
        max_weight: config(:writer_max_buffered_weight, @max_buffered_weight),
-       # %{task: Task.t(), rows: rows, settled: n} of the write in flight;
-       # the first `settled` rows are stored or dropped
+       # %{task: Task.t(), rows: rows, settled: n, rejected: list} of the
+       # write in flight; its first `settled` rows are stored or dropped
+       # (`rejected`, see insert/2)
        in_flight: nil,
        # delay of the last retry while writes fail, nil once one succeeds
        retry_delay: nil,
@@ -139,8 +140,8 @@ defmodule SecantService.NodeDBWriter do
   end
 
   # The write in flight is done with its first rows (see insert/2)
-  def handle_info({:settled, pid, count}, %{in_flight: %{task: %{pid: pid}}} = state) do
-    {:noreply, update_in(state.in_flight.settled, &(&1 + count))}
+  def handle_info({:settled, pid, count, rejected}, %{in_flight: %{task: %{pid: pid}}} = state) do
+    {:noreply, %{state | in_flight: settle(state.in_flight, count, rejected)}}
   end
 
   # The write in flight is done
@@ -155,8 +156,15 @@ defmodule SecantService.NodeDBWriter do
       ) do
     Logger.error("Writing readings of #{state.equipment_id} crashed: #{inspect(reason)}")
     # what it stored or dropped before (its messages come before the :DOWN)
-    %{rows: rows, settled: settled} = state.in_flight
-    {:noreply, written(state, {:retry, Enum.drop(rows, settled), []})}
+    %{rows: rows, settled: settled, rejected: rejected} = state.in_flight
+
+    result =
+      case Enum.drop(rows, settled) do
+        [] -> {:ok, rejected}
+        unsent -> {:retry, unsent, rejected}
+      end
+
+    {:noreply, written(state, result)}
   end
 
   # The node services start after the node was described; whatever the node
@@ -206,8 +214,8 @@ defmodule SecantService.NodeDBWriter do
         nil ->
           []
 
-        %{task: task, rows: rows, settled: settled} ->
-          unsent(state, task, rows, settled, deadline)
+        %{task: task, rows: rows} = in_flight ->
+          unsent(state, task, rows, in_flight, deadline)
       end
 
     case write_by(unsent ++ :queue.to_list(state.queue), deadline, state) do
@@ -237,10 +245,10 @@ defmodule SecantService.NodeDBWriter do
 
         task =
           Task.Supervisor.async_nolink(SecantService.TaskSupervisor, fn ->
-            insert(chunk, &send(parent, {:settled, self(), &1}))
+            insert(chunk, &send(parent, {:settled, self(), &1, &2}))
           end)
 
-        state |> unsent(task, chunk, 0, deadline) |> length()
+        state |> unsent(task, chunk, %{settled: 0, rejected: []}, deadline) |> length()
 
       chunk, lost ->
         lost + length(chunk)
@@ -250,7 +258,7 @@ defmodule SecantService.NodeDBWriter do
   # The rows of a write that are not stored once it is done or the deadline
   # passed. A statement cut off is rolled back, so the rows after those the
   # write had settled are unsent.
-  defp unsent(state, task, rows, settled, deadline) do
+  defp unsent(state, task, rows, progress, deadline) do
     case Task.yield(task, remaining(deadline)) || Task.shutdown(task, :brutal_kill) do
       {:ok, {:ok, rejected}} ->
         report_rejected(state, rejected)
@@ -261,17 +269,23 @@ defmodule SecantService.NodeDBWriter do
         left
 
       _ ->
-        Enum.drop(rows, receive_settled(task.pid, settled))
+        %{settled: settled, rejected: rejected} = receive_settled(task.pid, progress)
+        report_rejected(state, rejected)
+        Enum.drop(rows, settled)
     end
   end
 
-  defp receive_settled(pid, settled) do
+  defp receive_settled(pid, progress) do
     receive do
-      {:settled, ^pid, count} -> receive_settled(pid, settled + count)
+      {:settled, ^pid, count, rejected} ->
+        receive_settled(pid, settle(progress, count, rejected))
     after
-      0 -> settled
+      0 -> progress
     end
   end
+
+  defp settle(progress, count, rejected),
+    do: %{progress | settled: progress.settled + count, rejected: progress.rejected ++ rejected}
 
   defp remaining(deadline), do: max(deadline - System.monotonic_time(:millisecond), 0)
 
@@ -398,7 +412,7 @@ defmodule SecantService.NodeDBWriter do
 
     task =
       Task.Supervisor.async_nolink(SecantService.TaskSupervisor, fn ->
-        timed_insert(rows, equipment_id, &send(parent, {:settled, self(), &1}))
+        timed_insert(rows, equipment_id, &send(parent, {:settled, self(), &1, &2}))
       end)
 
     %{
@@ -406,7 +420,7 @@ defmodule SecantService.NodeDBWriter do
       | queue: rest,
         queued: state.queued - count,
         weight: state.weight - Enum.sum_by(rows, &weight/1),
-        in_flight: %{task: task, rows: rows, settled: 0}
+        in_flight: %{task: task, rows: rows, settled: 0, rejected: []}
     }
   end
 
@@ -493,11 +507,23 @@ defmodule SecantService.NodeDBWriter do
     end
   end
 
-  # The rows that are not of a deleted parameter
-  defp without_deleted(%{deleted: deleted}, rows) do
-    if MapSet.size(deleted) == 0,
-      do: rows,
-      else: Enum.reject(rows, &(&1.parameter_id in deleted))
+  # The rows that are not of a deleted parameter; the others are dropped
+  defp without_deleted(%{deleted: deleted} = state, rows) do
+    if MapSet.size(deleted) == 0 do
+      rows
+    else
+      {gone, kept} = Enum.split_with(rows, &(&1.parameter_id in deleted))
+
+      if gone != [] do
+        Logger.warning(
+          "Dropped #{length(gone)} buffered readings of deleted parameters of #{state.equipment_id}"
+        )
+
+        dropped(state, :rejected, length(gone))
+      end
+
+      kept
+    end
   end
 
   defp dropped(state, reason, count) do
@@ -532,8 +558,9 @@ defmodule SecantService.NodeDBWriter do
   # because they can't be stored, as `%{reason: text}`, with `deleted:
   # parameter_id` when the parameter is gone; they are found by splitting the
   # batch. The rows are settled (stored or dropped) in order, and
-  # `on_settled` is called with the count each time some are.
-  def insert(rows, on_settled \\ fn _count -> :ok end)
+  # `on_settled` is called with the count and the rejected ones each time
+  # some are.
+  def insert(rows, on_settled \\ fn _count, _rejected -> :ok end)
 
   def insert([], _on_settled), do: {:ok, []}
 
@@ -557,7 +584,7 @@ defmodule SecantService.NodeDBWriter do
           on_settled
         )
 
-      {_failed, reason} when length(rows) == 1 ->
+      {:failed, reason} when length(rows) == 1 ->
         # A failure we can't tell from an outage: drop the row only if the
         # database answers otherwise
         if db_reachable?(),
@@ -580,8 +607,8 @@ defmodule SecantService.NodeDBWriter do
     end
   end
 
-  defp settled(result, rows, on_settled) do
-    on_settled.(length(rows))
+  defp settled({:ok, rejected} = result, rows, on_settled) do
+    on_settled.(length(rows), rejected)
     result
   end
 

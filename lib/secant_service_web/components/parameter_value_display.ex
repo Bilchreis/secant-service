@@ -154,7 +154,7 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
           Logger.warning("Error Update: #{error_cls}, #{error_msg}, #{inspect(qualifiers)}")
           assign_current(socket, current)
 
-        %{data_report: [_value, _qualifiers]} ->
+        %{data_report: [_, _]} ->
           assign_current(socket, current)
 
         _ ->

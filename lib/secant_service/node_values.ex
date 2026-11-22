@@ -227,26 +227,19 @@ defmodule SecantService.NodeValues do
   end
 
   # A report that only differs in its timestamp is not a change: drop the
-  # timestamp from the qualifiers (the last element) of the reading and of
-  # the error.
+  # timestamp from the qualifiers of the reading and of the error.
   defp remove_timestamp(param_val) do
     param_val
-    |> without_t(:data_report)
-    |> without_t(:error_report)
+    |> Map.update(:data_report, nil, &without_t/1)
+    |> Map.update(:error_report, nil, &without_t/1)
   end
 
-  defp without_t(param_val, key) do
-    case Map.get(param_val, key) do
-      [_ | _] = report ->
-        Map.put(param_val, key, List.update_at(report, -1, &drop_t/1))
+  # [value, qualifiers] and [class, text, qualifiers]
+  defp without_t([value, %{} = qualifiers]), do: [value, drop_t(qualifiers)]
+  defp without_t([cls, text, %{} = qualifiers]), do: [cls, text, drop_t(qualifiers)]
+  defp without_t(report), do: report
 
-      _ ->
-        param_val
-    end
-  end
-
-  defp drop_t(qualifiers) when is_map(qualifiers), do: Map.drop(qualifiers, [:t, "t"])
-  defp drop_t(other), do: other
+  defp drop_t(qualifiers), do: Map.drop(qualifiers, [:t, "t"])
 
   # Error reports come first: they can arrive for any accessible, including
   # "status", whose clause below expects a [value, qualifiers] data report.
