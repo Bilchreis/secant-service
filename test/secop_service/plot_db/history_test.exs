@@ -7,38 +7,9 @@ defmodule SecantService.PlotDB.HistoryTest do
   alias SecantService.PlotDB.History
   alias SecantService.Repo
 
-  alias SecantService.SecNodes.{
-    Module,
-    Parameter,
-    SecNode
-  }
+  alias SecantService.SecNodes.Parameter
 
   @start ~U[2026-03-01 00:00:00.000000Z]
-
-  defp create_parameter(datainfo) do
-    node =
-      SecNode
-      |> Ash.Changeset.for_create(:create, %{
-        uuid: Ecto.UUID.generate(),
-        equipment_id: "history_#{System.unique_integer([:positive])}",
-        host: "localhost",
-        port: 10_800
-      })
-      |> Ash.create!()
-
-    module =
-      Module
-      |> Ash.Changeset.for_create(:create, %{name: "T", sec_node_id: node.uuid})
-      |> Ash.create!()
-
-    Parameter
-    |> Ash.Changeset.for_create(:create, %{
-      name: "value",
-      datainfo: datainfo,
-      module_id: module.id
-    })
-    |> Ash.create!()
-  end
 
   # One reading per second from @start; `value_fun` maps the index to a value.
   defp insert_readings(parameter, count, value_fun) do
@@ -80,14 +51,14 @@ defmodule SecantService.PlotDB.HistoryTest do
 
   describe "window/4" do
     test "a parameter without readings gives an empty window" do
-      parameter = create_parameter(%{"type" => "double"})
+      parameter = generate(parameter(datainfo: %{"type" => "double"}))
 
       assert History.window(parameter, nil, nil) ==
                %{values: [], timestamps: [], aggregated: false, bucket_ms: nil}
     end
 
     test "few readings come back as stored, oldest first" do
-      parameter = create_parameter(%{"type" => "double"})
+      parameter = generate(parameter(datainfo: %{"type" => "double"}))
       insert_readings(parameter, 50, &(&1 + 0.5))
 
       window = History.window(parameter, nil, nil, max_raw: 100)
@@ -98,7 +69,7 @@ defmodule SecantService.PlotDB.HistoryTest do
     end
 
     test "many readings are thinned out to real readings that keep the extremes" do
-      parameter = create_parameter(%{"type" => "double"})
+      parameter = generate(parameter(datainfo: %{"type" => "double"}))
 
       # flat at 20, with one spike up and one dip down
       value = fn
@@ -128,7 +99,7 @@ defmodule SecantService.PlotDB.HistoryTest do
     end
 
     test "a smaller window gets narrower buckets and finally every reading" do
-      parameter = create_parameter(%{"type" => "int"})
+      parameter = generate(parameter(datainfo: %{"type" => "int"}))
       insert_readings(parameter, 3600, & &1)
       opts = [max_raw: 100, max_buckets: 60]
 
@@ -144,7 +115,7 @@ defmodule SecantService.PlotDB.HistoryTest do
     end
 
     test "open ends reach to the first and last reading" do
-      parameter = create_parameter(%{"type" => "int"})
+      parameter = generate(parameter(datainfo: %{"type" => "int"}))
       insert_readings(parameter, 20, & &1)
 
       assert History.window(parameter, ms(15), nil).values == Enum.to_list(15..19)
@@ -152,8 +123,8 @@ defmodule SecantService.PlotDB.HistoryTest do
     end
 
     test "only the asked parameter's readings are used" do
-      parameter = create_parameter(%{"type" => "int"})
-      other = create_parameter(%{"type" => "int"})
+      parameter = generate(parameter(datainfo: %{"type" => "int"}))
+      other = generate(parameter(datainfo: %{"type" => "int"}))
       insert_readings(parameter, 200, fn _ -> 1 end)
       insert_readings(other, 200, fn _ -> 1000 end)
 
@@ -164,7 +135,7 @@ defmodule SecantService.PlotDB.HistoryTest do
     end
 
     test "compressed chunks give the same answer" do
-      parameter = create_parameter(%{"type" => "double"})
+      parameter = generate(parameter(datainfo: %{"type" => "double"}))
       insert_readings(parameter, 600, &(rem(&1 * 7, 50) * 1.0))
       opts = [max_raw: 100, max_buckets: 20]
 
@@ -181,7 +152,7 @@ defmodule SecantService.PlotDB.HistoryTest do
 
   describe "resolution/4 and coarsest/1" do
     test "say how a window would be answered" do
-      parameter = create_parameter(%{"type" => "int"})
+      parameter = generate(parameter(datainfo: %{"type" => "int"}))
       insert_readings(parameter, 600, & &1)
       opts = [max_raw: 100, max_buckets: 60]
 
@@ -208,7 +179,7 @@ defmodule SecantService.PlotDB.HistoryTest do
 
   describe "Parameter actions" do
     test ":history_window and :history_resolution answer like History" do
-      parameter = create_parameter(%{"type" => "int"})
+      parameter = generate(parameter(datainfo: %{"type" => "int"}))
       insert_readings(parameter, 600, & &1)
       limits = %{max_raw: 100, max_buckets: 60}
 
@@ -225,7 +196,7 @@ defmodule SecantService.PlotDB.HistoryTest do
     end
 
     test "refuse parameters that are not plain numbers, and unknown ones" do
-      parameter = create_parameter(%{"type" => "string"})
+      parameter = generate(parameter(datainfo: %{"type" => "string"}))
 
       assert {:error, %Ash.Error.Invalid{}} = SecNodes.history_window(parameter.id, nil, nil)
       assert {:error, %Ash.Error.Invalid{}} = SecNodes.history_resolution(parameter.id, nil, nil)
@@ -235,7 +206,7 @@ defmodule SecantService.PlotDB.HistoryTest do
 
   describe "historical plot data" do
     test "numeric parameters are loaded thinned out" do
-      parameter = create_parameter(%{"type" => "double"})
+      parameter = generate(parameter(datainfo: %{"type" => "double"}))
       insert_readings(parameter, 4000, &(rem(&1, 10) * 1.0))
 
       {values, timestamps} = Builders.fetch_param_data(parameter, :historical)

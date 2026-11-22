@@ -9,35 +9,9 @@ defmodule SecantService.PlotDB.StoredReadingsTest do
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.SecNodes
-  alias SecantService.SecNodes.{Module, Parameter, SecNode}
   alias SecantService.SecNodes.Reading.Storage
 
   @t0 ~U[2026-01-01 00:00:00.000000Z]
-
-  defp create_parameter(datainfo) do
-    node =
-      SecNode
-      |> Ash.Changeset.for_create(:create, %{
-        uuid: Ecto.UUID.generate(),
-        equipment_id: "plot_#{System.unique_integer([:positive])}",
-        host: "192.0.2.1",
-        port: 10_800
-      })
-      |> Ash.create!()
-
-    module =
-      Module
-      |> Ash.Changeset.for_create(:create, %{name: "m", sec_node_id: node.uuid})
-      |> Ash.create!()
-
-    Parameter
-    |> Ash.Changeset.for_create(:create, %{
-      name: "value",
-      datainfo: datainfo,
-      module_id: module.id
-    })
-    |> Ash.create!()
-  end
 
   # one reading per second from @t0, value i for reading i
   defp insert(parameter, values) do
@@ -55,7 +29,9 @@ defmodule SecantService.PlotDB.StoredReadingsTest do
 
   describe "array plot" do
     setup do
-      {:ok, parameter: create_parameter(%{"type" => "array", "members" => %{"type" => "double"}})}
+      {:ok,
+       parameter:
+         generate(parameter(datainfo: %{"type" => "array", "members" => %{"type" => "double"}}))}
     end
 
     test "nothing stored", %{parameter: parameter} do
@@ -78,7 +54,7 @@ defmodule SecantService.PlotDB.StoredReadingsTest do
 
   describe "live plot" do
     setup do
-      {:ok, parameter: create_parameter(%{"type" => "double"})}
+      {:ok, parameter: generate(parameter(datainfo: %{"type" => "double"}))}
     end
 
     test "any_data? and the held setpoint", %{parameter: parameter} do

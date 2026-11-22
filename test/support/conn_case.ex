@@ -26,6 +26,7 @@ defmodule SecantServiceWeb.ConnCase do
       import Plug.Conn
       import Phoenix.ConnTest
       import Phoenix.LiveViewTest
+      import SecantService.Generators
 
       unquote(node_case)
     end
