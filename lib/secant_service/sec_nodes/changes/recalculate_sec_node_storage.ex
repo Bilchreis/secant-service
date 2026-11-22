@@ -13,12 +13,12 @@ defmodule SecantService.SecNodes.Changes.RecalculateSecNodeStorage do
   @impl true
   def change(changeset, _opts, context) do
     Ash.Changeset.before_action(changeset, fn changeset ->
-      recalculate_all_parameter_storage(changeset.data.uuid, Ash.Context.to_opts(context))
+      recalculate_all_parameter_storage(changeset.data.uuid, scope: context)
       changeset
     end)
   end
 
-  # `opts`: the actor and authorization of the action, for the nested calls
+  # `opts`: the action's context as the scope (actor, tenant, authorize?) of the nested calls
   defp recalculate_all_parameter_storage(sec_node_uuid, opts) do
     case SecNodes.parameters_of_node(sec_node_uuid, opts) do
       {:ok, parameters} ->

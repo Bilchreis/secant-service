@@ -13,7 +13,7 @@ defmodule SecantService.SecNodes.Changes.RecalculateParameterStorage do
 
   @impl true
   def change(changeset, _opts, context) do
-    Ash.Changeset.before_action(changeset, &put_metrics(&1, Ash.Context.to_opts(context)))
+    Ash.Changeset.before_action(changeset, &put_metrics(&1, scope: context))
   end
 
   defp put_metrics(changeset, opts) do

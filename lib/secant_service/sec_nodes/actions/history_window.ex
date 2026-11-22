@@ -11,11 +11,11 @@ defmodule SecantService.SecNodes.Actions.HistoryWindow do
   alias SecantService.SecNodes.Parameter
 
   @impl true
-  def run(input, _opts, _context) do
+  def run(input, _opts, context) do
     %{parameter_id: id} = args = input.arguments
     opts = args |> Map.take([:max_raw, :max_buckets]) |> Enum.reject(&is_nil(elem(&1, 1)))
 
-    with {:ok, parameter} <- Ash.get(Parameter, id),
+    with {:ok, parameter} <- Ash.get(Parameter, id, scope: context),
          :ok <- numeric(parameter) do
       from_ms = Map.get(args, :from_ms)
       to_ms = Map.get(args, :to_ms)

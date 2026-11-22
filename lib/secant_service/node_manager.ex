@@ -283,7 +283,7 @@ defmodule SecantService.NodeManager do
               "Stored node: #{node_state.equipment_id} #{node_state.host}:#{node_state.port}"
             )
 
-            # reload through the primary read for the modules and calculations
+            # reload with the modules, parameters and commands
             SecNodes.get_sec_node(node.uuid)
 
           {:error, error} ->

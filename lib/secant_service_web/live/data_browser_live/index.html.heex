@@ -144,12 +144,11 @@
           <:col :let={sec_node} label="Equipment ID" field={:equipment_id}>
             <div class="tooltip tooltip-right inline-flex max-w-full min-w-0">
               <div class="tooltip-content text-left bg-transparent">
-                <div class="rounded-box border border-line bg-base-100 p-3 text-base-content shadow-sm whitespace-pre-line">
-                  {if(sec_node.description in [nil, ""],
-                    do: "No description available.",
-                    else: sec_node.description
-                  )}
-                </div>
+                <%!-- flush against the tags: pre-line would show the newlines --%>
+                <div
+                  class="rounded-box border border-line bg-base-100 p-3 text-base-content shadow-sm whitespace-pre-line"
+                  phx-no-format
+                >{description_text(sec_node)}</div>
               </div>
               <div class="flex min-w-0 items-center gap-1">
                 <.icon name="hero-information-circle" class="size-4 shrink-0 text-muted" />
