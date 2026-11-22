@@ -1,16 +1,17 @@
 services:
 
   db:
-    # Postgres 17 with TimescaleDB (the parameter value tables are hypertables).
-    # Built locally from docker/postgres on the same Debian base the plain
-    # postgres:17.4 image used, so an existing ./postgres-data volume can be
-    # reused: `docker compose up -d --build db`.
-    build: docker/postgres
-    image: secant-service-postgres:17-timescaledb
+    # Postgres 18 with TimescaleDB (the parameter value tables are hypertables).
+    # The image preloads the extension when it initialises a new data directory.
+    image: timescale/timescaledb:2.32.1-pg18
     env_file: ".env.example"
     restart: always
+    environment:
+      TIMESCALEDB_TELEMETRY: "off"
     volumes:
-      - ./postgres-data:/var/lib/postgresql/data
+      # Postgres 18 images keep their data in a major-version subdirectory of
+      # /var/lib/postgresql (here ./postgres-data/18/docker).
+      - ./postgres-data:/var/lib/postgresql
     ports:
       # Bound to loopback only — keeps postgres off the LAN while still reachable
       # by secop-service (host networking) and mix phx.server on this machine.
