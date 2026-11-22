@@ -260,7 +260,8 @@ defmodule SecantService.NodeDBWriterTest do
         end
 
       assert {:ok, rejected} = NodeDBWriter.insert(rows)
-      assert length(rejected) == 2
+      # the database says why: the parameter is gone
+      assert [%{deleted: -1}, %{deleted: -1}] = rejected
 
       assert temp |> SecNodes.readings!() |> Enum.map(&Storage.raw_value/1) |> Enum.sort() ==
                [1.0, 1.0, 3.0, 4.0]
@@ -296,8 +297,173 @@ defmodule SecantService.NodeDBWriterTest do
         if broken in rows, do: raise("a bug"), else: SecNodes.insert_readings(rows)
       end)
 
-      assert {:ok, [_rejected]} = NodeDBWriter.insert([ok, broken])
+      assert {:ok, [rejected]} = NodeDBWriter.insert([ok, broken])
+      # a bad reading does not stop the recording of its parameter
+      refute Map.has_key?(rejected, :deleted)
       assert 2.0 in Enum.map(SecNodes.readings!(temp), &Storage.raw_value/1)
+    end
+  end
+
+  describe "parameters deleted and writes that crash" do
+    setup %{temp: temp} do
+      eventually(fn -> length(SecNodes.readings!(temp)) == 1 end)
+
+      on_exit(fn ->
+        for key <- [:insert_readings, :writer_retry_delay] do
+          Application.delete_env(:secant_service, key)
+        end
+      end)
+
+      Application.put_env(:secant_service, :writer_retry_delay, 10)
+      :ok
+    end
+
+    defp idle(uuid) do
+      eventually(fn ->
+        state = :sys.get_state(writer(uuid))
+        state.in_flight == nil and state.queued == 0
+      end)
+    end
+
+    # logs the dropped reading and the deleted parameter
+    @tag :capture_log
+    test "a parameter deleted while recording is no longer written",
+         %{node_id: node_id, uuid: uuid, temp: temp} do
+      idle(uuid)
+      {:ok, parameters} = SecNodes.parameters_of_node(uuid)
+      status = Enum.find(parameters, &(&1.module.name == "temp" and &1.name == "status"))
+      Ash.destroy!(status)
+
+      test_pid = self()
+
+      Application.put_env(:secant_service, :insert_readings, fn rows ->
+        send(test_pid, {:attempt, rows |> Enum.map(& &1.parameter_id) |> Enum.uniq()})
+        SecNodes.insert_readings(rows)
+      end)
+
+      write = fn t ->
+        send_value_update(node_id, "temp", "status", [[100, "ok #{t}"], %{t: 1_700_000_000.0 + t}])
+
+        send_value_update(node_id, "temp", "value", [t * 1.0, %{t: 1_700_000_000.0 + t}])
+        send(writer(uuid), :flush_parameter_batch)
+        idle(uuid)
+      end
+
+      write.(1)
+      assert [1.0] = temp |> stored() |> tl() |> Enum.map(&elem(&1, 1))
+      flush_messages()
+
+      # the status reading is no longer sent
+      write.(2)
+      assert_received {:attempt, [id]}
+      assert id == temp.id
+      refute_received {:attempt, _}
+      assert [1.0, 2.0] = temp |> stored() |> tl() |> Enum.map(&elem(&1, 1))
+    end
+
+    # logs the dropped readings and the deleted parameter
+    @tag :capture_log
+    test "the buffered readings of a deleted parameter are dropped, and counted",
+         %{node_id: node_id, uuid: uuid, temp: temp} do
+      idle(uuid)
+      {:ok, parameters} = SecNodes.parameters_of_node(uuid)
+      status = Enum.find(parameters, &(&1.module.name == "temp" and &1.name == "status"))
+      Ash.destroy!(status)
+
+      test_pid = self()
+      handler = "dropped-#{inspect(test_pid)}"
+
+      :telemetry.attach(
+        handler,
+        [:secant_service, :node_db_writer, :dropped],
+        fn _, m, _, _ ->
+          send(test_pid, {:dropped, m.count})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+      first? = :counters.new(1, [])
+
+      # the first write waits for the test, so more readings pile up behind it
+      Application.put_env(:secant_service, :insert_readings, fn rows ->
+        if :counters.get(first?, 1) == 0 do
+          :counters.add(first?, 1, 1)
+          send(test_pid, {:blocked, self()})
+          receive do: (:go -> :ok)
+        end
+
+        send(test_pid, {:attempt, rows |> Enum.map(& &1.parameter_id) |> Enum.uniq()})
+        SecNodes.insert_readings(rows)
+      end)
+
+      send_reading = fn t ->
+        send_value_update(node_id, "temp", "status", [[100, "ok #{t}"], %{t: 1_700_000_000.0 + t}])
+
+        send_value_update(node_id, "temp", "value", [t * 1.0, %{t: 1_700_000_000.0 + t}])
+      end
+
+      send_reading.(1)
+      send(writer(uuid), :flush_parameter_batch)
+      assert_receive {:blocked, task}
+
+      send_reading.(2)
+      send_reading.(3)
+      assert :sys.get_state(writer(uuid)).queued == 4
+      send(task, :go)
+
+      # the first write finds the status parameter gone, the buffer loses its readings
+      assert_receive {:dropped, 1}, 1_000
+      assert_receive {:dropped, 2}, 1_000
+      state = :sys.get_state(writer(uuid))
+      assert state.queued == 2
+      assert Enum.all?(:queue.to_list(state.queue), &(&1.parameter_id == temp.id))
+
+      flush_messages()
+      send(writer(uuid), :flush_parameter_batch)
+      idle(uuid)
+      assert :sys.get_state(writer(uuid)).weight == 0
+      assert_received {:attempt, [id]}
+      assert id == temp.id
+      refute_received {:attempt, _}
+      assert [1.0, 2.0, 3.0] = temp |> stored() |> tl() |> Enum.map(&elem(&1, 1))
+    end
+
+    # logs the crash
+    @tag :capture_log
+    test "a write that crashes while splitting a batch resends only what it had not stored",
+         %{node_id: node_id, uuid: uuid, temp: temp} do
+      crashed = :counters.new(1, [])
+      bad? = &(DateTime.to_unix(&1.timestamp) == 1_700_000_002)
+
+      # [1, 2, 3, 4] fails, so does [1, 2]; [1] is stored, then the write
+      # crashes on [2]. The retry must not store 1 again.
+      Application.put_env(:secant_service, :insert_readings, fn rows ->
+        cond do
+          :counters.get(crashed, 1) > 0 ->
+            SecNodes.insert_readings(rows)
+
+          match?([_], rows) and Enum.all?(rows, bad?) ->
+            :counters.add(crashed, 1, 1)
+            Process.exit(self(), :kill)
+
+          Enum.any?(rows, bad?) ->
+            raise "a bug"
+
+          true ->
+            SecNodes.insert_readings(rows)
+        end
+      end)
+
+      for t <- 1..4 do
+        send_value_update(node_id, "temp", "value", [t * 1.0, %{t: 1_700_000_000.0 + t}])
+      end
+
+      send(writer(uuid), :flush_parameter_batch)
+      eventually(fn -> :counters.get(crashed, 1) == 1 end)
+      idle(uuid)
+
+      assert [1.0, 2.0, 3.0, 4.0] = temp |> stored() |> tl() |> Enum.map(&elem(&1, 1))
     end
   end
 

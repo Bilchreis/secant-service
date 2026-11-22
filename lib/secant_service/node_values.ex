@@ -2,8 +2,9 @@ defmodule SecantService.NodeValues do
   @moduledoc """
   The current value of every parameter of one node, processed for display.
 
-  Changed values are not broadcast one by one. They are collected, latest per
-  parameter, and published together once per `:values_publish_interval`
+  Changed values are not broadcast one by one. They are collected, the
+  current value per parameter (its latest reading and, if one came after it,
+  the latest error), and published together once per `:values_publish_interval`
   (250 ms by default) as
   `{:value_updates, node_id, %{{module, parameter} => processed}}` on
   `SecantService.Topics.processed_values/1`. Every dashboard viewer of the
@@ -219,18 +220,26 @@ defmodule SecantService.NodeValues do
         else
           insert_parameter_value(table, module, accessible, merged_param_val)
 
-          {:ok, :updated, put_in(values, [module, accessible], merged_param_val), new_param_val}
+          {:ok, :updated, put_in(values, [module, accessible], merged_param_val),
+           merged_param_val}
         end
     end
   end
 
-  # Remove timestamp from data_report qualifiers for comparison
-  defp remove_timestamp(%{data_report: [value, qualifiers]} = param_val)
-       when is_map(qualifiers) do
-    Map.put(param_val, :data_report, [value, Map.drop(qualifiers, [:t])])
+  # A report that only differs in its timestamp is not a change: drop the
+  # timestamp from the qualifiers of the reading and of the error.
+  defp remove_timestamp(param_val) do
+    param_val
+    |> Map.replace_lazy(:data_report, &without_t/1)
+    |> Map.replace_lazy(:error_report, &without_t/1)
   end
 
-  defp remove_timestamp(param_val), do: param_val
+  # [value, qualifiers] and [class, text, qualifiers]
+  defp without_t([value, %{} = qualifiers]), do: [value, drop_t(qualifiers)]
+  defp without_t([cls, text, %{} = qualifiers]), do: [cls, text, drop_t(qualifiers)]
+  defp without_t(report), do: report
+
+  defp drop_t(qualifiers), do: Map.drop(qualifiers, [:t, "t"])
 
   # Error reports come first: they can arrive for any accessible, including
   # "status", whose clause below expects a [value, qualifiers] data report.

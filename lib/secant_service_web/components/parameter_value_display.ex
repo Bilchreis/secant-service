@@ -147,19 +147,18 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
   end
 
   @impl true
-  def update(%{value_update: data_report} = _assigns, socket) do
+  def update(%{value_update: current} = _assigns, socket) do
     socket =
-      case data_report do
+      case current do
         %{error_report: [error_cls, error_msg | qualifiers]} ->
           Logger.warning("Error Update: #{error_cls}, #{error_msg}, #{inspect(qualifiers)}")
-          assign(socket, :parameter_error, [error_cls, error_msg])
+          assign_current(socket, current)
 
-        %{data_report: [value, _qualifiers]} ->
-          assign(socket, :parameter_value, value)
-          |> assign(:parameter_error, nil)
+        %{data_report: [_, _]} ->
+          assign_current(socket, current)
 
         _ ->
-          Logger.warning("Malformed datareport received: #{inspect(data_report)}")
+          Logger.warning("Malformed datareport received: #{inspect(current)}")
           socket
       end
 
@@ -537,25 +536,31 @@ defmodule SecantServiceWeb.Components.ParameterValueDisplay do
     """
   end
 
+  # The current value of the parameter, as NodeValues keeps it: the latest
+  # reading, and the error reported after it, if any. Both are shown, the
+  # same way on mount and on a live update.
+  defp assign_current(socket, current) do
+    value =
+      case current do
+        %{data_report: [value, _qualifiers]} -> value
+        _ -> nil
+      end
+
+    error =
+      case current do
+        %{error_report: [error_cls, error_msg | _]} -> [error_cls, error_msg]
+        _ -> nil
+      end
+
+    assign(socket, parameter_value: value, parameter_error: error)
+  end
+
   defp init(socket, host, port, module_name, parameter, location, id_str, class, variant) do
     node_id = {String.to_charlist(host), port}
 
     val_map = get_parameter_value(module_name, node_id, parameter)
 
-    socket =
-      case val_map do
-        %{error_report: [error_cls, error_msg | _]} ->
-          assign(socket, :parameter_error, [error_cls, error_msg])
-          |> assign(:parameter_value, nil)
-
-        %{data_report: [value, _qualifiers]} ->
-          assign(socket, :parameter_value, value)
-          |> assign(:parameter_error, nil)
-
-        _ ->
-          assign(socket, :parameter_value, nil)
-          |> assign(:parameter_error, nil)
-      end
+    socket = assign_current(socket, val_map)
 
     flat_map =
       flattened_form_map(%{}, ["value"], socket.assigns.parameter_value, parameter.datainfo, 0, 1)

@@ -140,6 +140,30 @@ defmodule SecantServiceWeb.DashboardLiveTest do
     assert eventually(fn -> has_element?(view, press_row, "8.5") end)
   end
 
+  # logs the error update
+  @tag :capture_log
+  test "a value and the error reported after it are shown together, live and on reload",
+       %{conn: conn, node_id: {host, port} = node_id, path: path} do
+    connect_and_wait(node_id, @desc_a)
+    view = open_dashboard(conn, path <> "&module=temp")
+
+    send_value_update(node_id, "temp", "value", [3.75, %{t: 1_700_000_002.0}])
+
+    Phoenix.PubSub.broadcast(
+      :secant_client_pubsub,
+      "error_update:#{host}:#{port}",
+      {:error_update, "temp", "value", ["HardwareError", "sensor unplugged", %{}]}
+    )
+
+    row = "#" <> escape("param-row:dash_parameter:#{topic(node_id)}:temp:value")
+    assert eventually(fn -> has_element?(view, row, "HardwareError: sensor unplugged") end)
+    assert has_element?(view, row, "3.75")
+
+    reloaded = open_dashboard(conn, path <> "&module=temp")
+    assert has_element?(reloaded, row, "HardwareError: sensor unplugged")
+    assert has_element?(reloaded, row, "3.75")
+  end
+
   test "a status error report is shown and keeps the page alive",
        %{conn: conn, node_id: {host, port} = node_id, path: path} do
     connect_and_wait(node_id, @desc_a)

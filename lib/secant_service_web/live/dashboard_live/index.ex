@@ -331,7 +331,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   end
 
   # NodeValues publishes the changed values of a node in one batch per
-  # interval (250 ms by default), latest per parameter, so each viewer handles
+  # interval (250 ms by default), the current value per parameter, so each viewer handles
   # a few messages per second however fast the node updates.
   @impl true
   def handle_info({:value_updates, node_id, batch}, socket) do
