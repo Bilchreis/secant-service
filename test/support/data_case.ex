@@ -17,6 +17,7 @@ defmodule SecantService.DataCase do
       import Ecto
       import Ecto.Changeset
       import Ecto.Query
+      import SecantService.Generators
     end
   end
 

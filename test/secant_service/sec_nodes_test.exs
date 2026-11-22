@@ -8,42 +8,8 @@ defmodule SecantService.SecNodesTest do
   require Ash.Query
 
   alias SecantService.SecNodes
-  alias SecantService.SecNodes.{Module, Parameter, SecNode}
+  alias SecantService.SecNodes.{Parameter, SecNode}
   alias SecantService.SecNodes.Reading.Storage
-
-  defp create_node(attrs \\ %{}) do
-    node =
-      SecNode
-      |> Ash.Changeset.for_create(
-        :create,
-        Map.merge(
-          %{
-            uuid: Ecto.UUID.generate(),
-            equipment_id: "node_#{System.unique_integer([:positive])}",
-            host: "localhost",
-            port: 10_800
-          },
-          attrs
-        )
-      )
-      |> Ash.create!()
-
-    module =
-      Module
-      |> Ash.Changeset.for_create(:create, %{name: "m", sec_node_id: node.uuid})
-      |> Ash.create!()
-
-    parameter =
-      Parameter
-      |> Ash.Changeset.for_create(:create, %{
-        name: "value",
-        datainfo: %{"type" => "double"},
-        module_id: module.id
-      })
-      |> Ash.create!()
-
-    {node, parameter}
-  end
 
   defp insert_values(parameter, count) do
     rows =
@@ -71,9 +37,9 @@ defmodule SecantService.SecNodesTest do
 
   describe "browse_sec_nodes/3" do
     test "each tab lists the nodes in that state" do
-      {active, _} = create_node()
-      {archived, _} = create_node()
-      {trashed, _} = create_node()
+      {active, _} = node_with_parameter()
+      {archived, _} = node_with_parameter()
+      {trashed, _} = node_with_parameter()
       set_state(archived, :archived)
       set_state(trashed, :trashed)
       SecNodes.toggle_sec_node_favourite!(archived)
@@ -99,7 +65,7 @@ defmodule SecantService.SecNodesTest do
   end
 
   test "get_sec_node loads the description; a parameter's node comes without it" do
-    {node, parameter} = create_node()
+    {node, parameter} = node_with_parameter()
 
     assert %SecNode{node_id: {~c"localhost", 10_800}, modules: [%{parameters: [_]}]} =
              SecNodes.get_sec_node!(node.uuid)
@@ -112,16 +78,16 @@ defmodule SecantService.SecNodesTest do
   end
 
   test "toggle_favourite flips the flag each time" do
-    {node, _} = create_node()
+    {node, _} = node_with_parameter()
 
     assert {:ok, %{favourite: true}} = SecNodes.toggle_sec_node_favourite(node)
     assert {:ok, %{favourite: false}} = SecNodes.toggle_sec_node_favourite(node)
   end
 
   test "purge deletes the trashed nodes and their values, nothing else" do
-    {trashed_a, param_a} = create_node()
-    {trashed_b, _} = create_node()
-    {kept, kept_param} = create_node()
+    {trashed_a, param_a} = node_with_parameter()
+    {trashed_b, _} = node_with_parameter()
+    {kept, kept_param} = node_with_parameter()
     insert_values(param_a, 5)
     insert_values(kept_param, 4)
     set_state(trashed_a, :trashed)
@@ -139,7 +105,7 @@ defmodule SecantService.SecNodesTest do
   end
 
   test "readings, latest_reading and insert_readings" do
-    {_node, parameter} = create_node()
+    {_node, parameter} = node_with_parameter()
 
     assert Storage.to_row(nil, parameter, DateTime.utc_now(), %{}) == nil
     assert %Ash.BulkResult{status: :success} = SecNodes.insert_readings([])
@@ -161,7 +127,7 @@ defmodule SecantService.SecNodesTest do
   end
 
   test "latest_reading asks the database for one row" do
-    {_node, parameter} = create_node()
+    {_node, parameter} = node_with_parameter()
     insert_values(parameter, 3)
 
     ref = make_ref()
@@ -187,7 +153,7 @@ defmodule SecantService.SecNodesTest do
 
   describe "storage counts" do
     test "finishing the archive counts the values and moves the node to archived" do
-      {node, parameter} = create_node()
+      {node, parameter} = node_with_parameter()
       insert_values(parameter, 7)
       node = set_state(node, :processed)
 
@@ -198,7 +164,7 @@ defmodule SecantService.SecNodesTest do
     end
 
     test "the hourly refresh counts the values of a recording node and keeps it active" do
-      {node, parameter} = create_node()
+      {node, parameter} = node_with_parameter()
       insert_values(parameter, 3)
 
       refreshed = Ash.update!(node, %{}, action: :refresh_storage)
@@ -210,7 +176,7 @@ defmodule SecantService.SecNodesTest do
     # logs the failed recount
     @tag :capture_log
     test "a failing size query keeps the old counts" do
-      {node, parameter} = create_node()
+      {node, parameter} = node_with_parameter()
       insert_values(parameter, 4)
       Ash.update!(node, %{}, action: :refresh_storage)
 
@@ -236,7 +202,7 @@ defmodule SecantService.SecNodesTest do
     end
 
     test "the on-archive trigger counts the values and archives the node" do
-      {node, parameter} = create_node()
+      {node, parameter} = node_with_parameter()
       insert_values(parameter, 6)
       SecNodes.archive_sec_node!(node)
 
@@ -247,7 +213,7 @@ defmodule SecantService.SecNodesTest do
     end
 
     test "an active node cannot be finished" do
-      {node, _} = create_node()
+      {node, _} = node_with_parameter()
       assert {:error, _} = Ash.update(node, %{}, action: :finish_archiving)
     end
   end

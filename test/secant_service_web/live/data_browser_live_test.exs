@@ -3,33 +3,15 @@ defmodule SecantServiceWeb.DataBrowserLiveTest do
   use SecantServiceWeb.ConnCase, async: false
 
   alias SecantService.SecNodes
-  alias SecantService.SecNodes.SecNode
-
-  defp create_node(attrs \\ %{}) do
-    SecNode
-    |> Ash.Changeset.for_create(
-      :create,
-      Map.merge(
-        %{
-          uuid: Ecto.UUID.generate(),
-          equipment_id: "browse_#{System.unique_integer([:positive])}",
-          host: "localhost",
-          port: 10_800
-        },
-        attrs
-      )
-    )
-    |> Ash.create!()
-  end
 
   defp archived_node do
-    create_node()
+    generate(sec_node())
     |> SecNodes.archive_sec_node!()
     |> Ash.update!(%{}, action: :finish_archiving)
   end
 
   test "the active tab lists active nodes only", %{conn: conn} do
-    active = create_node()
+    active = generate(sec_node())
     archived = archived_node()
 
     {:ok, view, _html} = live(conn, "/browse?state_filter=active&limit=100")
@@ -39,8 +21,8 @@ defmodule SecantServiceWeb.DataBrowserLiveTest do
   end
 
   test "the description tooltip keeps line breaks, or says there is none", %{conn: conn} do
-    described = create_node(%{description: "Cryostat\nsecond line"})
-    undescribed = create_node()
+    described = generate(sec_node(description: "Cryostat\nsecond line"))
+    undescribed = generate(sec_node())
 
     {:ok, view, _html} = live(conn, "/browse?state_filter=active&limit=100")
 

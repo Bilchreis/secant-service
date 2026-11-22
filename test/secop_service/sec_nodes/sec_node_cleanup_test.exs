@@ -12,15 +12,8 @@ defmodule SecantService.SecNodes.SecNodeCleanupTest do
     state = Keyword.get(opts, :state, :archived)
     favourite = Keyword.get(opts, :favourite, false)
 
-    SecNode
-    |> Ash.Changeset.for_create(:create, %{
-      uuid: Ecto.UUID.generate(),
-      equipment_id: equipment_id,
-      host: "192.168.1.1",
-      port: 5000,
-      description: "#{equipment_id} test node"
-    })
-    |> Ash.create!()
+    sec_node(equipment_id: equipment_id, description: "#{equipment_id} test node")
+    |> generate()
     |> Ecto.Changeset.change(state: state, favourite: favourite, updated_at: updated_at)
     |> SecantService.Repo.update!()
   end
