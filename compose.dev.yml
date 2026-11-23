@@ -12,6 +12,13 @@ services:
   db:
     image: timescale/timescaledb:2.32.1-pg18
     restart: unless-stopped
+    # timescaledb-tune sizes postgresql.conf for the whole host (~7.6 GB
+    # shared_buffers); these flags override it to fit a dev database.
+    command: >-
+      postgres
+      -c shared_buffers=512MB
+      -c maintenance_work_mem=256MB
+      -c effective_cache_size=2GB
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
