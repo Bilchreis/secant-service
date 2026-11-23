@@ -1,6 +1,8 @@
 name: Build and Push Docker Image
 
 on:
+  # Pushes the main and sha-<commit> tags, except on a version bump, which
+  # the release workflow builds instead (see release-check below).
   push:
     branches: [ "main" ]
   # PRs build (but don't push) the image to prove the release still builds.
@@ -39,8 +41,29 @@ env:
   SCAN_TAG: secant-service:scan
 
 jobs:
+  # A push to main that bumps the version is built by the release workflow
+  # (with the version tags), so building it here too would only race it for
+  # the runner and the build cache.
+  release-check:
+    name: Check for a release commit
+    if: github.event_name == 'push' && inputs.version == ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compare mix.exs version with the tags
+        id: version
+        uses: ./.github/actions/release-version
+
   build-and-push:
     name: Build and Push Docker image
+    needs: release-check
+    # Also runs when release-check is skipped (PRs, releases, manual runs and
+    # the release workflow's own call).
+    if: ${{ !cancelled() && !failure() && needs.release-check.outputs.release != 'true' }}
     runs-on: ubuntu-latest
     # Sets the permissions granted to the GITHUB_TOKEN for this job
     permissions:
@@ -78,6 +101,10 @@ jobs:
 
       # Build into the local Docker daemon first so the image can be scanned
       # before anything is published.
+      #
+      # PR builds only read the cache. Main can't read caches saved on a PR
+      # branch anyway, and writing them filled the 10 GB cache quota, which
+      # evicted main's layers.
       - name: Build Docker image
         uses: docker/build-push-action@v7
         with:
@@ -86,31 +113,29 @@ jobs:
           tags: ${{ env.SCAN_TAG }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max' || '' }}
 
       # Report-only: OS/base-image CVEs show up in the Security tab (and the
       # job log) without blocking deploys. Only fixable HIGH/CRITICAL issues.
+      # The image is scanned once; the table and the SARIF report are both
+      # converted from that JSON report.
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.SCAN_TAG }}
           ignore-unfixed: true
           severity: CRITICAL,HIGH
-          format: table
+          format: json
+          output: trivy-image.json
+
+      # The scan step put trivy on the PATH.
+      - name: Show Trivy findings
+        run: trivy convert --format table trivy-image.json
 
       - name: Trivy SARIF report
         if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ env.SCAN_TAG }}
-          ignore-unfixed: true
-          severity: CRITICAL,HIGH
-          format: sarif
-          output: trivy-image.sarif
-          # SARIF output ignores `severity` unless this is set.
-          limit-severities-for-sarif: true
-          # The previous step already installed Trivy.
-          skip-setup-trivy: true
+        # SARIF output lists every severity unless `--severity` is given.
+        run: trivy convert --format sarif --severity CRITICAL,HIGH --output trivy-image.sarif trivy-image.json
 
       - name: Upload Trivy report
         if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
@@ -119,7 +144,8 @@ jobs:
           sarif_file: trivy-image.sarif
           category: trivy-image
 
-      # Same inputs as the build step, so this is served from the build cache.
+      # Same inputs as the build step, so this is served from the builder's
+      # local cache. The build step already saved the GitHub Actions cache.
       - name: Push Docker image
         if: github.event_name != 'pull_request'
         uses: docker/build-push-action@v7
@@ -129,4 +155,3 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max

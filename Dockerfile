@@ -20,6 +20,13 @@ ARG DEBIAN_VERSION=bookworm-20260610
 ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
 ARG RUNNER_IMAGE="debian:${DEBIAN_VERSION}"
 
+# mix.exs with the version pinned, so a release (which only bumps @version)
+# keeps the cached deps layers below instead of recompiling every dependency.
+FROM ${BUILDER_IMAGE} AS deps_manifest
+COPY mix.exs /
+RUN sed -i 's/^\( *@version \)".*"$/\1"0.0.0"/' /mix.exs \
+    && grep -q '@version "0.0.0"' /mix.exs
+
 FROM ${BUILDER_IMAGE} AS builder
 
 # install build dependencies
@@ -37,7 +44,8 @@ RUN mix local.hex --force && \
 ENV MIX_ENV="prod"
 
 # install mix dependencies
-COPY mix.exs mix.lock ./
+COPY --from=deps_manifest /mix.exs ./
+COPY mix.lock ./
 RUN mix deps.get --only $MIX_ENV
 RUN mkdir config
 
@@ -49,6 +57,8 @@ RUN mix deps.compile
 
 RUN mix assets.setup
 
+# The real mix.exs, with the version the release is built with.
+COPY mix.exs ./
 COPY priv priv
 
 COPY lib lib
