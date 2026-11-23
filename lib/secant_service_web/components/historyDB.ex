@@ -321,7 +321,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
         updates =
           Enum.map(windows, fn {param, window} ->
-            datapoints = Enum.zip(window.values, window.timestamps)
+            {values, timestamps} = held_window(param, from_ms, window)
+            datapoints = Enum.zip(values, timestamps)
             PlotDB.get_trace_updates_batch(plot, datapoints, param.name)
           end)
 
@@ -727,5 +728,17 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       <% end %>
     </div>
     """
+  end
+
+  # The overview pins a parameter's reading from before the plot start to
+  # that start, and the chart drops overview points inside a detail window:
+  # a window from the start holds that reading again. A setpoint holds until
+  # the next one, so every window starts with the setpoint in force.
+  defp held_window(param, from_ms, window) do
+    if param.name == "target" or from_ms <= Builders.plot_start_ms(param) do
+      Builders.hold_from(param, from_ms, window.values, window.timestamps)
+    else
+      {window.values, window.timestamps}
+    end
   end
 end
