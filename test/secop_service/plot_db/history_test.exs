@@ -1,6 +1,8 @@
 defmodule SecantService.PlotDB.HistoryTest do
   use SecantService.DataCase, async: false
 
+  import Ecto.Query
+
   alias SecantService.SecNodes
   alias SecantService.SecNodes.Reading.Storage
   alias SecantService.PlotDB.Builders
@@ -204,9 +206,23 @@ defmodule SecantService.PlotDB.HistoryTest do
     end
   end
 
+  # the session of `parameter` started at `at`
+  defp start_session_at(parameter, at) do
+    %{module: %{sec_node: node}} = SecNodes.get_parameter!(parameter.id)
+    {:ok, uuid} = Ecto.UUID.dump(node.uuid)
+
+    {1, _} =
+      Repo.update_all(from(n in "sec_nodes", where: n.uuid == ^uuid),
+        set: [inserted_at: DateTime.to_naive(at)]
+      )
+
+    :ok
+  end
+
   describe "historical plot data" do
     test "numeric parameters are loaded thinned out" do
       parameter = generate(parameter(datainfo: %{"type" => "double"}))
+      start_session_at(parameter, @start)
       insert_readings(parameter, 4000, &(rem(&1, 10) * 1.0))
 
       {values, timestamps} = Builders.fetch_param_data(parameter, :historical)
@@ -215,6 +231,31 @@ defmodule SecantService.PlotDB.HistoryTest do
       assert length(values) < 4000
       assert hd(timestamps) == ms(0)
       assert List.last(timestamps) == ms(3999)
+    end
+
+    # Unchanged parameters carry the node's time of their last change, often
+    # long before the recording began; they must not stretch the time axis.
+    test "readings from before the session are pinned to its start" do
+      for {type, value_fun} <- [{"double", &(&1 * 1.0)}, {"bool", &(rem(&1, 2) == 1)}] do
+        parameter = generate(parameter(datainfo: %{"type" => type}))
+        insert_readings(parameter, 20, value_fun)
+        start_session_at(parameter, DateTime.add(@start, 10, :second))
+
+        {values, timestamps} = Builders.fetch_param_data(parameter, :historical)
+
+        # the last reading before the start (index 9), then 10..19
+        assert timestamps == [ms(10) | Enum.map(10..19, &ms/1)]
+        assert values == Enum.map([9 | Enum.to_list(10..19)], value_fun)
+        assert Builders.recording_start_ms(parameter) == ms(10)
+      end
+    end
+
+    test "a parameter only set before the session plots from the start" do
+      parameter = generate(parameter(datainfo: %{"type" => "double"}))
+      insert_readings(parameter, 1, fn _ -> 2.5 end)
+      start_session_at(parameter, DateTime.add(@start, 3600, :second))
+
+      assert Builders.fetch_param_data(parameter, :historical) == {[2.5], [ms(3600)]}
     end
   end
 end

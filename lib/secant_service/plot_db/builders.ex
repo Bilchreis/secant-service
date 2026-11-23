@@ -16,15 +16,29 @@ defmodule SecantService.PlotDB.Builders do
   # Data fetching
   # ---------------------------------------------------------------------------
 
-  # Numeric parameters: the whole recording, thinned out in the database
-  # (see `History`). The chart asks for more detail when it is zoomed in.
+  # The whole recording: from the session start on, numeric parameters
+  # thinned out in the database (see `History`). The chart asks for more
+  # detail when it is zoomed in.
+  #
+  # Readings carry the node's timestamp, which for a parameter that has not
+  # changed in a while (a setpoint, a configuration value) is the time of its
+  # last change, often days before the recording began. Such a reading would
+  # stretch the time axis back to then and squeeze the recording against its
+  # right edge, so the last one is pinned to the session start instead.
   def fetch_param_data(param, :historical) do
-    if History.numeric?(param) do
-      %{values: values, timestamps: timestamps} = SecNodes.history_window!(param.id, nil, nil)
-      {values, timestamps}
-    else
-      get_values(param) |> Storage.value_timestamp_lists()
-    end
+    from_ms = recording_start_ms(param)
+
+    {values, timestamps} =
+      if History.numeric?(param) do
+        %{values: values, timestamps: timestamps} =
+          SecNodes.history_window!(param.id, from_ms, nil)
+
+        {values, timestamps}
+      else
+        fetch_param_data_in_range(param, from_ms, nil)
+      end
+
+    hold_from(param, from_ms, values, timestamps)
   end
 
   def fetch_param_data(param, :live) do
@@ -115,7 +129,14 @@ defmodule SecantService.PlotDB.Builders do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp get_values(parameter), do: SecNodes.readings!(parameter.id)
+  @doc """
+  When the session of `param` started (Unix milliseconds): where its
+  historical plot begins.
+  """
+  def recording_start_ms(param) do
+    %{module: %{sec_node: %{inserted_at: started}}} = SecNodes.get_parameter!(param.id)
+    DateTime.to_unix(started, :millisecond)
+  end
 
   # Nothing recorded yet for a live plot: start from the value the node
   # services already hold. Never reads from the device.

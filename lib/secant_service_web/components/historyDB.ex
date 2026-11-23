@@ -321,7 +321,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
         updates =
           Enum.map(windows, fn {param, window} ->
-            datapoints = Enum.zip(window.values, window.timestamps)
+            {values, timestamps} = held_window(param, from_ms, window)
+            datapoints = Enum.zip(values, timestamps)
             PlotDB.get_trace_updates_batch(plot, datapoints, param.name)
           end)
 
@@ -728,4 +729,12 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     </div>
     """
   end
+
+  # A setpoint holds until the next one, and the window may hold none of its
+  # readings (the overview pins the one from before the recording to its
+  # start): start the window with the setpoint in force.
+  defp held_window(%{name: "target"} = param, from_ms, window),
+    do: Builders.hold_from(param, from_ms, window.values, window.timestamps)
+
+  defp held_window(_param, _from_ms, window), do: {window.values, window.timestamps}
 end
