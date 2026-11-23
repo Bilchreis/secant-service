@@ -1,149 +1,268 @@
 <Layouts.app flash={@flash}>
-  <div class="max-w-4xl mx-auto px-4 py-8">
-    <div class="card card-border bg-base-200 mb-8">
-      <div class="card-body">
-        <div class="flex flex-col sm:flex-row items-start sm:items-center  gap-4 mb-6">
-          <Layouts.logo id="logo" class="w-[250px] shrink-0" />
-          <div>
-            <h1 class="text-4xl font-bold text-base-content">Welcome to secant-service</h1>
-            <p class="text-base-content/70 mt-2">Sample Equipment Control Protocol Hub</p>
-          </div>
-        </div>
+  <%!-- full width sections: undo the padding of the layout's <main> --%>
+  <div class="-mx-4 -my-4 bg-base-100">
+    <section id="hero" class="relative overflow-hidden border-b border-line">
+      <%!-- the secant mark, large and faint, behind the text --%>
+      <svg
+        viewBox="0 0 100 100"
+        class="pointer-events-none absolute top-1/2 right-[2%] w-[clamp(220px,30%,400px)] -translate-y-1/2 overflow-visible"
+        aria-hidden="true"
+      >
+        <g transform="rotate(-30 50 50)">
+          <path class="fill-accent/15" d="M15.77 33.5A38 38 0 0 1 84.23 33.5Z" />
+          <path class="fill-primary/20" d="M87.25 42.5A38 38 0 1 1 12.75 42.5Z" />
+          <path class="stroke-line" stroke-width="1.1" stroke-linecap="round" d="M-14 38H114" />
+        </g>
+      </svg>
 
-        <p class="text-lg text-base-content mb-8">
-          Monitor and control your SECoP devices with real-time data visualization and management.
-        </p>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          <div class="card card-border bg-base-300">
-            <div class="card-body">
-              <h2 class="card-title">Quick Start</h2>
-              <div class="flex flex-col gap-3">
-                <a href="/dashboard" class="btn btn-primary">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke-width="1.5"
-                    stroke="currentColor"
-                    class="w-5 h-5"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6"
-                    />
-                  </svg>
-                  Live Dashboard
-                </a>
-                <a href="/browse" class="btn btn-secondary">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke-width="1.5"
-                    stroke="currentColor"
-                    class="w-5 h-5"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 010 3.75H5.625a1.875 1.875 0 010-3.75z"
-                    />
-                  </svg>
-                  Data Browser
-                </a>
-              </div>
-            </div>
-          </div>
-
-          <div class="card card-border bg-base-300">
-            <div class="card-body">
-              <h2 class="card-title">Source</h2>
-              <div class="flex flex-col gap-3">
-                <a
-                  href="https://github.com/Bilchreis/secop_client"
-                  class="btn bg-black text-white border-black hover:bg-neutral"
-                >
-                  <svg
-                    aria-label="GitHub logo"
-                    width="16"
-                    height="16"
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      fill="white"
-                      d="M12,2A10,10 0 0,0 2,12C2,16.42 4.87,20.17 8.84,21.5C9.34,21.58 9.5,21.27 9.5,21C9.5,20.77 9.5,20.14 9.5,19.31C6.73,19.91 6.14,17.97 6.14,17.97C5.68,16.81 5.03,16.5 5.03,16.5C4.12,15.88 5.1,15.9 5.1,15.9C6.1,15.97 6.63,16.93 6.63,16.93C7.5,18.45 8.97,18 9.54,17.76C9.63,17.11 9.89,16.67 10.17,16.42C7.95,16.17 5.62,15.31 5.62,11.5C5.62,10.39 6,9.5 6.65,8.79C6.55,8.54 6.2,7.5 6.75,6.15C6.75,6.15 7.59,5.88 9.5,7.17C10.29,6.95 11.15,6.84 12,6.84C12.85,6.84 13.71,6.95 14.5,7.17C16.41,5.88 17.25,6.15 17.25,6.15C17.8,7.5 17.45,8.54 17.35,8.79C18,9.5 18.38,10.39 18.38,11.5C18.38,15.32 16.04,16.16 13.81,16.41C14.17,16.72 14.5,17.33 14.5,18.26C14.5,19.6 14.5,20.68 14.5,21C14.5,21.27 14.66,21.59 15.17,21.5C19.14,20.16 22,16.42 22,12A10,10 0 0,0 12,2Z"
-                    >
-                    </path>
-                  </svg>
-                  Secant Client
-                </a>
-                <a
-                  href="https://github.com/Bilchreis/secant-service"
-                  class="btn bg-black text-white border-black hover:bg-neutral"
-                >
-                  <svg
-                    aria-label="GitHub logo"
-                    width="16"
-                    height="16"
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      fill="white"
-                      d="M12,2A10,10 0 0,0 2,12C2,16.42 4.87,20.17 8.84,21.5C9.34,21.58 9.5,21.27 9.5,21C9.5,20.77 9.5,20.14 9.5,19.31C6.73,19.91 6.14,17.97 6.14,17.97C5.68,16.81 5.03,16.5 5.03,16.5C4.12,15.88 5.1,15.9 5.1,15.9C6.1,15.97 6.63,16.93 6.63,16.93C7.5,18.45 8.97,18 9.54,17.76C9.63,17.11 9.89,16.67 10.17,16.42C7.95,16.17 5.62,15.31 5.62,11.5C5.62,10.39 6,9.5 6.65,8.79C6.55,8.54 6.2,7.5 6.75,6.15C6.75,6.15 7.59,5.88 9.5,7.17C10.29,6.95 11.15,6.84 12,6.84C12.85,6.84 13.71,6.95 14.5,7.17C16.41,5.88 17.25,6.15 17.25,6.15C17.8,7.5 17.45,8.54 17.35,8.79C18,9.5 18.38,10.39 18.38,11.5C18.38,15.32 16.04,16.16 13.81,16.41C14.17,16.72 14.5,17.33 14.5,18.26C14.5,19.6 14.5,20.68 14.5,21C14.5,21.27 14.66,21.59 15.17,21.5C19.14,20.16 22,16.42 22,12A10,10 0 0,0 12,2Z"
-                    >
-                    </path>
-                  </svg>
-                  Secant Service
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="alert alert-base">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            class="stroke-current shrink-0 w-6 h-6"
-          >
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+      <div class="relative mx-auto max-w-[1200px] px-6 py-14">
+        <div class="flex max-w-[640px] flex-col gap-4">
+          <p class="font-mono text-[13px] font-medium tracking-wide text-ink">
+            secant-service
+          </p>
+          <h1 class="text-[clamp(1.8rem,3.2vw,2.5rem)] leading-tight font-bold tracking-tight text-balance">
+            A web interface for SECoP sample environment nodes.
+          </h1>
+          <p class="max-w-[580px] text-[1.05rem] text-muted text-pretty">
+            It connects to SEC nodes, builds their controls from each node's own description,
+            shows values as they change, and stores every reading in TimescaleDB for plotting and export.
+          </p>
+          <div class="flex flex-wrap gap-3 pt-2">
+            <.link id="hero-dashboard" navigate={~p"/dashboard"} class="btn btn-primary">
+              Dashboard
+            </.link>
+            <.link
+              id="hero-browse"
+              navigate={~p"/browse"}
+              class="btn border-line bg-base-100 hover:border-base-content"
             >
-            </path>
-          </svg>
-          <div>
-            <h3 class="font-bold">Getting Started</h3>
-            <div class="text-sm">
-              Monitor and manage your connected devices through an intuitive interface. Head to the dashboard to view real-time data.
-            </div>
+              Data browser
+            </.link>
           </div>
-          <a href="/dashboard" class="btn btn-sm btn-primary">
-            Go to the live Dashboard
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              class="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M13 7l5 5m0 0l-5 5m5-5H6"
-              />
-            </svg>
-          </a>
         </div>
       </div>
-    </div>
+    </section>
+
+    <section
+      id="overview"
+      aria-labelledby="overview-label"
+      class="border-b border-line bg-base-200"
+    >
+      <div class="mx-auto grid max-w-[1200px] grid-cols-1 items-center gap-x-8 gap-y-4 px-6 py-5 sm:grid-cols-2 lg:grid-cols-4">
+        <h2 id="overview-label" class="flex items-center gap-2.5 font-mono text-[13px] text-muted">
+          <span class={[
+            "size-2 shrink-0 rounded-full",
+            if(@counts.recording > 0, do: "bg-success", else: "bg-base-content/30")
+          ]} /> Right now on this server
+        </h2>
+        <dl class="contents">
+          <div class="flex flex-row-reverse items-baseline justify-end gap-2.5">
+            <dt class="text-[15px] text-muted">
+              {ngettext("node recording", "nodes recording", @counts.recording)}
+            </dt>
+            <dd id="count-recording" class="font-mono text-[22px] font-semibold">
+              {@counts.recording}
+            </dd>
+          </div>
+          <div class="flex flex-row-reverse items-baseline justify-end gap-2.5">
+            <dt class="text-[15px] text-muted">
+              {ngettext("module live", "modules live", @counts.modules)}
+            </dt>
+            <dd id="count-modules" class="font-mono text-[22px] font-semibold">
+              {@counts.modules}
+            </dd>
+          </div>
+          <div class="flex flex-row-reverse items-baseline justify-end gap-2.5">
+            <dt class="text-[15px] text-muted">
+              {ngettext("session recorded", "sessions recorded", @counts.sessions)}
+            </dt>
+            <dd id="count-sessions" class="font-mono text-[22px] font-semibold">
+              {@counts.sessions}
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <section id="features" class="mx-auto max-w-[1200px] px-6 pt-14">
+      <h2 class="mb-6 text-[1.35rem] font-bold">What's on this server</h2>
+      <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <.link
+          id="feature-dashboard"
+          navigate={~p"/dashboard"}
+          class="flex flex-col gap-3 rounded-box border border-line bg-base-200 p-6 transition-colors hover:border-accent"
+        >
+          <.icon name="hero-signal" class="size-6 text-ink" />
+          <h3 class="text-lg font-bold">Live dashboard</h3>
+          <p class="text-[15px] text-muted text-pretty">
+            One tab per node, one card per module. Values and status update as the node reports them.
+            Targets, parameters and commands are set from the same card, and new nodes are connected
+            here by host and port.
+          </p>
+          <span class="mt-auto pt-1 font-mono text-sm font-medium text-ink">/dashboard</span>
+        </.link>
+
+        <.link
+          id="feature-browse"
+          navigate={~p"/browse"}
+          class="flex flex-col gap-3 rounded-box border border-line bg-base-200 p-6 transition-colors hover:border-accent"
+        >
+          <.icon name="hero-chart-bar" class="size-6 text-ink" />
+          <h3 class="text-lg font-bold">Data browser</h3>
+          <p class="text-[15px] text-muted text-pretty">
+            Recordings of every node that was connected, grouped by session. Plot any parameter over
+            time, with setpoints alongside the measured value. A node that reconnects with a changed
+            description starts a new session.
+          </p>
+          <span class="mt-auto pt-1 font-mono text-sm font-medium text-ink">/browse</span>
+        </.link>
+
+        <div
+          id="feature-export"
+          class="flex flex-col gap-3 rounded-box border border-line bg-base-200 p-6"
+        >
+          <.icon name="hero-arrow-down-tray" class="size-6 text-ink" />
+          <h3 class="text-lg font-bold">Export</h3>
+          <p class="text-[15px] text-muted text-pretty">
+            One parameter's readings as CSV, or a whole node's recording as a NeXus file. Both
+            downloads are in the data browser, next to the plot.
+          </p>
+          <div class="mt-auto flex flex-wrap gap-2 pt-1 font-mono text-[13px]">
+            <span class="rounded-field border border-line bg-base-100 px-2.5 py-1">
+              .csv per parameter
+            </span>
+            <span class="rounded-field border border-line bg-base-100 px-2.5 py-1">
+              .nxs per node
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section
+      id="secop"
+      class="mx-auto grid max-w-[1200px] grid-cols-1 items-center gap-x-16 gap-y-12 px-6 py-24 lg:grid-cols-2"
+    >
+      <div class="flex flex-col gap-4">
+        <p class="font-mono text-[13px] tracking-wide text-muted">New to SECoP?</p>
+        <h2 class="text-[clamp(1.8rem,3.2vw,2.5rem)] leading-tight font-bold tracking-tight">
+          The node tells us what it is.
+        </h2>
+        <p class="text-[1.05rem] text-muted text-pretty">
+          SECoP, the Sample Environment Communication Protocol, is a common language for cryostats,
+          magnets, furnaces and other sample environment equipment. A SEC node describes its own
+          modules, each with parameters to read or set and commands to run.
+        </p>
+        <p class="text-[1.05rem] text-muted text-pretty">
+          That description is all secant-service needs. Equipment from different groups and
+          facilities shows up in the same dashboard, with units, limits and status handled the same way.
+        </p>
+        <a
+          href="https://sampleenvironment.github.io/secop-site/"
+          class="inline-flex min-h-11 items-center self-start text-base font-semibold text-ink hover:underline"
+        >
+          Read the SECoP specification
+        </a>
+      </div>
+      <figure class="flex flex-col gap-2.5">
+        <pre
+          tabindex="0"
+          role="region"
+          aria-label="Example node description"
+          class="overflow-x-auto rounded-box border border-line bg-base-100 p-6 font-mono text-sm leading-7"
+        ><span class="text-muted">node</span>    cryo_1
+<span class="text-muted">├ module</span>  T_sample   <span class="text-ink">Drivable</span>
+<span class="text-muted">│   value</span>     4.213 K
+<span class="text-muted">│   target</span>    4.200 K
+<span class="text-muted">│   status</span>    IDLE
+<span class="text-muted">│   command</span>   stop
+<span class="text-muted">└ module</span>  heater     <span class="text-ink">Writable</span>
+<span class="text-muted">    value</span>     0.35 W
+<span class="text-muted">    target</span>    0.35 W</pre>
+        <figcaption class="text-sm text-muted">
+          Example: what a small node describes about itself.
+        </figcaption>
+      </figure>
+    </section>
+
+    <section id="source" class="border-t border-line bg-base-200">
+      <div class="mx-auto max-w-[1200px] px-6 py-12">
+        <h2 class="mb-6 text-[1.35rem] font-bold">Source code</h2>
+        <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <div
+            id="source-service"
+            class="flex flex-col gap-2 rounded-box border border-line bg-base-100 px-6 py-5"
+          >
+            <h3 class="font-mono text-[15px] font-semibold">secant-service</h3>
+            <p class="text-[15px] text-muted">
+              This application. Phoenix LiveView and Ash on TimescaleDB, shipped as a Docker image.
+            </p>
+            <div class="mt-auto -ml-2.5 flex flex-wrap gap-1">
+              <.brand_link
+                id="source-service-github"
+                href="https://github.com/Bilchreis/secant-service"
+                label="secant-service source on GitHub"
+              >
+                <.github_mark class="size-[22px]" />
+              </.brand_link>
+            </div>
+          </div>
+          <div
+            id="source-client"
+            class="flex flex-col gap-2 rounded-box border border-line bg-base-100 px-6 py-5"
+          >
+            <h3 class="font-mono text-[15px] font-semibold">secant_client</h3>
+            <p class="text-[15px] text-muted">
+              The Elixir SECoP client underneath. It can be used on its own, without the web
+              interface, and is published as a package on hex.pm.
+            </p>
+            <div class="mt-auto -ml-2.5 flex flex-wrap gap-1">
+              <.brand_link
+                id="source-client-github"
+                href="https://github.com/Bilchreis/secant-client"
+                label="secant_client source on GitHub"
+              >
+                <.github_mark class="size-[22px]" />
+              </.brand_link>
+              <.brand_link
+                id="source-client-hex"
+                href="https://hex.pm/packages/secant_client"
+                label="secant_client package on hex.pm"
+              >
+                <.hex_mark class="h-5 w-[23px]" />
+              </.brand_link>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="border-t border-line">
+      <div class="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-x-6 gap-y-2 px-6 py-5 text-sm text-muted">
+        <span class="font-mono text-[13px]">
+          secant-service v{Application.spec(:secant_service, :vsn)}
+        </span>
+        <nav aria-label="Footer" class="flex flex-wrap gap-x-5 gap-y-1">
+          <.link
+            navigate={~p"/dashboard"}
+            class="inline-flex min-h-11 items-center hover:text-base-content"
+          >
+            Dashboard
+          </.link>
+          <.link
+            navigate={~p"/browse"}
+            class="inline-flex min-h-11 items-center hover:text-base-content"
+          >
+            Data browser
+          </.link>
+          <a
+            href="https://github.com/Bilchreis/secant-service"
+            class="inline-flex min-h-11 items-center hover:text-base-content"
+          >
+            GitHub
+          </a>
+        </nav>
+      </div>
+    </footer>
   </div>
 </Layouts.app>
