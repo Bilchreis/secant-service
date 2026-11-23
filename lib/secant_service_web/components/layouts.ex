@@ -11,6 +11,14 @@ defmodule SecantServiceWeb.Layouts do
   # and other static content.
   embed_templates "layouts/*"
 
+  # The dev server gets an orange favicon, so its tabs stand apart from
+  # deployed instances (blue).
+  @favicon if Application.compile_env(:secant_service, :dev_routes),
+             do: "favicon-dev.svg",
+             else: "favicon.svg"
+
+  defp favicon, do: @favicon
+
   @doc """
   Renders the secant mark: a disc cut by a secant line.
 
