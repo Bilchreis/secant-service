@@ -152,12 +152,15 @@ defmodule SecantService.PlotDB.Builders do
     end
   end
 
+  # the second distinct timestamp: a reading may be stored twice
   defp second_reading_ms(param) do
+    first =
+      from r in "readings", where: r.parameter_id == ^param.id, select: min(r.timestamp)
+
     query =
       from r in "readings",
-        where: r.parameter_id == ^param.id,
+        where: r.parameter_id == ^param.id and r.timestamp > subquery(first),
         order_by: r.timestamp,
-        offset: 1,
         limit: 1,
         select: r.timestamp
 

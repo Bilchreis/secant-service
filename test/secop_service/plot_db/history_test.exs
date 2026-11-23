@@ -262,6 +262,8 @@ defmodule SecantService.PlotDB.HistoryTest do
 
     test "a parameter only set before the session plots from the start" do
       parameter = generate(parameter(datainfo: %{"type" => "double"}))
+      # stored twice (at-least-once delivery): still one stale reading
+      insert_readings(parameter, 1, fn _ -> 2.5 end)
       insert_readings(parameter, 1, fn _ -> 2.5 end)
       start_session_at(parameter, DateTime.add(@start, 3600, :second))
 
