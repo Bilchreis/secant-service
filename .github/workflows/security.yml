@@ -33,7 +33,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The CI job saves the build cache; see the action's save-cache input.
       - uses: ./.github/actions/setup-elixir
+        with:
+          save-cache: "false"
 
       # Existing findings are baselined in .sobelow-skips; only new ones fail.
       - name: Sobelow (fail on new findings)

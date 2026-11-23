@@ -65,6 +65,7 @@ jobs:
         run: mix ash.codegen --check
 
       # The PLTs live in _build, so the build cache keeps them between runs.
+      # This is the only job that saves that cache.
       - name: Dialyzer
         run: mix dialyzer --format github
 

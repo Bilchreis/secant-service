@@ -1,6 +1,14 @@
 name: Set up Elixir
 description: Install Erlang/Elixir from .tool-versions, restore caches and fetch deps.
 
+inputs:
+  save-cache:
+    description: >-
+      Save the build cache when the job succeeds. Only one job may: a key is
+      written once, by whichever job finishes first. That has to be the CI
+      job, whose _build also holds the Dialyzer PLTs.
+    default: "true"
+
 runs:
   using: composite
   steps:
@@ -13,22 +21,36 @@ runs:
 
     # deps/ and _build/ are tied to the exact OTP/Elixir versions and mix.lock.
     # The vN prefix drops every old cache, fallbacks included. Bump it when a
-    # build has to start fresh without mix.lock changing: v2 because igniter
-    # became a test dep, and Mix doesn't recompile the deps it's optional for
-    # (ash, ash_oban, ...), whose mix task list `usage_rules.sync` records.
+    # build has to start fresh without mix.lock changing: v3 because the v2
+    # caches were saved by the Sobelow job, without the Dialyzer PLTs.
     # ~/.cache/pythonx holds the Python env pythonx builds at compile time from
     # the uv_init config in config/config.exs.
     - name: Restore build cache
       id: cache
+      if: inputs.save-cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
           deps
           _build
           ~/.cache/pythonx
-        key: mix-v2-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('mix.lock', 'config/config.exs') }}
+        key: mix-v3-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('mix.lock', 'config/config.exs') }}
         restore-keys: |
-          mix-v2-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-
+          mix-v3-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-
+
+    # Same paths and keys as above, but never saved.
+    - name: Restore build cache (read-only)
+      id: cache-read-only
+      if: inputs.save-cache != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          deps
+          _build
+          ~/.cache/pythonx
+        key: mix-v3-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-${{ hashFiles('mix.lock', 'config/config.exs') }}
+        restore-keys: |
+          mix-v3-${{ runner.os }}-${{ env.MIX_ENV }}-otp${{ steps.beam.outputs.otp-version }}-ex${{ steps.beam.outputs.elixir-version }}-
 
     - name: Fetch dependencies
       shell: bash
@@ -38,6 +60,6 @@ runs:
     # bake their config in at compile time, and Mix refuses to run with a
     # build from a different config. A fallback cache may hold one.
     - name: Drop stale compile-time-config builds
-      if: steps.cache.outputs.cache-hit != 'true'
+      if: steps.cache.outputs.cache-hit != 'true' && steps.cache-read-only.outputs.cache-hit != 'true'
       shell: bash
       run: mix deps.clean pythonx mime --build
