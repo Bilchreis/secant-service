@@ -22,6 +22,8 @@ jobs:
   # there is something to release.
   check:
     name: Check for an unreleased version
+    # A manual run from another branch would release that branch's commit.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
