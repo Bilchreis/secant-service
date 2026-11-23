@@ -50,7 +50,7 @@ jobs:
 
       - name: Upload Sobelow report
         if: ${{ !cancelled() && env.CAN_UPLOAD_SARIF == 'true' }}
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: sobelow.sarif
           category: sobelow
@@ -86,7 +86,7 @@ jobs:
 
       - name: Upload hex audit report
         if: ${{ !cancelled() && env.CAN_UPLOAD_SARIF == 'true' }}
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: hex-audit.sarif
           category: hex-audit
@@ -128,7 +128,7 @@ jobs:
           limit-severities-for-sarif: true
 
       - name: Upload Trivy report
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: trivy-image.sarif
           category: trivy-release
