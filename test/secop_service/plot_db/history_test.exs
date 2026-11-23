@@ -239,14 +239,24 @@ defmodule SecantService.PlotDB.HistoryTest do
       for {type, value_fun} <- [{"double", &(&1 * 1.0)}, {"bool", &(rem(&1, 2) == 1)}] do
         parameter = generate(parameter(datainfo: %{"type" => type}))
         insert_readings(parameter, 20, value_fun)
+        # a stale first reading (index 0), the session from index 10 on
+        {9, _} =
+          Repo.delete_all(
+            from r in "readings",
+              where:
+                r.parameter_id == ^parameter.id and
+                  r.timestamp > ^DateTime.to_naive(@start) and
+                  r.timestamp < ^DateTime.to_naive(DateTime.add(@start, 10, :second))
+          )
+
         start_session_at(parameter, DateTime.add(@start, 10, :second))
 
         {values, timestamps} = Builders.fetch_param_data(parameter, :historical)
 
-        # the last reading before the start (index 9), then 10..19
+        # the stale reading pinned to the start, then 10..19
         assert timestamps == [ms(10) | Enum.map(10..19, &ms/1)]
-        assert values == Enum.map([9 | Enum.to_list(10..19)], value_fun)
-        assert Builders.recording_start_ms(parameter) == ms(10)
+        assert values == Enum.map([0 | Enum.to_list(10..19)], value_fun)
+        assert Builders.plot_start_ms(parameter) == ms(10)
       end
     end
 
@@ -256,6 +266,20 @@ defmodule SecantService.PlotDB.HistoryTest do
       start_session_at(parameter, DateTime.add(@start, 3600, :second))
 
       assert Builders.fetch_param_data(parameter, :historical) == {[2.5], [ms(3600)]}
+    end
+
+    test "a node clock behind the server's hides no readings" do
+      parameter = generate(parameter(datainfo: %{"type" => "double"}))
+      insert_readings(parameter, 20, &(&1 * 1.0))
+      # every reading is stamped before the session start
+      start_session_at(parameter, DateTime.add(@start, 60, :second))
+
+      assert Builders.plot_start_ms(parameter) == ms(1)
+      {values, timestamps} = Builders.fetch_param_data(parameter, :historical)
+
+      # only the first reading is pinned, to the second one
+      assert timestamps == [ms(1) | Enum.map(1..19, &ms/1)]
+      assert values == [0.0 | Enum.map(1..19, &(&1 * 1.0))]
     end
   end
 end

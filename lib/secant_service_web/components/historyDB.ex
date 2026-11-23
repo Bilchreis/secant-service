@@ -730,11 +730,15 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     """
   end
 
-  # A setpoint holds until the next one, and the window may hold none of its
-  # readings (the overview pins the one from before the recording to its
-  # start): start the window with the setpoint in force.
-  defp held_window(%{name: "target"} = param, from_ms, window),
-    do: Builders.hold_from(param, from_ms, window.values, window.timestamps)
-
-  defp held_window(_param, _from_ms, window), do: {window.values, window.timestamps}
+  # The overview pins a parameter's reading from before the plot start to
+  # that start, and the chart drops overview points inside a detail window:
+  # a window from the start holds that reading again. A setpoint holds until
+  # the next one, so every window starts with the setpoint in force.
+  defp held_window(param, from_ms, window) do
+    if param.name == "target" or from_ms <= Builders.plot_start_ms(param) do
+      Builders.hold_from(param, from_ms, window.values, window.timestamps)
+    else
+      {window.values, window.timestamps}
+    end
+  end
 end
