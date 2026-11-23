@@ -23,11 +23,20 @@ updates:
       npm-minor-patch:
         update-types: [minor, patch]
 
+  # "/" covers the workflows; the composite actions need their own entry.
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
       day: monday
     groups:
       actions:
         patterns: ["*"]
+
+  # Bumps the runner image in the Dockerfile. The builder image follows
+  # .tool-versions through ARGs, which Dependabot doesn't read.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday

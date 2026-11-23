@@ -92,7 +92,10 @@ jobs:
           category: hex-audit
 
   # PR and main images are scanned at build time in docker-build-push.yml.
-  # This rescans the published main image weekly for newly disclosed CVEs.
+  # This rescans the released image (`latest`, which docker-compose.yml
+  # deploys) weekly for newly disclosed CVEs. It reports under its own SARIF
+  # category: sharing the build scan's made the alerts flip between open and
+  # fixed, because the two scans name the image differently.
   image-scan:
     name: Scan published image (Trivy)
     if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
@@ -104,10 +107,10 @@ jobs:
       security-events: write
     steps:
       - name: Image reference
-        run: echo "IMAGE_REF=ghcr.io/${GITHUB_REPOSITORY,,}:main" >> "$GITHUB_ENV"
+        run: echo "IMAGE_REF=ghcr.io/${GITHUB_REPOSITORY,,}:latest" >> "$GITHUB_ENV"
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -128,4 +131,10 @@ jobs:
         uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy-image.sarif
-          category: trivy-image
+          category: trivy-release
+
+      # The scan above only reports. This fails the run, so GitHub sends the
+      # failed-run email, when the released image has a CRITICAL CVE that a
+      # rebuild on a newer base image would fix.
+      - name: Fail on fixable CRITICAL CVEs
+        run: trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL "$IMAGE_REF"
