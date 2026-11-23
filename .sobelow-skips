@@ -1,6 +1,6 @@
 Config.CSP: Missing Content-Security-Policy,lib/secant_service_web/router.ex:14,62B6BB5
 Config.CSWH: Cross-Site Websocket Hijacking,lib/secant_service_web/endpoint.ex:14,6C94786
-Config.CSWH: Cross-Site Websocket Hijacking,lib/secant_service_web/endpoint.ex:31,5E3B3C7
+Config.CSWH: Cross-Site Websocket Hijacking,lib/secant_service_web/endpoint.ex:35,17CC29B
 Config.HTTPS: HTTPS Not Enabled,config/prod.exs:0,2B5C077
 DOS.DecodeAtoms: Atom Creation in Decoder,lib/secant_service/node_control.ex:161,3925A61
 DOS.DecodeAtoms: Atom Creation in Decoder,lib/secant_service/node_control.ex:162,1C2FCE7
