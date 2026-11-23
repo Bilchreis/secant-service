@@ -83,8 +83,8 @@ jobs:
     name: Build and Push Docker image
     needs: release-check
     # Also runs when release-check is skipped (PRs, releases, manual runs and
-    # the release workflow's own call).
-    if: ${{ !cancelled() && !failure() && needs.release-check.outputs.skip != 'true' }}
+    # the release workflow's own call) or fails, whose `skip` then reads empty.
+    if: ${{ !cancelled() && needs.release-check.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     # Sets the permissions granted to the GITHUB_TOKEN for this job
     permissions:
