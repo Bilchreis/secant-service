@@ -13,12 +13,13 @@
 #
 ARG ELIXIR_VERSION=1.20.1
 ARG OTP_VERSION=29.0.1
+# The builder's Debian date has to be one hexpm/elixir publishes for these
+# versions. The runner below is a separate, newer bookworm image.
 ARG DEBIAN_VERSION=bookworm-20260610
 
 
 
 ARG BUILDER_IMAGE="hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}"
-ARG RUNNER_IMAGE="debian:${DEBIAN_VERSION}"
 
 # mix.exs with the version pinned, so a release (which only bumps @version)
 # keeps the cached deps layers below instead of recompiling every dependency.
@@ -84,7 +85,10 @@ RUN mix release
 
 # start a new build stage so that the final image will only contain
 # the compiled release and other runtime necessities
-FROM ${RUNNER_IMAGE} AS final
+#
+# Any bookworm image runs the release, so the runner tracks the newest one for
+# its security fixes. The tag is written out so Dependabot can bump it.
+FROM debian:bookworm-20261104-slim AS final
 RUN apt-get update -y && \
   apt-get install -y libstdc++6 openssl libncurses5 locales ca-certificates \
   && apt-get clean && rm -f /var/lib/apt/lists/*_*
@@ -112,4 +116,6 @@ USER nobody
 # above and adding an entrypoint. See https://github.com/krallin/tini for details
 # ENTRYPOINT ["/tini", "--"]
 
-CMD ["sh", "-c", "/app/bin/migrate && /app/bin/server"]
+# exec, so the server replaces sh as PID 1 and gets the SIGTERM from
+# `docker stop`. Under sh it was killed after the 10 s grace period instead.
+CMD ["sh", "-c", "/app/bin/migrate && exec /app/bin/server"]
