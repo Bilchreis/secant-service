@@ -10,6 +10,7 @@ defmodule SecantService.SecNodes do
     otp_app: :secant_service
 
   import Ecto.Query, only: [from: 2]
+  require Ash.Query
 
   alias SecantService.SecNodes.{Reading, SecNode}
 
@@ -87,6 +88,21 @@ defmodule SecantService.SecNodes do
     AshPagify.validate_and_run(Reading, params, [action: :for_parameter] ++ opts, %{
       parameter_id: parameter.id
     })
+  end
+
+  @doc """
+  What this server holds, for the landing page: sessions recording now, the
+  modules of those sessions, and all sessions not in the trash.
+  """
+  def overview_counts do
+    %{
+      recording: SecNode |> Ash.Query.for_read(:active) |> Ash.count!(),
+      modules:
+        SecantService.SecNodes.Module
+        |> Ash.Query.filter(sec_node.state == :active)
+        |> Ash.count!(),
+      sessions: SecNode |> Ash.Query.filter(state != :trashed) |> Ash.count!()
+    }
   end
 
   @doc "Schedule the cleanup trigger now (old sessions move to the trash in the background)."
