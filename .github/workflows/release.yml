@@ -32,21 +32,7 @@ jobs:
 
       - name: Compare mix.exs version with the tags
         id: version
-        run: |
-          version="$(sed -n 's/^ *@version "\(.*\)"$/\1/p' mix.exs)"
-          if [ -z "$version" ]; then
-            echo "::error::Could not read @version from mix.exs"
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
-            echo "v$version is already released."
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "v$version has no tag yet, releasing."
-            echo "release=true" >> "$GITHUB_OUTPUT"
-          fi
+        uses: ./.github/actions/release-version
 
   test:
     name: Test
