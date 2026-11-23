@@ -25,10 +25,21 @@ runs:
         fi
         echo "version=$version" >> "$GITHUB_OUTPUT"
 
-        if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
-          echo "v$version is already released."
-          echo "release=false" >> "$GITHUB_OUTPUT"
-        else
-          echo "v$version has no tag yet, releasing."
-          echo "release=true" >> "$GITHUB_OUTPUT"
-        fi
+        # Exit 2 means no such tag. Any other failure (network, auth) must not
+        # read as "unreleased", or it would release the version again.
+        status=0
+        git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null || status=$?
+        case "$status" in
+          0)
+            echo "v$version is already released."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            ;;
+          2)
+            echo "v$version has no tag yet, releasing."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            ;;
+          *)
+            echo "::error::Could not list the tags (git ls-remote exited $status)"
+            exit 1
+            ;;
+        esac

@@ -44,13 +44,18 @@ jobs:
   # A push to main that bumps the version is built by the release workflow
   # (with the version tags), so building it here too would only race it for
   # the runner and the build cache.
+  #
+  # Only the push that changes @version is skipped. A later push that lands
+  # before the release has tagged still sees an untagged version, but its
+  # release run will find the tag and build nothing, so it has to build here.
+  # When in doubt this builds: an extra build is harmless, a missing one isn't.
   release-check:
     name: Check for a release commit
     if: github.event_name == 'push' && inputs.version == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      release: ${{ steps.version.outputs.release }}
+      skip: ${{ steps.version.outputs.release == 'true' && steps.bump.outputs.bumped == 'true' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -58,12 +63,28 @@ jobs:
         id: version
         uses: ./.github/actions/release-version
 
+      - name: Check whether this push changes the version
+        id: bump
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if git fetch --quiet --depth=1 origin "$PUSH_BEFORE" \
+            && before="$(git show FETCH_HEAD:mix.exs | sed -n 's/^ *@version "\(.*\)"$/\1/p')" \
+            && [ -n "$before" ] && [ "$before" != "$VERSION" ]; then
+            echo "This push changes the version from $before to $VERSION."
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "This push keeps the version (or its parent can't be read)."
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-and-push:
     name: Build and Push Docker image
     needs: release-check
     # Also runs when release-check is skipped (PRs, releases, manual runs and
     # the release workflow's own call).
-    if: ${{ !cancelled() && !failure() && needs.release-check.outputs.release != 'true' }}
+    if: ${{ !cancelled() && !failure() && needs.release-check.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     # Sets the permissions granted to the GITHUB_TOKEN for this job
     permissions:
@@ -102,9 +123,9 @@ jobs:
       # Build into the local Docker daemon first so the image can be scanned
       # before anything is published.
       #
-      # PR builds only read the cache. Main can't read caches saved on a PR
-      # branch anyway, and writing them filled the 10 GB cache quota, which
-      # evicted main's layers.
+      # Only main writes the cache. Main can't read caches saved on other refs
+      # (PRs, release tags), and writing them filled the 10 GB cache quota,
+      # which evicted main's layers.
       - name: Build Docker image
         uses: docker/build-push-action@v7
         with:
@@ -113,7 +134,7 @@ jobs:
           tags: ${{ env.SCAN_TAG }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,mode=max' || '' }}
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max' || '' }}
 
       # Report-only: OS/base-image CVEs show up in the Security tab (and the
       # job log) without blocking deploys. Only fixable HIGH/CRITICAL issues.
