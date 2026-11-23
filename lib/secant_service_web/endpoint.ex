@@ -23,7 +23,11 @@ defmodule SecantServiceWeb.Endpoint do
     at: "/",
     from: :secant_service,
     gzip: false,
-    only: SecantServiceWeb.static_paths()
+    only: SecantServiceWeb.static_paths(),
+    # `only` compares whole file names, so it lets "favicon.svg" through but not
+    # the "favicon-<digest>.svg" that `mix phx.digest` makes of it and that
+    # `~p"/favicon.svg"` links to in a release.
+    only_matching: ~w(favicon-)
 
   # Code reloading can be explicitly enabled under the
   # :code_reloader configuration of your endpoint.
