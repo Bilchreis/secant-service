@@ -17,7 +17,7 @@
 
       <div class="relative mx-auto max-w-[1200px] px-6 py-14">
         <div class="flex max-w-[640px] flex-col gap-4">
-          <p class="font-mono text-[13px] font-medium tracking-wide text-primary">
+          <p class="font-mono text-[13px] font-medium tracking-wide text-ink">
             secant-service
           </p>
           <h1 class="text-[clamp(1.8rem,3.2vw,2.5rem)] leading-tight font-bold tracking-tight text-balance">
@@ -43,33 +43,45 @@
       </div>
     </section>
 
-    <section id="overview" aria-label="Current state" class="border-b border-line bg-base-200">
-      <dl class="mx-auto grid max-w-[1200px] grid-cols-1 items-center gap-x-8 gap-y-4 px-6 py-5 sm:grid-cols-2 lg:grid-cols-4">
-        <div class="flex items-center gap-2.5 font-mono text-[13px] text-muted">
+    <section
+      id="overview"
+      aria-labelledby="overview-label"
+      class="border-b border-line bg-base-200"
+    >
+      <div class="mx-auto grid max-w-[1200px] grid-cols-1 items-center gap-x-8 gap-y-4 px-6 py-5 sm:grid-cols-2 lg:grid-cols-4">
+        <h2 id="overview-label" class="flex items-center gap-2.5 font-mono text-[13px] text-muted">
           <span class={[
             "size-2 shrink-0 rounded-full",
             if(@counts.recording > 0, do: "bg-success", else: "bg-base-content/30")
           ]} /> Right now on this server
-        </div>
-        <div class="flex flex-row-reverse items-baseline justify-end gap-2.5">
-          <dt class="text-[15px] text-muted">nodes recording</dt>
-          <dd id="count-recording" class="font-mono text-[22px] font-semibold">
-            {@counts.recording}
-          </dd>
-        </div>
-        <div class="flex flex-row-reverse items-baseline justify-end gap-2.5">
-          <dt class="text-[15px] text-muted">modules live</dt>
-          <dd id="count-modules" class="font-mono text-[22px] font-semibold">
-            {@counts.modules}
-          </dd>
-        </div>
-        <div class="flex flex-row-reverse items-baseline justify-end gap-2.5">
-          <dt class="text-[15px] text-muted">sessions recorded</dt>
-          <dd id="count-sessions" class="font-mono text-[22px] font-semibold">
-            {@counts.sessions}
-          </dd>
-        </div>
-      </dl>
+        </h2>
+        <dl class="contents">
+          <div class="flex flex-row-reverse items-baseline justify-end gap-2.5">
+            <dt class="text-[15px] text-muted">
+              {ngettext("node recording", "nodes recording", @counts.recording)}
+            </dt>
+            <dd id="count-recording" class="font-mono text-[22px] font-semibold">
+              {@counts.recording}
+            </dd>
+          </div>
+          <div class="flex flex-row-reverse items-baseline justify-end gap-2.5">
+            <dt class="text-[15px] text-muted">
+              {ngettext("module live", "modules live", @counts.modules)}
+            </dt>
+            <dd id="count-modules" class="font-mono text-[22px] font-semibold">
+              {@counts.modules}
+            </dd>
+          </div>
+          <div class="flex flex-row-reverse items-baseline justify-end gap-2.5">
+            <dt class="text-[15px] text-muted">
+              {ngettext("session recorded", "sessions recorded", @counts.sessions)}
+            </dt>
+            <dd id="count-sessions" class="font-mono text-[22px] font-semibold">
+              {@counts.sessions}
+            </dd>
+          </div>
+        </dl>
+      </div>
     </section>
 
     <section id="features" class="mx-auto max-w-[1200px] px-6 pt-14">
@@ -80,14 +92,14 @@
           navigate={~p"/dashboard"}
           class="flex flex-col gap-3 rounded-box border border-line bg-base-200 p-6 transition-colors hover:border-accent"
         >
-          <.icon name="hero-signal" class="size-6 text-primary" />
+          <.icon name="hero-signal" class="size-6 text-ink" />
           <h3 class="text-lg font-bold">Live dashboard</h3>
           <p class="text-[15px] text-muted text-pretty">
             One tab per node, one card per module. Values and status update as the node reports them.
             Targets, parameters and commands are set from the same card, and new nodes are connected
             here by host and port.
           </p>
-          <span class="mt-auto pt-1 font-mono text-sm font-medium text-primary">/dashboard</span>
+          <span class="mt-auto pt-1 font-mono text-sm font-medium text-ink">/dashboard</span>
         </.link>
 
         <.link
@@ -95,21 +107,21 @@
           navigate={~p"/browse"}
           class="flex flex-col gap-3 rounded-box border border-line bg-base-200 p-6 transition-colors hover:border-accent"
         >
-          <.icon name="hero-chart-bar" class="size-6 text-primary" />
+          <.icon name="hero-chart-bar" class="size-6 text-ink" />
           <h3 class="text-lg font-bold">Data browser</h3>
           <p class="text-[15px] text-muted text-pretty">
             Recordings of every node that was connected, grouped by session. Plot any parameter over
             time, with setpoints alongside the measured value. A node that reconnects with a changed
             description starts a new session.
           </p>
-          <span class="mt-auto pt-1 font-mono text-sm font-medium text-primary">/browse</span>
+          <span class="mt-auto pt-1 font-mono text-sm font-medium text-ink">/browse</span>
         </.link>
 
         <div
           id="feature-export"
           class="flex flex-col gap-3 rounded-box border border-line bg-base-200 p-6"
         >
-          <.icon name="hero-arrow-down-tray" class="size-6 text-primary" />
+          <.icon name="hero-arrow-down-tray" class="size-6 text-ink" />
           <h3 class="text-lg font-bold">Export</h3>
           <p class="text-[15px] text-muted text-pretty">
             One parameter's readings as CSV, or a whole node's recording as a NeXus file. Both
@@ -146,20 +158,23 @@
           facilities shows up in the same dashboard, with units, limits and status handled the same way.
         </p>
         <a
-          href="https://github.com/SampleEnvironment/SECoP"
-          class="inline-flex min-h-11 items-center self-start text-base font-semibold text-primary hover:underline"
+          href="https://sampleenvironment.github.io/secop-site/"
+          class="inline-flex min-h-11 items-center self-start text-base font-semibold text-ink hover:underline"
         >
           Read the SECoP specification
         </a>
       </div>
       <figure class="flex flex-col gap-2.5">
-        <pre class="overflow-x-auto rounded-box border border-line bg-base-100 p-6 font-mono text-sm leading-7"><span class="text-muted">node</span>    cryo_1
-<span class="text-muted">├ module</span>  T_sample   <span class="text-primary">Drivable</span>
+        <pre
+          tabindex="0"
+          class="overflow-x-auto rounded-box border border-line bg-base-100 p-6 font-mono text-sm leading-7"
+        ><span class="text-muted">node</span>    cryo_1
+<span class="text-muted">├ module</span>  T_sample   <span class="text-ink">Drivable</span>
 <span class="text-muted">│   value</span>     4.213 K
 <span class="text-muted">│   target</span>    4.200 K
 <span class="text-muted">│   status</span>    IDLE
 <span class="text-muted">│   command</span>   stop
-<span class="text-muted">└ module</span>  heater     <span class="text-primary">Writable</span>
+<span class="text-muted">└ module</span>  heater     <span class="text-ink">Writable</span>
 <span class="text-muted">    value</span>     0.35 W
 <span class="text-muted">    target</span>    0.35 W</pre>
         <figcaption class="text-sm text-muted">
@@ -202,7 +217,7 @@
             <div class="mt-auto -ml-2.5 flex flex-wrap gap-1">
               <.brand_link
                 id="source-client-github"
-                href="https://github.com/Bilchreis/secop_client"
+                href="https://github.com/Bilchreis/secant-client"
                 label="secant_client source on GitHub"
               >
                 <.github_mark class="size-[22px]" />

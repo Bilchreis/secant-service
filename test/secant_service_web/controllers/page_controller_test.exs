@@ -10,7 +10,7 @@ defmodule SecantServiceWeb.PageControllerTest do
           {"#hero-dashboard", "/dashboard"},
           {"#hero-browse", "/browse"},
           {"#source-service-github", "https://github.com/Bilchreis/secant-service"},
-          {"#source-client-github", "https://github.com/Bilchreis/secop_client"},
+          {"#source-client-github", "https://github.com/Bilchreis/secant-client"},
           {"#source-client-hex", "https://hex.pm/packages/secant_client"}
         ] do
       assert doc |> LazyHTML.query(id) |> LazyHTML.attribute("href") == [href]
@@ -30,6 +30,7 @@ defmodule SecantServiceWeb.PageControllerTest do
     doc = conn |> get(~p"/") |> html_response(200) |> LazyHTML.from_document()
 
     assert count(doc, "#count-recording") == "1"
+    assert doc |> LazyHTML.query("#overview dt") |> LazyHTML.text() =~ "node recording"
     assert count(doc, "#count-modules") == "2"
     assert count(doc, "#count-sessions") == "2"
   end
