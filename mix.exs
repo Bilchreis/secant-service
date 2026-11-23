@@ -4,7 +4,7 @@ defmodule SecantService.MixProject do
   # Bumping this is the release: once it lands on main, the release workflow
   # tests it, pushes the Docker image and creates the v<version> tag and
   # GitHub release.
-  @version "0.5.0"
+  @version "0.5.1"
 
   def project do
     [
