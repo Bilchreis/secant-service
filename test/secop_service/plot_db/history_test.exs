@@ -5,8 +5,10 @@ defmodule SecantService.PlotDB.HistoryTest do
 
   alias SecantService.SecNodes
   alias SecantService.SecNodes.Reading.Storage
+  alias SecantService.PlotDB
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.History
+  alias SecantService.PlotDB.History.Channels
   alias SecantService.Repo
 
   alias SecantService.SecNodes.Parameter
@@ -28,15 +30,49 @@ defmodule SecantService.PlotDB.HistoryTest do
 
   defp points(window), do: Enum.zip(window.timestamps, window.values)
 
-  describe "numeric?/1" do
-    test "only plain numbers are thinned out" do
-      for type <- ["double", "int", "scaled"] do
-        assert History.numeric?(%Parameter{datainfo: %{"type" => type}})
+  describe "thinnable?/1 and limits/1" do
+    test "everything the plots draw is thinned out" do
+      for datainfo <- [
+            %{"type" => "double"},
+            %{"type" => "int"},
+            %{"type" => "scaled"},
+            %{"type" => "enum", "members" => %{"a" => 0}},
+            %{"type" => "array", "members" => %{"type" => "double"}},
+            %{"type" => "struct", "members" => %{"flow" => %{"type" => "double"}}}
+          ] do
+        assert History.thinnable?(%Parameter{datainfo: datainfo}), inspect(datainfo)
       end
 
-      for type <- ["enum", "bool", "string", "array", "struct"] do
-        refute History.numeric?(%Parameter{datainfo: %{"type" => type}})
+      for datainfo <- [
+            %{"type" => "string"},
+            %{"type" => "bool"},
+            %{"type" => "array", "members" => %{"type" => "string"}},
+            %{"type" => "struct", "members" => %{"name" => %{"type" => "string"}}}
+          ] do
+        refute History.thinnable?(%Parameter{datainfo: datainfo}), inspect(datainfo)
       end
+    end
+
+    test "wide values get fewer readings and buckets than a plain number" do
+      number = %Parameter{datainfo: %{"type" => "double"}}
+      assert History.limits(number) == {3000, 400}
+
+      # 100 values per reading: fewer readings in full
+      assert {2000, 400} = History.limits(%Parameter{datainfo: array_info(100)})
+
+      # 27 two-state fields: up to 56 readings per bucket, 27 values each
+      valves =
+        Map.new(
+          1..27,
+          &{"v#{&1}", %{"type" => "enum", "members" => %{"open" => 1, "closed" => 0}}}
+        )
+
+      assert {raw, buckets} =
+               History.limits(%Parameter{datainfo: %{"type" => "struct", "members" => valves}})
+
+      # ... while 3000 full readings still fit
+      assert raw == 3000
+      assert buckets == div(200_000, 27 * 56)
     end
   end
 
@@ -197,12 +233,186 @@ defmodule SecantService.PlotDB.HistoryTest do
       refute zoomed.aggregated
     end
 
-    test "refuse parameters that are not plain numbers, and unknown ones" do
+    test "accept arrays and structs" do
+      parameter = generate(parameter(datainfo: array_info(2)))
+      insert_readings(parameter, 20, &[&1 * 1.0, 0.0])
+
+      assert %{values: [[+0.0, +0.0] | _], aggregated: false} =
+               SecNodes.history_window!(parameter.id, nil, nil)
+    end
+
+    test "refuse parameters that are not plotted, and unknown ones" do
       parameter = generate(parameter(datainfo: %{"type" => "string"}))
 
       assert {:error, %Ash.Error.Invalid{}} = SecNodes.history_window(parameter.id, nil, nil)
       assert {:error, %Ash.Error.Invalid{}} = SecNodes.history_resolution(parameter.id, nil, nil)
       assert {:error, %Ash.Error.Invalid{}} = SecNodes.history_window(-1, nil, nil)
+    end
+  end
+
+  defp array_info(len, member \\ "double"),
+    do: %{"type" => "array", "maxlen" => len, "members" => %{"type" => member}}
+
+  describe "window/4 for other types" do
+    test "an array keeps the extremes of every element, as whole readings" do
+      parameter = generate(parameter(datainfo: array_info(3)))
+
+      # element 1 spikes once, element 2 dips once, element 0 stays flat
+      value = fn
+        1234 -> [1.0, 99.5, 3.0]
+        2345 -> [1.0, 2.0, -7.25]
+        _ -> [1.0, 2.0, 3.0]
+      end
+
+      insert_readings(parameter, 3600, value)
+
+      window = History.window(parameter, nil, nil, max_raw: 100, max_buckets: 60)
+
+      assert window.aggregated
+      assert window.bucket_ms == :timer.minutes(1)
+      points = points(window)
+      assert {ms(1234), [1.0, 99.5, 3.0]} in points
+      assert {ms(2345), [1.0, 2.0, -7.25]} in points
+      assert hd(points) == {ms(0), [1.0, 2.0, 3.0]}
+      assert List.last(points) == {ms(3599), [1.0, 2.0, 3.0]}
+      # per bucket: first, last and the extremes of 3 elements
+      assert length(points) <= 60 * (2 + 2 * 3)
+      assert window.timestamps == Enum.sort(window.timestamps)
+    end
+
+    test "a wide array is picked by the extremes of the whole array" do
+      len = Channels.wide_array() + 4
+      parameter = generate(parameter(datainfo: array_info(len, "int")))
+      flat = List.duplicate(5, len)
+
+      value = fn
+        1234 -> List.replace_at(flat, len - 1, 500)
+        2345 -> List.replace_at(flat, 0, -500)
+        _ -> flat
+      end
+
+      insert_readings(parameter, 3600, value)
+
+      window = History.window(parameter, nil, nil, max_raw: 100, max_buckets: 60)
+
+      points = points(window)
+      assert {ms(1234), List.replace_at(flat, len - 1, 500)} in points
+      assert {ms(2345), List.replace_at(flat, 0, -500)} in points
+      # first, last, lowest and highest per bucket, not per element
+      assert length(points) <= 60 * 4
+    end
+
+    test "an enum keeps the first reading of every state in each bucket" do
+      parameter =
+        generate(
+          parameter(datainfo: %{"type" => "enum", "members" => %{"a" => 0, "b" => 1, "c" => 2}})
+        )
+
+      # toggles 0/1 every second, and is 2 exactly once
+      insert_readings(parameter, 3600, fn
+        1234 -> 2
+        i -> rem(i, 2)
+      end)
+
+      window = History.window(parameter, nil, nil, max_raw: 100, max_buckets: 60)
+
+      assert window.aggregated
+      assert {ms(1234), 2} in points(window)
+      # every bucket shows both toggling states
+      for bucket <- Enum.chunk_by(points(window), fn {ts, _} -> div(ts - ms(0), 60_000) end) do
+        assert MapSet.subset?(MapSet.new([0, 1]), MapSet.new(bucket, &elem(&1, 1)))
+      end
+
+      # first + last + one per state, never one per change
+      assert length(window.values) <= 60 * (2 + 3)
+    end
+
+    test "a struct keeps the extremes and states of each field, values as stored" do
+      datainfo = %{
+        "type" => "struct",
+        "members" => %{
+          "flow" => %{"type" => "double"},
+          "mode" => %{"type" => "enum", "members" => %{"off" => 0, "on" => 1, "boost" => 2}},
+          "temps" => array_info(2),
+          "inner" => %{"type" => "struct", "members" => %{"p" => %{"type" => "int"}}},
+          "label" => %{"type" => "string"}
+        }
+      }
+
+      parameter = generate(parameter(datainfo: datainfo))
+
+      base = %{
+        "flow" => 1.0,
+        "mode" => 0,
+        "temps" => [20.0, 30.0],
+        "inner" => %{"p" => 7},
+        "label" => "x"
+      }
+
+      value = fn
+        100 -> %{base | "flow" => 99.0}
+        200 -> %{base | "mode" => 2}
+        300 -> %{base | "temps" => [20.0, -40.0]}
+        400 -> %{base | "inner" => %{"p" => 70}}
+        # junk a node might send: must not break the query
+        500 -> %{base | "flow" => "n/a", "temps" => "broken"}
+        _ -> base
+      end
+
+      insert_readings(parameter, 3600, value)
+
+      window = History.window(parameter, nil, nil, max_raw: 100, max_buckets: 60)
+
+      assert window.aggregated
+      points = points(window)
+
+      for i <- [100, 200, 300, 400] do
+        assert {ms(i), value.(i)} in points, "reading #{i} missing"
+      end
+
+      assert length(points) < 3600
+    end
+
+    test "the picker of a type comes from the config" do
+      parameter = generate(parameter(datainfo: %{"type" => "double"}))
+
+      value = fn
+        1234 -> 99.5
+        _ -> 20.0
+      end
+
+      insert_readings(parameter, 3600, value)
+      opts = [max_raw: 100, max_buckets: 60]
+
+      Application.put_env(:secant_service, History, pickers: %{"double" => :first_last})
+      on_exit(fn -> Application.delete_env(:secant_service, History) end)
+
+      first_last = History.window(parameter, nil, nil, opts)
+      refute {ms(1234), 99.5} in points(first_last)
+      assert length(first_last.values) <= 2 * 60
+
+      Application.put_env(:secant_service, History, pickers: %{"double" => :bogus})
+      assert_raise ArgumentError, fn -> History.window(parameter, nil, nil, opts) end
+    end
+
+    test "compressed chunks give the same answer for arrays and structs" do
+      array = generate(parameter(datainfo: array_info(2)))
+      insert_readings(array, 600, &[rem(&1 * 7, 50) * 1.0, rem(&1 * 3, 11) * 1.0])
+
+      struct =
+        generate(
+          parameter(datainfo: %{"type" => "struct", "members" => %{"f" => %{"type" => "double"}}})
+        )
+
+      insert_readings(struct, 600, &%{"f" => rem(&1 * 7, 50) * 1.0})
+      opts = [max_raw: 100, max_buckets: 20]
+
+      before = for p <- [array, struct], do: History.window(p, nil, nil, opts)
+
+      %{rows: [_ | _]} =
+        Repo.query!("SELECT compress_chunk(c) FROM show_chunks('readings') c")
+
+      assert before == for(p <- [array, struct], do: History.window(p, nil, nil, opts))
     end
   end
 
@@ -235,6 +445,51 @@ defmodule SecantService.PlotDB.HistoryTest do
 
     # Unchanged parameters carry the node's time of their last change, often
     # long before the recording began; they must not stretch the time axis.
+    test "arrays, enums and structs are loaded thinned out, and their plots fetch detail" do
+      enum = %{"type" => "enum", "members" => %{"off" => 0, "on" => 1}}
+
+      cases = [
+        {array_info(2), &[rem(&1, 10) * 1.0, 1.0]},
+        {enum, &rem(&1, 2)},
+        {%{"type" => "struct", "members" => %{"f" => %{"type" => "double"}, "m" => enum}},
+         &%{"f" => rem(&1, 10) * 1.0, "m" => rem(&1, 2)}}
+      ]
+
+      for {datainfo, value_fun} <- cases do
+        parameter = generate(parameter(datainfo: datainfo))
+        start_session_at(parameter, @start)
+        insert_readings(parameter, 4000, value_fun)
+
+        {values, timestamps} = Builders.fetch_param_data(parameter, :historical)
+        assert length(values) < 4000, datainfo["type"]
+        assert hd(timestamps) == ms(0)
+        assert List.last(timestamps) == ms(3999)
+
+        assert [%{id: id}] = PlotDB.history_params(parameter)
+        assert id == parameter.id
+
+        plot = PlotDB.init(parameter, :historical)
+        assert %{aggregated: true} = plot.option._windowFetch, datainfo["type"]
+      end
+    end
+
+    test "a zoomed enum window comes back as state points" do
+      datainfo = %{"type" => "enum", "members" => %{"off" => 0, "on" => 1}}
+      parameter = generate(parameter(datainfo: datainfo))
+      start_session_at(parameter, @start)
+      insert_readings(parameter, 20, &rem(&1, 2))
+
+      plot = PlotDB.init(parameter, :historical)
+      window = History.window(parameter, ms(5), ms(6))
+
+      assert %{seriesUpdates: [%{data: [%{value: [_, 0], name: "on (1)"}, %{name: "off (0)"}]}]} =
+               PlotDB.get_trace_updates_batch(
+                 plot,
+                 Enum.zip(window.values, window.timestamps),
+                 "value"
+               )
+    end
+
     test "readings from before the session are pinned to its start" do
       for {type, value_fun} <- [{"double", &(&1 * 1.0)}, {"bool", &(rem(&1, 2) == 1)}] do
         parameter = generate(parameter(datainfo: %{"type" => type}))

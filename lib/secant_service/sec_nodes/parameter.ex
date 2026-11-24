@@ -73,7 +73,7 @@ defmodule SecantService.SecNodes.Parameter do
     # Readings for the historical plots, thinned out in the database when the
     # window holds more than a chart can show. See `SecantService.PlotDB.History`.
     action :history_window, :map do
-      description "Readings of a numeric parameter in a time window, thinned out if there are many."
+      description "Readings of a plotted parameter (number, enum, numeric array or struct) in a time window, thinned out if there are many."
 
       argument :parameter_id, :integer, allow_nil?: false
       # Unix milliseconds, inclusive; nil = from the first / to the last reading

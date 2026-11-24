@@ -1,28 +1,46 @@
 defmodule SecantService.PlotDB.History do
   @moduledoc """
-  Readings of a numeric parameter for the historical plots, thinned out in the
-  database when a time window holds more than a chart can show.
+  Readings of a parameter for the historical plots, thinned out in the
+  database when a time window holds more than a chart can show. Works for
+  every type the plots draw: numbers, enums, numeric arrays and structs.
 
   A window with up to `max_raw` readings is returned as stored. A larger one
-  is split into time buckets (`time_bucket`), and each bucket contributes its
-  first, last, lowest and highest reading. These are real readings at their
-  real timestamps, so spikes and the overall shape survive, and a line drawn
-  through them looks like the line through all readings. Zooming in asks for
-  a smaller window, which gets narrower buckets and finally every reading.
+  is split into time buckets (`time_bucket`), and each bucket keeps a few of
+  its readings: its first and last, plus what each of the parameter's
+  channels picks (see `SecantService.PlotDB.History.Channels`), such as the
+  readings with the lowest and highest value of every array element, or the
+  first reading of each enum state. The kept readings are returned whole, as
+  stored, so every plot draws them like any other readings. Zooming in asks
+  for a smaller window, which gets narrower buckets and finally every reading.
+
+  Ties (several readings with the same lowest value, say) go to the
+  earliest reading, so a window always comes back the same, however the
+  rows are stored (compressed chunks are scanned in another order).
+
+  Picking and fetching are one statement: the picks are collected in a CTE,
+  and the readings are then looked up by id on the primary key. (Joining
+  the picks instead makes Postgres scan the whole window a second time.)
+
+  The limits follow from a budget of values per chart (`@point_budget`): a
+  reading of a 50-element array costs 50 values, so its window gets fewer
+  readings and buckets than a plain number's.
   """
 
   import Ecto.Query
 
+  alias SecantService.PlotDB.History.Channels
   alias SecantService.Repo
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.Reading.Storage
 
-  @numeric_types ["double", "int", "scaled"]
-
-  # a window with at most this many readings is returned in full
+  # values (readings × values per reading) a chart is sent at most
+  @point_budget 200_000
+  # a window with at most this many readings is returned in full ...
   @default_max_raw 3000
-  # otherwise it is split into at most this many buckets (4 readings each)
+  # ... otherwise it is split into at most this many buckets
   @default_max_buckets 400
+  # wide structs and arrays still get this many
+  @min_buckets 50
 
   # bucket widths to pick from, in milliseconds; wider ones are whole days
   @second 1_000
@@ -35,21 +53,22 @@ defmodule SecantService.PlotDB.History do
                    Enum.map([1, 2, 3, 6, 12], &(&1 * @hour))
 
   @type window :: %{
-          values: [number],
+          values: [term],
           timestamps: [integer],
           aggregated: boolean,
           bucket_ms: pos_integer | nil
         }
 
-  @doc "Whether a parameter's readings can be thinned out: plain numbers only."
-  def numeric?(%Parameter{datainfo: %{"type" => type}}) when type in @numeric_types, do: true
-  def numeric?(_), do: false
+  @doc "Whether a parameter's readings can be thinned out: anything the plots draw."
+  def thinnable?(%Parameter{datainfo: datainfo}), do: Channels.from_datainfo(datainfo) != []
+  def thinnable?(_), do: false
 
   @doc """
   Readings of `param` between `from_ms` and `to_ms` (Unix milliseconds, both
   inclusive; `nil` means from the first / to the last reading).
 
-  Options: `:max_raw` and `:max_buckets`, see the module doc.
+  Options: `:max_raw` and `:max_buckets`, see the module doc. Without them,
+  both follow from the parameter's type (see `limits/1`).
   """
   @spec window(Parameter.t(), integer | nil, integer | nil, keyword) :: window
   def window(%Parameter{} = param, from_ms, to_ms, opts \\ []) do
@@ -58,7 +77,7 @@ defmodule SecantService.PlotDB.History do
     case plan(param, from_ms, to_ms, opts) do
       :empty -> empty()
       {:raw, from, to} -> raw(col, param.id, from, to)
-      {:buckets, from, to, bucket_ms} -> bucketed(col, param.id, from, to, bucket_ms)
+      {:buckets, from, to, bucket_ms} -> bucketed(param, col, from, to, bucket_ms)
     end
   end
 
@@ -84,9 +103,23 @@ defmodule SecantService.PlotDB.History do
     end
   end
 
+  @doc """
+  `{max_raw, max_buckets}` for a parameter: as many readings and buckets as
+  fit the value budget, never more than for a plain number.
+  """
+  def limits(%Parameter{datainfo: datainfo}) do
+    channels = Channels.from_datainfo(datainfo)
+    points = Channels.points_per_reading(channels)
+    per_bucket = points * Channels.picks_per_bucket(channels)
+
+    {min(@default_max_raw, max(div(@point_budget, points), @min_buckets)),
+     @point_budget |> div(per_bucket) |> max(@min_buckets) |> min(@default_max_buckets)}
+  end
+
   defp plan(param, from_ms, to_ms, opts) do
-    max_raw = Keyword.get(opts, :max_raw, @default_max_raw)
-    max_buckets = Keyword.get(opts, :max_buckets, @default_max_buckets)
+    {default_raw, default_buckets} = limits(param)
+    max_raw = Keyword.get(opts, :max_raw, default_raw)
+    max_buckets = Keyword.get(opts, :max_buckets, default_buckets)
     col = column(param)
 
     case bounds(col, param.id, from_ms, to_ms) do
@@ -157,61 +190,227 @@ defmodule SecantService.PlotDB.History do
   end
 
   defp raw(col, id, from, to) do
-    rows =
-      Repo.all(
-        from v in readings(col, id, from, to),
-          order_by: v.timestamp,
-          select: [v.timestamp, field(v, ^col)]
-      )
-
-    {timestamps, values} = rows |> Enum.map(&point/1) |> Enum.unzip()
-    %{values: values, timestamps: timestamps, aggregated: false, bucket_ms: nil}
+    from(v in readings(col, id, from, to),
+      order_by: v.timestamp,
+      select: [v.timestamp, field(v, ^col)]
+    )
+    |> Repo.all()
+    |> to_window(col, false, nil)
   end
 
-  # Per bucket: the first and last reading, and the readings with the lowest
-  # and highest value. `first(a, b)` is TimescaleDB's "a of the row with the
-  # smallest b", so `first("timestamp", value)` is when the minimum occurred.
-  defp bucketed(col, id, from, to, bucket_ms) do
+  # -- thinning ------------------------------------------------------------------
+
+  defp bucketed(param, col, from, to, bucket_ms) do
+    base = readings(col, param.id, from, to)
     width = %Postgrex.Interval{microsecs: bucket_ms * 1000}
+    channels = Channels.from_datainfo(param.datainfo)
 
-    rows =
-      Repo.all(
-        from v in readings(col, id, from, to),
-          group_by: fragment("time_bucket(?::interval, ?)", ^width, v.timestamp),
-          order_by: min(v.timestamp),
-          select: [
-            min(v.timestamp),
-            fragment("first(?, ?)", field(v, ^col), v.timestamp),
-            fragment("first(?, ?)", v.timestamp, field(v, ^col)),
-            min(field(v, ^col)),
-            fragment("last(?, ?)", v.timestamp, field(v, ^col)),
-            max(field(v, ^col)),
-            max(v.timestamp),
-            fragment("last(?, ?)", field(v, ^col), v.timestamp)
-          ]
-      )
+    # a single value in its own column picks the bucket ends in the same
+    # pass as its extremes; anything else needs one pass for them
+    {queries, ends?} =
+      case channels do
+        [%Channels{source: {:column, _}, kind: kind, picker: :extremes} = channel]
+        when kind in [:number, :state] ->
+          {[extremes(base, width, channel, true)], true}
 
+        _ ->
+          {Enum.flat_map(channels, &channel_picks(base, width, &1)), false}
+      end
+
+    picks =
+      if ends?,
+        do: union_all_of(queries),
+        else: union_all_of([bucket_ends(base, width) | queries])
+
+    # the id is the last element of every pick key
+    from(v in readings(col, param.id, from, to),
+      where:
+        fragment(
+          """
+          ? = ANY(ARRAY(
+            SELECT k[array_upper(k, 1)]::bigint
+            FROM picks, LATERAL (VALUES (first), (last), (lo), (hi)) AS ks(k)
+            WHERE k IS NOT NULL))
+          """,
+          v.id
+        ),
+      order_by: v.timestamp,
+      select: [v.timestamp, field(v, ^col)]
+    )
+    |> with_cte("picks", as: ^picks)
+    |> Repo.all()
+    |> to_window(col, true, bucket_ms)
+  end
+
+  defp union_all_of([first | rest]), do: Enum.reduce(rest, first, &union_all(&2, ^&1))
+
+  # Each pick query returns `%{first:, last:, lo:, hi:}`, keys of the
+  # readings it picks in a group, or NULL. A key is `[seconds since epoch,
+  # id]` to pick by time and `[value, seconds since epoch, id]` to pick by
+  # value: the smallest and largest key of a group are its first and last
+  # reading, or the ones with the lowest and highest value, ties going to
+  # the earliest (latest) reading. Float8 arrays, unlike row values, can be
+  # combined across parallel workers; they hold ids exactly (below 2^53) and
+  # tell timestamps 1 µs apart. `date_part` keeps the seconds a float8;
+  # `extract` would compute them as numeric, at twice the cost of the whole
+  # query.
+
+  # every bucket's first and last reading, so the time axis keeps its extent
+  # and a held value (a state, a heatmap row) ends where it really ended
+  defp bucket_ends(base, width) do
+    from v in base,
+      group_by: fragment("time_bucket(?::interval, ?)", ^width, v.timestamp),
+      select: %{
+        first: fragment("min(ARRAY[date_part('epoch', ?), ?::float8])", v.timestamp, v.id),
+        last: fragment("max(ARRAY[date_part('epoch', ?), ?::float8])", v.timestamp, v.id),
+        lo: fragment("NULL::float8[]"),
+        hi: fragment("NULL::float8[]")
+      }
+  end
+
+  defp channel_picks(_base, _width, %Channels{picker: :first_last}), do: []
+
+  defp channel_picks(base, width, %Channels{picker: :extremes} = channel),
+    do: [extremes(base, width, channel, false)]
+
+  # the first reading of each value
+  defp channel_picks(base, width, %Channels{picker: :each_state} = channel) do
+    values = channel_values(base, width, channel)
+
+    query =
+      from c in subquery(values),
+        where: not is_nil(c.v),
+        group_by: c.v,
+        select: %{
+          first: fragment("min(ARRAY[?, ?::float8])", c.t, c.id),
+          last: fragment("NULL::float8[]"),
+          lo: fragment("NULL::float8[]"),
+          hi: fragment("NULL::float8[]")
+        }
+
+    [group_per_element(query, channel)]
+  end
+
+  # the readings with the lowest and the highest value, and with `ends?`
+  # also the first and last
+  defp extremes(base, width, channel, ends?) do
+    values = channel_values(base, width, channel)
+
+    query =
+      from c in subquery(values),
+        where: not is_nil(c.v),
+        select: %{
+          lo: fragment("min(ARRAY[?, ?, ?::float8])", c.v, c.t, c.id),
+          hi: fragment("max(ARRAY[?, ?, ?::float8])", c.v, c.t, c.id)
+        }
+
+    query =
+      if ends? do
+        select_merge(query, [c], %{
+          first: fragment("min(ARRAY[?, ?::float8])", c.t, c.id),
+          last: fragment("max(ARRAY[?, ?::float8])", c.t, c.id)
+        })
+      else
+        select_merge(query, [c], %{
+          first: fragment("NULL::float8[]"),
+          last: fragment("NULL::float8[]")
+        })
+      end
+
+    group_per_element(query, channel)
+  end
+
+  defp group_per_element(query, %Channels{per_element?: true}),
+    do: group_by(query, [c], [c.b, c.i])
+
+  defp group_per_element(query, _channel), do: group_by(query, [c], c.b)
+
+  # One row per value of the channel: `%{id, t, b, i, v}` with the reading's
+  # id and seconds since epoch, its bucket, the array index (0 for a single value) and
+  # the value.
+  defp channel_values(base, width, %Channels{kind: kind, source: source}) do
+    query =
+      from v in base,
+        select: %{
+          id: v.id,
+          t: fragment("date_part('epoch', ?)", v.timestamp),
+          b: fragment("time_bucket(?::interval, ?)", ^width, v.timestamp)
+        }
+
+    values(query, kind, source)
+  end
+
+  # Every value is a float8: enum states are integers, and the pick keys
+  # are float8 arrays.
+  defp values(query, kind, {:column, col}) when kind in [:number, :state],
+    do: select_merge(query, [v], %{i: 0, v: fragment("?::float8", field(v, ^col))})
+
+  defp values(query, kind, {:json, path}) when kind in [:number, :state] do
+    select_merge(query, [v], %{
+      i: 0,
+      v:
+        fragment(
+          "CASE WHEN jsonb_typeof(? #> ?) = 'number' THEN (? #>> ?)::float8 END",
+          v.value_json,
+          type(^path, {:array, :string}),
+          v.value_json,
+          type(^path, {:array, :string})
+        )
+    })
+  end
+
+  defp values(query, :number_array, {:column, col}) do
+    from v in query,
+      cross_lateral_join:
+        e in fragment(
+          "SELECT x.v::float8 AS v, x.i FROM unnest(?) WITH ORDINALITY AS x(v, i)",
+          field(v, ^col)
+        ),
+      select_merge: %{i: e.i, v: e.v}
+  end
+
+  defp values(query, :number_array, {:json, path}) do
+    from v in query,
+      cross_lateral_join:
+        e in fragment(
+          """
+          SELECT CASE WHEN jsonb_typeof(x.e) = 'number' THEN (x.e #>> '{}')::float8 END AS v, x.i
+          FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(? #> ?) = 'array' THEN ? #> ? ELSE '[]'::jsonb END
+          ) WITH ORDINALITY AS x(e, i)
+          """,
+          v.value_json,
+          type(^path, {:array, :string}),
+          v.value_json,
+          type(^path, {:array, :string})
+        ),
+      select_merge: %{i: e.i, v: e.v}
+  end
+
+  # -- decoding --------------------------------------------------------------------
+
+  defp to_window(rows, col, aggregated, bucket_ms) do
     {timestamps, values} =
       rows
-      |> Enum.flat_map(fn row ->
-        row
-        |> Enum.chunk_every(2)
-        |> Enum.map(&point/1)
-        # a bucket's first/last reading is often also its lowest/highest
-        |> Enum.uniq_by(&elem(&1, 0))
-        |> Enum.sort_by(&elem(&1, 0))
-      end)
+      |> Enum.map(fn [ts, value] -> {to_ms(ts), decode(col, value)} end)
       |> Enum.unzip()
 
-    %{values: values, timestamps: timestamps, aggregated: true, bucket_ms: bucket_ms}
+    %{values: values, timestamps: timestamps, aggregated: aggregated, bucket_ms: bucket_ms}
   end
 
-  defp point([%NaiveDateTime{} = ts, value]) do
-    ms = ts |> DateTime.from_naive!("Etc/UTC") |> DateTime.to_unix(:millisecond)
-    {ms, number(value)}
-  end
+  defp to_ms(%NaiveDateTime{} = ts),
+    do: ts |> DateTime.from_naive!("Etc/UTC") |> DateTime.to_unix(:millisecond)
+
+  # as `Storage.raw_value/1` reads a stored value back
+  defp decode(:value_json, %{"type" => _, "json" => text}) when is_binary(text),
+    do: Jason.decode!(text)
+
+  defp decode(:value_json, %{"value" => value}), do: value
+  defp decode(:value_json, value), do: value
+  defp decode(_col, values) when is_list(values), do: Enum.map(values, &number/1)
+  defp decode(_col, value), do: number(value)
 
   # NaN and infinities (Postgrex returns them as atoms) can't be plotted
-  defp number(value) when is_number(value), do: value
+  defp number(value) when is_number(value) or is_boolean(value), do: value
   defp number(_nan_or_infinity), do: nil
 end

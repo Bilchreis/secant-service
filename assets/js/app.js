@@ -259,7 +259,7 @@ Hooks.EChartsChart = {
     // Register handlers immediately — server may send data before rAF fires (eager push)
     this.handleEvent(`echarts-data-${this.el.id}`, ({ option }) => {
       const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, _windowFetch, ...echartsOption } = option;
-      // historical numeric plots: the server thins out long recordings and
+      // historical plots: the server thins out long recordings and
       // sends more detail for the window the chart is zoomed to
       this._windowFetch = !!_windowFetch;
       this._resolution = _windowFetch || null;
@@ -379,13 +379,16 @@ Hooks.EChartsChart = {
     this._toggleRangeslider = (e) => {
       if (e.target.dataset.chartId !== this.el.id || !this._chart) return;
       const currentOption = this._chart.getOption();
+      // all time axes of a multi-grid (struct) plot move together
+      const axes = this._xAxisCount > 1 ? [...Array(this._xAxisCount).keys()] : 0;
       const zooms = (currentOption.dataZoom || [])
         .filter(Boolean)
-        .map((dz) => ({ type: dz.type, xAxisIndex: 0 }));
+        .map((dz) => ({ type: dz.type, xAxisIndex: axes, filterMode: dz.filterMode }));
       const hasSlider = zooms.some((dz) => dz.type === "slider");
+      const filterMode = zooms.length ? zooms[0].filterMode : undefined;
       const nextZooms = hasSlider
         ? zooms.filter((dz) => dz.type !== "slider")
-        : [...zooms, { type: "slider", xAxisIndex: 0, bottom: 8 }];
+        : [...zooms, { type: "slider", xAxisIndex: axes, bottom: 8, filterMode }];
       const update = { dataZoom: nextZooms };
       // make room below the time axis so the slider doesn't cover its labels
       if (this._xAxisCount === 1) update.grid = { bottom: hasSlider ? 40 : 80 };
@@ -436,7 +439,7 @@ Hooks.EChartsChart = {
     return chart;
   },
 
-  // --- Detail on zoom (historical numeric plots) ---------------------------
+  // --- Detail on zoom (historical plots) -----------------------------------
   // The first load covers the whole recording, thinned out by the server
   // (`_overview`). After a zoom or pan the visible window is requested again;
   // the reply (`_detail`) replaces the overview inside that window, so the
@@ -522,13 +525,16 @@ Hooks.EChartsChart = {
           ]
         : overview;
     });
-    this._chart.setOption({
-      series: Object.keys(this._seriesData).map((idx) => ({ data: this._drawnData(idx) })),
-    });
+    // array plots in lines mode draw one series per element of series 0
+    const series =
+      this._isArrayPlot() && this._arrayMode === "lines"
+        ? this._splitArray(this._seriesData[0] || []).map((data) => ({ data }))
+        : Object.keys(this._seriesData).map((idx) => ({ data: this._drawnData(idx) }));
+    this._chart.setOption({ series });
     this._renderResolution();
   },
 
-  // "min/max per 15 min" while readings are thinned out, "every reading" once
+  // "thinned · 15 min intervals" while readings are thinned out, "every reading" once
   // the zoomed window shows all of them
   _renderResolution() {
     const el = document.getElementById(`resolution-${this.el.id}`);
@@ -538,8 +544,8 @@ Hooks.EChartsChart = {
       el.textContent = "";
       el.removeAttribute("title");
     } else if (r.aggregated) {
-      el.textContent = `min/max per ${formatBucket(r.bucket_ms)}`;
-      el.title = "Long recordings are thinned out: each interval shows its first, last, lowest and highest reading. Zoom in to see every reading.";
+      el.textContent = `thinned · ${formatBucket(r.bucket_ms)} intervals`;
+      el.title = "Long recordings are thinned out: each interval shows its first and last reading, and the readings with the lowest and highest values and with each state. Zoom in to see every reading.";
     } else {
       el.textContent = "every reading";
       el.title = "Every recorded reading in this time range is shown.";
@@ -1017,7 +1023,13 @@ Hooks.EChartsChart = {
   _redrawArray() {
     if (!this._chart || !this._lastOption) return;
     this._heatCache = {};
+    // rebuilding the chart resets its zoom: keep the window it shows
+    const shown = this._windowFetch ? this._visibleWindow() : null;
+    const full = this._overviewExtent();
     this._chart.setOption(this._themed(this._composeOption(this._lastOption)), { notMerge: true });
+    if (shown && full && (shown[0] > full[0] || shown[1] < full[1])) {
+      this._chart.dispatchAction({ type: "dataZoom", startValue: shown[0], endValue: shown[1] });
+    }
     // keep the live window where it is until the next flush moves it
     this._dataDirty = true;
     this._flushBuffer();

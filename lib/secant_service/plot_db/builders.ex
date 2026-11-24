@@ -19,8 +19,8 @@ defmodule SecantService.PlotDB.Builders do
   # Data fetching
   # ---------------------------------------------------------------------------
 
-  # The whole recording: from the session start on, numeric parameters
-  # thinned out in the database (see `History`). The chart asks for more
+  # The whole recording: from the session start on, thinned out in the
+  # database (see `History`) for every type the plots draw. The chart asks for more
   # detail when it is zoomed in.
   #
   # Readings carry the node's timestamp, which for a parameter that has not
@@ -33,7 +33,7 @@ defmodule SecantService.PlotDB.Builders do
     from_ms = plot_start_ms(param)
 
     {values, timestamps} =
-      if History.numeric?(param) do
+      if History.thinnable?(param) do
         %{values: values, timestamps: timestamps} =
           SecNodes.history_window!(param.id, from_ms, nil)
 
@@ -194,6 +194,40 @@ defmodule SecantService.PlotDB.Builders do
 
   defp stringify_keys(list) when is_list(list), do: Enum.map(list, &stringify_keys/1)
   defp stringify_keys(value), do: value
+
+  @doc """
+  Zoom for a historical plot: mouse-wheel / drag zoom on its time axes, a
+  box-zoom tool and a reset. `_windowFetch` makes the chart ask for the
+  readings of the window it is zoomed to (see `History`); `PlotDB.init/2`
+  replaces it with the resolution of the first load.
+
+  Options: `x_axes:` the number of time axes zoomed together (the grids of a
+  struct plot), `toolbox_right:` where the tools sit, in pixels from the
+  right edge, and `keep_outside: true` for plots whose readings hold until
+  the next one (heatmaps, enum bands): ECharts then keeps the readings
+  outside the zoomed window, so the one before it still reaches into it.
+  """
+  def history_zoom(option, opts \\ []) do
+    axes =
+      case Keyword.get(opts, :x_axes, 1) do
+        1 -> 0
+        n -> Enum.to_list(0..(n - 1))
+      end
+
+    filter = if Keyword.get(opts, :keep_outside, false), do: "none", else: "filter"
+
+    option
+    |> Map.put(:_windowFetch, %{aggregated: false, bucket_ms: nil})
+    |> Map.put(:dataZoom, [%{type: "inside", xAxisIndex: axes, filterMode: filter}])
+    |> Map.put(:toolbox, %{
+      right: Keyword.get(opts, :toolbox_right, 8),
+      top: 0,
+      feature: %{
+        dataZoom: %{xAxisIndex: axes, yAxisIndex: "none", filterMode: filter},
+        restore: %{}
+      }
+    })
+  end
 
   # ---------------------------------------------------------------------------
   # Range helpers — shared by all dtype option assemblers

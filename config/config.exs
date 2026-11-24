@@ -113,6 +113,20 @@ config :secant_service, :plot_db,
   ],
   default_active_range_index: 1
 
+# How long historical recordings are thinned out, per SECoP type of the
+# plotted values (an array's elements, a struct's fields): which readings
+# each time bucket keeps besides its first and last. `:extremes` keeps the
+# readings with the lowest and highest value, `:each_state` the first
+# reading of each value, `:first_last` nothing more. See
+# `SecantService.PlotDB.History.Channels`.
+config :secant_service, SecantService.PlotDB.History,
+  pickers: %{
+    "double" => :extremes,
+    "scaled" => :extremes,
+    "int" => :extremes,
+    "enum" => :each_state
+  }
+
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.5",

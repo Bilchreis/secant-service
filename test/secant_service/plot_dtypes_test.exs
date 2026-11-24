@@ -152,4 +152,58 @@ defmodule SecantService.PlotDB.DTypesTest do
       assert %{data: [[10, 1.0], [11, 2.0]]} = Enum.find(updates, &(&1.seriesIndex == t_index))
     end
   end
+
+  describe "historical plots" do
+    @array %{"type" => "array", "maxlen" => 2, "members" => %{"type" => "double"}}
+
+    defp historical_options do
+      %{
+        scalar: Scalar.timeseries_option([], "K", :historical),
+        enum: EnumDType.enum_timeseries_option([], @enum["members"], "value", :historical),
+        array: ArrayHeatmap.heatmap_option([], 2, nil, :historical),
+        struct:
+          Struct.build_struct_option(
+            "p",
+            [],
+            [],
+            %{"type" => "struct", "members" => %{"t" => @double, "a" => @array}},
+            :historical
+          )
+      }
+    end
+
+    test "every type zooms and asks for the readings of the zoomed window" do
+      for {type, option} <- historical_options() do
+        assert %{aggregated: false, bucket_ms: nil} = option[:_windowFetch], "#{type}"
+        assert [%{type: "inside"}] = option.dataZoom, "#{type}"
+        assert %{feature: %{dataZoom: _, restore: _}} = option.toolbox, "#{type}"
+      end
+    end
+
+    test "a struct zooms all its time axes together" do
+      %{struct: option} = historical_options()
+
+      assert [%{xAxisIndex: [0, 1]}] = option.dataZoom
+      assert option.toolbox.feature.dataZoom.xAxisIndex == [0, 1]
+    end
+
+    test "plots of held values keep the readings outside the zoomed window" do
+      options = historical_options()
+
+      for type <- [:enum, :array, :struct] do
+        assert [%{filterMode: "none"}] = options[type].dataZoom, "#{type}"
+      end
+
+      assert [%{filterMode: "filter"}] = options.scalar.dataZoom
+    end
+
+    test "live plots do not fetch windows" do
+      refute Map.has_key?(ArrayHeatmap.heatmap_option([], 2, nil, :live), :_windowFetch)
+
+      refute Map.has_key?(
+               EnumDType.enum_timeseries_option([], @enum["members"], "v", :live),
+               :dataZoom
+             )
+    end
+  end
 end

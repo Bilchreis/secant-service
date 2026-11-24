@@ -425,7 +425,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
       |> Map.put(:_rangeButtons, buttons)
       |> Map.put(:_activeButton, active)
     else
-      option
+      Builders.history_zoom(option, x_axes: length(option.xAxis), keep_outside: true)
     end
   end
 

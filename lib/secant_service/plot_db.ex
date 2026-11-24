@@ -55,7 +55,7 @@ defmodule SecantService.PlotDB do
     secop_obj
     |> param_list()
     |> Enum.map(&resolve_param(secop_obj, &1))
-    |> Enum.filter(&History.numeric?/1)
+    |> Enum.filter(&History.thinnable?/1)
   end
 
   defp resolve_param(%Parameter{} = param, _name), do: param

@@ -132,8 +132,14 @@ defmodule SecantService.PlotDB.DTypes.Enum do
           Map.put(base, :_enumSeriesY, series_y)
       end
 
+    # needed to turn later readings (live, or a zoomed window) into points
+    base = Map.put(base, :_enumMembers, int_to_info)
+
     if mode == :historical do
+      # tools left of the legend, plot below them
       base
+      |> Map.update!(:grid, &%{&1 | top: 28})
+      |> Builders.history_zoom(toolbox_right: 168, keep_outside: true)
     else
       {x_min, x_max, buttons, active} = Builders.default_live_range_ms()
 
@@ -141,7 +147,6 @@ defmodule SecantService.PlotDB.DTypes.Enum do
       |> Map.put(:xAxis, %{type: "time", min: x_min, max: x_max})
       |> Map.put(:_rangeButtons, buttons)
       |> Map.put(:_activeButton, active)
-      |> Map.put(:_enumMembers, int_to_info)
     end
   end
 

@@ -115,7 +115,10 @@ defmodule SecantService.PlotDB.DTypes.ArrayHeatmap do
     }
 
     if mode == :historical do
+      # plot below the zoom tools
       base
+      |> Map.update!(:grid, &%{&1 | top: 28})
+      |> Builders.history_zoom(keep_outside: true)
     else
       {x_min, x_max, buttons, active} = Builders.default_live_range_ms()
 
