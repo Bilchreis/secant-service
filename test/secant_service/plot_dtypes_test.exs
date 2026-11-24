@@ -153,6 +153,51 @@ defmodule SecantService.PlotDB.DTypesTest do
     end
   end
 
+  describe "Struct with array fields" do
+    @mfc %{
+      "type" => "struct",
+      "members" => %{
+        "flow" => @double,
+        "mix" => %{"type" => "array", "maxlen" => 2, "members" => %{"type" => "double"}}
+      }
+    }
+
+    defp mfc_option do
+      Struct.build_struct_option(
+        "value",
+        [1, 2],
+        [%{"flow" => 1.0, "mix" => [30.0, 70.0]}, %{"flow" => 2.0, "mix" => [40.0, 60.0]}],
+        @mfc,
+        :historical,
+        target: {[1], [%{"flow" => 0.0, "mix" => [100.0, 0.0]}]}
+      )
+    end
+
+    test "value and target of an array share each heatmap cell, value on top" do
+      option = mfc_option()
+
+      assert [value, target] = Enum.filter(option.series, & &1[:_arrayHeat])
+      assert %{name: "value.mix", _heatHalf: "upper", _arrayLen: 2} = value
+      assert %{name: "target.mix", _heatHalf: "lower", _targetArray: true} = target
+      assert value.yAxisIndex == target.yAxisIndex
+    end
+
+    test "the colour scale spans the values of value and target" do
+      assert [%{min: +0.0, max: 100.0}] = mfc_option().visualMap
+    end
+
+    test "updates of the target's array go to the target heatmap" do
+      option = mfc_option()
+      target_idx = Enum.find_index(option.series, &(&1[:name] == "target.mix"))
+      value_idx = Enum.find_index(option.series, &(&1[:name] == "value.mix"))
+
+      assert [%{seriesIndex: ^target_idx, data: [[5, 0, 1.0], [5, 1, 2.0]]}] =
+               option
+               |> Struct.series_updates([{%{"mix" => [1.0, 2.0]}, 5}], "target")
+               |> Enum.filter(&(&1.seriesIndex in [target_idx, value_idx]))
+    end
+  end
+
   describe "historical plots" do
     @array %{"type" => "array", "maxlen" => 2, "members" => %{"type" => "double"}}
 

@@ -62,7 +62,8 @@ defmodule SecantService.PlotDB.DTypes.Struct do
       updates = dtype_mod.series_updates(option, field_datapoints, field_series_name)
 
       if dtype_mod == ArrayHeatmap do
-        base_idx = Map.get(field_series_indices, field, 0)
+        # by series name: a drivable's value and target each have a heatmap
+        base_idx = Map.get(field_series_indices, field_series_name, 0)
         Enum.map(updates, fn u -> %{u | seriesIndex: base_idx + Map.get(u, :seriesIndex, 0)} end)
       else
         updates
@@ -191,8 +192,16 @@ defmodule SecantService.PlotDB.DTypes.Struct do
         unit = Map.get(sub_datainfo, "unit")
         text = if unit && unit != "", do: "#{field} (#{unit})", else: field
 
+        # an array with a setpoint: value and target share each heatmap
+        # cell; as lines (`_linesText`), the target is dashed
+        {text, lines_text} =
+          if target && DTypePlot.for_datainfo(sub_datainfo) == ArrayHeatmap,
+            do: {"#{text}  ·  upper half value, lower half target", "#{text}  ·  target dashed"},
+            else: {text, nil}
+
         %{
           text: text,
+          _linesText: lines_text,
           top: "#{Float.round(title_top, 1)}%",
           left: 91,
           padding: [2, 5],
@@ -205,7 +214,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
     #   sc                        — total series count so far (for seriesIndex)
     #   vms                       — visualMap entries for heatmap sub-fields
     #   ln                        — legend names for scalar sub-fields only
-    #   fsi                       — {field => series_start_index} for ArrayHeatmap seriesIndex fix
+    #   fsi                       — {series name => series index}, to route array updates
     #   sci                       — scalar color index (independent of heatmap series count)
     #   sr                        — scalar region {min_top_pct, max_bottom_pct} for legend position
     init = {[], [], [], [], [], %{}, %{}, 0, [], [], %{}, 0, {100.0, 0.0}}
@@ -262,9 +271,14 @@ defmodule SecantService.PlotDB.DTypes.Struct do
                     []
                 end
 
+              array_len =
+                max(
+                  sub_datainfo["minlen"] || sub_datainfo["maxlen"] || 0,
+                  ArrayHeatmap.max_len(field_vals)
+                )
+
               y_opts =
                 if dtype_mod == ArrayHeatmap do
-                  array_len = sub_datainfo["minlen"] || sub_datainfo["maxlen"] || 0
                   ArrayHeatmap.index_axis(array_len) |> Map.drop([:name, :nameGap])
                 else
                   if is_enum,
@@ -272,7 +286,12 @@ defmodule SecantService.PlotDB.DTypes.Struct do
                     else: %{type: "value", splitNumber: 3, axisLabel: %{hideOverlap: true}}
                 end
 
-              {raw ++ extra, y_opts, %{}, %{}}
+              series =
+                if dtype_mod == ArrayHeatmap,
+                  do: array_series(raw, extra, val_series_name, "target.#{field}", array_len),
+                  else: raw ++ extra
+
+              {series, y_opts, %{}, %{}}
           end
 
         indexed_series =
@@ -307,6 +326,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
 
             [
               ArrayHeatmap.heatmap_visual_map(vm_indices, top, "#{Float.round(row_height, 1)}%")
+              |> Map.merge(heat_range(indexed_series))
               |> Map.put(:_row, idx)
               | vms
             ]
@@ -363,7 +383,9 @@ defmodule SecantService.PlotDB.DTypes.Struct do
           sc + series_count,
           new_vms,
           new_ln,
-          Map.put(fsi, field, sc),
+          indexed_series
+          |> Enum.with_index(sc)
+          |> Enum.reduce(fsi, fn {s, i}, acc -> Map.put(acc, s[:name], i) end),
           new_sci,
           new_sr
         }
@@ -430,6 +452,41 @@ defmodule SecantService.PlotDB.DTypes.Struct do
   end
 
   # ---------------------------------------------------------------------------
+
+  # The heatmap series of an array field, named like the other series so
+  # updates find them, with their element count for the lines view. With a
+  # setpoint, value and target share each cell: value in the upper half,
+  # target in the lower one (see `_arrayHeat` in app.js).
+  defp array_series(value, [], value_name, _target_name, len),
+    do: Enum.map(value, &Map.merge(&1, %{name: value_name, _arrayLen: len}))
+
+  defp array_series(value, target, value_name, target_name, len) do
+    Enum.map(value, &Map.merge(&1, %{name: value_name, _arrayLen: len, _heatHalf: "upper"})) ++
+      Enum.map(
+        target,
+        &Map.merge(&1, %{
+          name: target_name,
+          _arrayLen: len,
+          _heatHalf: "lower",
+          _targetArray: true
+        })
+      )
+  end
+
+  # colour scale of a heatmap row: the range of its values (ECharts would
+  # otherwise assume 0 … 100)
+  defp heat_range(series) do
+    values = for %{data: data} <- series, [_, _, v] <- data, is_number(v), do: v
+
+    case values do
+      [] ->
+        %{}
+
+      _ ->
+        {lo, hi} = Enum.min_max(values)
+        %{min: lo, max: if(hi == lo, do: lo + 1, else: hi)}
+    end
+  end
 
   defp plottable_fields(datainfo) do
     members = datainfo["members"] || %{}

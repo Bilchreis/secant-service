@@ -293,7 +293,7 @@ Hooks.EChartsChart = {
       });
       if (this._windowFetch) this._overview = { ...this._seriesData };
       // Seed min/max from initial data and bake into the option (visualMap present = heatmap)
-      if (echartsOption.visualMap) {
+      if (echartsOption.visualMap && this._arrayLen != null) {
         for (const p of (this._seriesData[0] || [])) {
           const v = p[2];
           if (this._visualMapMin === null || v < this._visualMapMin) this._visualMapMin = v;
@@ -525,12 +525,8 @@ Hooks.EChartsChart = {
           ]
         : overview;
     });
-    // array plots in lines mode draw one series per element of series 0
-    const series =
-      this._isArrayPlot() && this._arrayMode === "lines"
-        ? this._splitArray(this._seriesData[0] || []).map((data) => ({ data }))
-        : Object.keys(this._seriesData).map((idx) => ({ data: this._drawnData(idx) }));
-    this._chart.setOption({ series });
+    // in lines mode an array buffer is drawn as one series per element
+    this._chart.setOption({ series: this._chartSeriesData().map((data) => ({ data })) });
     this._renderResolution();
   },
 
@@ -592,7 +588,7 @@ Hooks.EChartsChart = {
       if (s && s._enumBand) return this._enumBand(s, live);
       if (s && s._arrayHeat) return this._arrayHeat(s, live, i);
       if (s && s._target) {
-        this._targetIdx.add(String(i));
+        this._targetIdx.add(String(s._src != null ? s._src : i));
         const color = muted ? { lineStyle: { ...(s.lineStyle || {}), color: muted }, itemStyle: { ...(s.itemStyle || {}), color: muted } } : {};
         return { ...s, ...color, data: this._heldTarget(s.data || [], option.series) };
       }
@@ -684,6 +680,11 @@ Hooks.EChartsChart = {
         const ends = times.map((t, k) => (k + 1 < g ? times[k + 1] : live ? Math.max(Date.now(), t) : t + lastSpan));
 
         const rowH = Math.abs(api.size([0, 1])[1]) || 1;
+        // value and target of a drivable's array share each row: value in
+        // the upper half, target in the lower one
+        const half = series._heatHalf;
+        const cellH = half ? rowH / 2 : rowH;
+        const cellTop = half === "lower" ? 0 : -rowH / 2;
         for (let k = 0; k < g; k++) {
           const x0 = api.coord([times[k], 0])[0];
           const x1 = api.coord([ends[k], 0])[0];
@@ -696,11 +697,12 @@ Hooks.EChartsChart = {
             if (!color) continue;
             ctx.fillStyle = color;
             const y = api.coord([times[k], api.value(1, j)])[1];
-            ctx.fillRect(x0, y - rowH / 2, w, rowH + 0.5);
+            ctx.fillRect(x0, y + cellTop, w, cellH + 0.5);
           }
         }
 
-        this._heatCache[seriesIndex] = { times, ends, starts, n, api };
+        const label = half ? (series._targetArray ? "target" : "value") : null;
+        this._heatCache[seriesIndex] = { times, ends, starts, n, api, half, label };
         return {
           type: "image",
           silent: true,
@@ -749,7 +751,7 @@ Hooks.EChartsChart = {
       const time = new Date(hit.t).toLocaleTimeString([], { hour12: false });
       const unit = this._arrayUnit ? ` ${this._arrayUnit}` : "";
       const value = typeof hit.v === "number" ? formatAxisNumber(hit.v) : hit.v;
-      this._heatTip.textContent = `${time}  [${hit.i}]  ${value}${unit}`;
+      this._heatTip.textContent = `${time}  [${hit.i}]  ${value}${unit}${hit.label ? `  ${hit.label}` : ""}`;
       this._heatTip.style.display = "";
       const left = Math.min(e.offsetX + 12, this.el.clientWidth - this._heatTip.offsetWidth - 4);
       this._heatTip.style.left = `${Math.max(0, left)}px`;
@@ -765,6 +767,9 @@ Hooks.EChartsChart = {
       if (!c || c.times.length === 0 || !this._chart.containPixel({ seriesIndex }, [x, y])) continue;
       const [t, yv] = this._chart.convertFromPixel({ seriesIndex }, [x, y]);
       const i = Math.round(yv);
+      // indices grow upwards: above the row's middle is the upper half
+      if (c.half === "upper" && yv < i) continue;
+      if (c.half === "lower" && yv > i) continue;
       // last reading at or before t
       let lo = 0;
       let hi = c.times.length - 1;
@@ -777,7 +782,7 @@ Hooks.EChartsChart = {
       if (t > c.ends[lo]) return null;
       const stop = lo + 1 < c.starts.length ? c.starts[lo + 1] : c.n;
       for (let j = c.starts[lo]; j < stop; j++) {
-        if (c.api.value(1, j) === i) return { t: c.times[lo], i, v: c.api.value(2, j) };
+        if (c.api.value(1, j) === i) return { t: c.times[lo], i, v: c.api.value(2, j), label: c.label };
       }
     }
     return null;
@@ -909,6 +914,8 @@ Hooks.EChartsChart = {
   // The option to draw: the server's heatmap option, or for "lines" one line
   // per array element built from the same buffered points.
   _composeOption(option) {
+    // which buffer each drawn series shows; null = one series per buffer
+    this._seriesMap = null;
     if (this._arrayLatest) {
       const css = getComputedStyle(document.documentElement);
       const unit = this._arrayLatest.unit ? ` ${escHtml(this._arrayLatest.unit)}` : "";
@@ -936,7 +943,7 @@ Hooks.EChartsChart = {
         },
       };
     }
-    if (!this._isArrayPlot()) return option;
+    if (!this._isArrayPlot()) return this._hasArrayFields() ? this._composeStruct(option) : option;
     const flat = this._seriesData[0] || [];
     if (this._arrayMode !== "lines") {
       const series = (option.series || []).map((s, i) => (i === 0 ? { ...s, data: flat } : s));
@@ -946,6 +953,7 @@ Hooks.EChartsChart = {
     const n = this._arrayLen || 0;
     const unit = this._arrayUnit;
     this._linesCount = n;
+    this._seriesMap = Array.from({ length: n }, (_, k) => ({ src: 0, elem: k }));
     return {
       ...rest,
       grid: { top: 12, bottom: 44, left: 76, right: 24 },
@@ -987,9 +995,87 @@ Hooks.EChartsChart = {
     };
   },
 
+  // A struct plot's array fields, as heatmap rows or, in "lines" mode, one
+  // line per element on the same row (a drivable's target dashed). The
+  // buffered data stays one series per field; `_seriesMap` says which
+  // buffer and element each drawn series shows.
+  _composeStruct(option) {
+    const lines = this._arrayMode === "lines";
+    const series = [];
+    const map = [];
+    const lineAxes = new Set();
+    (option.series || []).forEach((s, i) => {
+      if (lines && s && s._arrayHeat) {
+        const n = s._arrayLen || 0;
+        lineAxes.add(s.yAxisIndex || 0);
+        for (let k = 0; k < n; k++) {
+          series.push({
+            name: `${s.name}[${k}]`,
+            type: "line",
+            xAxisIndex: s.xAxisIndex,
+            yAxisIndex: s.yAxisIndex,
+            showSymbol: false,
+            symbol: "none",
+            sampling: "lttb",
+            color: arrayLineColor(k, n),
+            lineStyle: { width: n > 20 ? 1 : 1.5, type: s._targetArray ? [6, 4] : "solid" },
+            animation: false,
+          });
+          map.push({ src: i, elem: k });
+        }
+      } else {
+        series.push({ ...s, _src: i });
+        map.push({ src: i, elem: null });
+      }
+    });
+    this._seriesMap = map;
+    const data = this._chartSeriesData();
+    const filled = series.map((s, j) => ({ ...s, data: data[j] }));
+    if (!lines) return { ...option, series: filled };
+    const { visualMap, ...rest } = option;
+    // titles that describe the heatmap halves have a lines version
+    const title = Array.isArray(option.title)
+      ? option.title.map((t) => (t && t._linesText ? { ...t, text: t._linesText } : t))
+      : option.title;
+    const yAxis = (option.yAxis || []).map((ax, j) =>
+      lineAxes.has(j)
+        ? {
+            gridIndex: ax.gridIndex,
+            type: "value",
+            scale: true,
+            splitNumber: 3,
+            axisLabel: { formatter: formatAxisNumber, hideOverlap: true },
+          }
+        : ax,
+    );
+    return { ...rest, title, yAxis, series: filled };
+  },
+
+  _hasArrayFields() {
+    return ((this._lastOption && this._lastOption.series) || []).some((s) => s && s._arrayHeat);
+  },
+
+  // The data of each drawn series, from the buffers: as buffered, or one
+  // element of an array buffer (lines mode).
+  _chartSeriesData() {
+    const map = this._seriesMap;
+    if (!map) return Object.keys(this._seriesData).map((idx) => this._drawnData(idx));
+    const split = {};
+    return map.map(({ src, elem }) => {
+      if (elem == null) return this._drawnData(src);
+      if (!split[src]) split[src] = this._splitArray(this._seriesData[src] || [], this._elementCount(src));
+      return split[src][elem] || [];
+    });
+  },
+
+  _elementCount(src) {
+    const s = this._lastOption && this._lastOption.series && this._lastOption.series[src];
+    return s && s._arrayLen != null ? s._arrayLen : this._arrayLen || 0;
+  },
+
   // [[ts, index, value], ...] → one [[ts, value], ...] list per index
-  _splitArray(flat) {
-    const n = this._arrayLen || 0;
+  _splitArray(flat, count) {
+    const n = count != null ? count : this._arrayLen || 0;
     const out = Array.from({ length: n }, () => []);
     for (const p of flat) {
       const list = out[p[1]];
@@ -1038,7 +1124,7 @@ Hooks.EChartsChart = {
   _renderArrayModeButtons() {
     const el = document.getElementById(`array-mode-${this.el.id}`);
     if (!el) return;
-    if (!this._isArrayPlot()) {
+    if (!this._isArrayPlot() && !this._hasArrayFields()) {
       el.innerHTML = "";
       return;
     }
@@ -1285,13 +1371,7 @@ Hooks.EChartsChart = {
         this._redrawArray();
         return;
       }
-      if (this._isArrayPlot() && this._arrayMode === "lines") {
-        patch.series = this._splitArray(this._seriesData[0] || []).map((data) => ({ data }));
-      } else {
-        patch.series = Object.keys(this._seriesData).map((idx) => ({
-          data: this._drawnData(idx),
-        }));
-      }
+      patch.series = this._chartSeriesData().map((data) => ({ data }));
 
       if (this._isArrayPlot() && this._arrayMode !== "lines") {
         patch.yAxis = { max: Math.max(this._arrayLen, 1) - 0.5 };
@@ -1305,8 +1385,9 @@ Hooks.EChartsChart = {
       this._dataDirty = false;
     } else if (this._targetIdx && this._targetIdx.size > 0) {
       // nothing new, but the held setpoint still has to reach "now"
-      patch.series = Object.keys(this._seriesData).map((idx) =>
-        this._targetIdx.has(idx) ? { data: this._drawnData(idx) } : {},
+      const map = this._seriesMap || Object.keys(this._seriesData).map((src) => ({ src, elem: null }));
+      patch.series = map.map(({ src, elem }) =>
+        elem == null && this._targetIdx.has(String(src)) ? { data: this._drawnData(src) } : {},
       );
     }
 
