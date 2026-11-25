@@ -56,10 +56,14 @@ defmodule SecantService.PlotDB.HistoryTest do
     test "an array length the node got wrong falls back to the default" do
       default = History.limits(%Parameter{datainfo: Map.delete(array_info(4), "maxlen")})
 
-      for len <- [100.0, "100", 0, -3, nil, 1_000_000_000] do
+      for len <- [100.0, "100", 0, -3, nil] do
         datainfo = %{array_info(4) | "maxlen" => len}
         assert History.limits(%Parameter{datainfo: datainfo}) == default, inspect(len)
       end
+
+      # a huge declared length only shrinks the budget: the safe direction
+      assert History.limits(%Parameter{datainfo: array_info(1_000_000_000)}) == {50, 50}
+      assert History.limits(%Parameter{datainfo: array_info(1200)}) < default
     end
 
     test "wide values get fewer readings and buckets than a plain number" do

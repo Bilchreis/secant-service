@@ -46,8 +46,7 @@ defmodule SecantService.PlotDB.History.Channels do
   @wide_array 16
   # elements assumed for an array whose datainfo has no maxlen
   @default_array_len 16
-  # longest declared array length believed (the plots draw one row or line
-  # per element)
+  # longest declared array length a plot draws rows or lines for
   @max_declared_len 1_000
   # values assumed for an int picked by :each_state
   @default_states 8
@@ -77,16 +76,23 @@ defmodule SecantService.PlotDB.History.Channels do
 
   @doc """
   The length an array's datainfo declares (`maxlen`, else `minlen`), or nil.
-  The datainfo comes from the node, so only a positive integer up to
-  #{@max_declared_len} counts; longer arrays still plot as long as their
-  readings are.
+  The datainfo comes from the node, so only a positive integer counts. With
+  `max:`, a longer declared length is ignored too: use that where the length
+  decides how much is drawn (one row or line per element), so a bogus huge
+  one can't make the browser build that many; the readings' own length still
+  counts there.
   """
-  def declared_length(datainfo) do
+  def declared_length(datainfo, opts \\ []) do
+    max = Keyword.get(opts, :max)
+
     Enum.find(
       [datainfo["maxlen"], datainfo["minlen"]],
-      &(is_integer(&1) and &1 > 0 and &1 <= @max_declared_len)
+      &(is_integer(&1) and &1 > 0 and (max == nil or &1 <= max))
     )
   end
+
+  @doc "Longest declared array length a plot draws rows or lines for."
+  def max_drawn_length, do: @max_declared_len
 
   @doc "Arrays wider than this are picked as a whole, not per element."
   def wide_array, do: @wide_array

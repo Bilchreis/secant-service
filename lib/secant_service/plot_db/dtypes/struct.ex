@@ -274,7 +274,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
 
               array_len =
                 max(
-                  Channels.declared_length(sub_datainfo) || 0,
+                  Channels.declared_length(sub_datainfo, max: Channels.max_drawn_length()) || 0,
                   ArrayHeatmap.max_len(field_vals)
                 )
 
