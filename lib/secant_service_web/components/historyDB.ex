@@ -27,8 +27,9 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     end
   end
 
-  # earliest time a zoomed window may start: 2000-01-01
-  @earliest_window_ms 946_684_800_000
+  # earliest time a zoomed window may start: year 0, as for the history
+  # actions (a node can stamp readings before 1970)
+  @earliest_window_ms -62_167_219_200_000
 
   @impl true
   def mount(socket) do
@@ -314,8 +315,9 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       )
       when is_number(from_ms) and is_number(to_ms) and from_ms <= to_ms do
     secop_obj = socket.assigns.secop_obj
-    # the window comes from the browser: keep it to dates the database holds
-    # (year 2000 up to a day from now), so a forged one can't crash the fetch
+    # the window comes from the browser: keep it to dates the history
+    # actions accept (year 0 up to a day from now), so a forged one can't
+    # crash the fetch
     latest = latest_window_ms()
     from_ms = from_ms |> max(@earliest_window_ms) |> min(latest)
     to_ms = to_ms |> max(from_ms) |> min(latest)
