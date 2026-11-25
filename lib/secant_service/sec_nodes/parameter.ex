@@ -16,6 +16,10 @@ defmodule SecantService.SecNodes.Parameter do
     identity_index_names module_id_name: "parameters_module_id_name_index"
   end
 
+  # latest time a history window may reach: 9999-12-31, the last date a
+  # timestamp column holds
+  @max_unix_ms 253_402_300_799_999
+
   actions do
     defaults [:read, :destroy]
 
@@ -77,8 +81,8 @@ defmodule SecantService.SecNodes.Parameter do
 
       argument :parameter_id, :integer, allow_nil?: false
       # Unix milliseconds, inclusive; nil = from the first / to the last reading
-      argument :from_ms, :integer
-      argument :to_ms, :integer
+      argument :from_ms, :integer, constraints: [min: 0, max: @max_unix_ms]
+      argument :to_ms, :integer, constraints: [min: 0, max: @max_unix_ms]
       # a window with at most this many readings is returned in full
       argument :max_raw, :integer, constraints: [min: 1, max: 50_000]
       # otherwise it is split into at most this many time buckets
@@ -91,8 +95,8 @@ defmodule SecantService.SecNodes.Parameter do
       description "How :history_window would answer (thinned out or not, bucket width), without loading the readings."
 
       argument :parameter_id, :integer, allow_nil?: false
-      argument :from_ms, :integer
-      argument :to_ms, :integer
+      argument :from_ms, :integer, constraints: [min: 0, max: @max_unix_ms]
+      argument :to_ms, :integer, constraints: [min: 0, max: @max_unix_ms]
       argument :max_raw, :integer, constraints: [min: 1, max: 50_000]
       argument :max_buckets, :integer, constraints: [min: 1, max: 5_000]
 

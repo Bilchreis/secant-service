@@ -53,6 +53,13 @@ defmodule SecantService.PlotDB.HistoryTest do
       end
     end
 
+    test "an array length the node got wrong falls back to the default" do
+      for len <- [100.0, "100", 0, -3, nil] do
+        datainfo = %{array_info(4) | "maxlen" => len}
+        assert {_, _} = History.limits(%Parameter{datainfo: datainfo}), inspect(len)
+      end
+    end
+
     test "wide values get fewer readings and buckets than a plain number" do
       number = %Parameter{datainfo: %{"type" => "double"}}
       assert History.limits(number) == {3000, 400}
@@ -241,8 +248,14 @@ defmodule SecantService.PlotDB.HistoryTest do
                SecNodes.history_window!(parameter.id, nil, nil)
     end
 
-    test "cap how many readings a caller may ask for" do
+    test "cap how many readings a caller may ask for, and when" do
       parameter = generate(parameter(datainfo: %{"type" => "double"}))
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               SecNodes.history_window(parameter.id, 1_000_000_000_000_000_000, nil)
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               SecNodes.history_resolution(parameter.id, -1, nil)
 
       assert {:error, %Ash.Error.Invalid{}} =
                SecNodes.history_window(parameter.id, nil, nil, %{max_raw: 10_000_000})
@@ -333,6 +346,9 @@ defmodule SecantService.PlotDB.HistoryTest do
         assert MapSet.subset?(MapSet.new([0, 1]), MapSet.new(bucket, &elem(&1, 1)))
       end
 
+      # each bucket's last reading stays, so the band ends in the right state
+      for bucket <- 0..59, do: assert({ms(bucket * 60 + 59), 1} in points(window))
+
       # first + last + one per state, never one per change
       assert length(window.values) <= 60 * (2 + 3)
     end
@@ -407,7 +423,7 @@ defmodule SecantService.PlotDB.HistoryTest do
       assert_raise ArgumentError, fn -> History.window(parameter, nil, nil, opts) end
     end
 
-    test "compressed chunks give the same answer for arrays and structs" do
+    test "compressed chunks give the same answer for enums, arrays and structs" do
       array = generate(parameter(datainfo: array_info(2)))
       insert_readings(array, 600, &[rem(&1 * 7, 50) * 1.0, rem(&1 * 3, 11) * 1.0])
 
@@ -417,14 +433,21 @@ defmodule SecantService.PlotDB.HistoryTest do
         )
 
       insert_readings(struct, 600, &%{"f" => rem(&1 * 7, 50) * 1.0})
-      opts = [max_raw: 100, max_buckets: 20]
 
-      before = for p <- [array, struct], do: History.window(p, nil, nil, opts)
+      enum =
+        generate(parameter(datainfo: %{"type" => "enum", "members" => %{"a" => 0, "b" => 1}}))
+
+      insert_readings(enum, 600, &rem(div(&1, 7), 2))
+      opts = [max_raw: 100, max_buckets: 20]
+      params = [enum, array, struct]
+
+      before = for p <- params, do: History.window(p, nil, nil, opts)
+      assert Enum.all?(before, & &1.aggregated)
 
       %{rows: [_ | _]} =
         Repo.query!("SELECT compress_chunk(c) FROM show_chunks('readings') c")
 
-      assert before == for(p <- [array, struct], do: History.window(p, nil, nil, opts))
+      assert before == for(p <- params, do: History.window(p, nil, nil, opts))
     end
   end
 

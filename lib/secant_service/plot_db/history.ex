@@ -277,8 +277,13 @@ defmodule SecantService.PlotDB.History do
     |> sorted_unique()
   end
 
-  defp sorted_unique(points),
-    do: points |> Enum.uniq_by(&hd/1) |> Enum.sort_by(&hd/1, NaiveDateTime)
+  # oldest first, one point per timestamp; ordering by value as well keeps
+  # the choice between two readings at the same instant the same every time
+  defp sorted_unique(points) do
+    points
+    |> Enum.sort_by(fn [ts, value] -> {NaiveDateTime.to_gregorian_seconds(ts), value} end)
+    |> Enum.uniq_by(&hd/1)
+  end
 
   # Arrays and structs: each channel picks reading ids (see `bucket_ends/2`),
   # and the picked readings are then fetched whole. The ids go through a
@@ -407,7 +412,8 @@ defmodule SecantService.PlotDB.History do
   # Every value is a float8: enum states are integers, and the pick keys
   # are float8 arrays. A JSON number beyond float8's range (a node can send
   # any number) counts as no value instead of failing the whole query; the
-  # nested CASE makes sure only numbers reach the casts.
+  # nested CASE makes sure only numbers reach the casts. The bounds are
+  # float8's: below 1e-323 the cast underflows, above its maximum it overflows.
   defp values(query, kind, {:column, col}) when kind in [:number, :state],
     do: select_merge(query, [v], %{i: 0, v: fragment("?::float8", field(v, ^col))})
 
@@ -418,7 +424,7 @@ defmodule SecantService.PlotDB.History do
         fragment(
           """
           CASE WHEN jsonb_typeof(? #> ?) = 'number' THEN
-            CASE WHEN abs((? #> ?)::numeric) = 0 OR abs((? #> ?)::numeric) BETWEEN 1e-300 AND 1e300
+            CASE WHEN abs((? #> ?)::numeric) = 0 OR abs((? #> ?)::numeric) BETWEEN 1e-323 AND 1.7976931348623157e308
             THEN (? #> ?)::numeric::float8 END
           END
           """,
@@ -450,7 +456,7 @@ defmodule SecantService.PlotDB.History do
         e in fragment(
           """
           SELECT CASE WHEN jsonb_typeof(x.e) = 'number' THEN
-              CASE WHEN abs(x.e::numeric) = 0 OR abs(x.e::numeric) BETWEEN 1e-300 AND 1e300
+              CASE WHEN abs(x.e::numeric) = 0 OR abs(x.e::numeric) BETWEEN 1e-323 AND 1.7976931348623157e308
               THEN x.e::numeric::float8 END
             END AS v, x.i
           FROM jsonb_array_elements(

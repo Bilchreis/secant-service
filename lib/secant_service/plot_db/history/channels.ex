@@ -104,7 +104,13 @@ defmodule SecantService.PlotDB.History.Channels do
 
   defp channels(%{"type" => "array", "members" => %{"type" => member}} = datainfo, source)
        when member in @number_types do
-    elements = datainfo["maxlen"] || datainfo["minlen"] || @default_array_len
+    # the datainfo comes from the node: use its length only if it is one
+    elements =
+      Enum.find(
+        [datainfo["maxlen"], datainfo["minlen"]],
+        @default_array_len,
+        &(is_integer(&1) and &1 > 0)
+      )
 
     [
       %{
