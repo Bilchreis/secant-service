@@ -16,6 +16,11 @@ defmodule SecantService.SecNodes.Parameter do
     identity_index_names module_id_name: "parameters_module_id_name_index"
   end
 
+  # the times a history window may span: years 0 to 9999, what a DateTime
+  # holds (a node can stamp readings before 1970)
+  @min_unix_ms -62_167_219_200_000
+  @max_unix_ms 253_402_300_799_999
+
   actions do
     defaults [:read, :destroy]
 
@@ -73,16 +78,16 @@ defmodule SecantService.SecNodes.Parameter do
     # Readings for the historical plots, thinned out in the database when the
     # window holds more than a chart can show. See `SecantService.PlotDB.History`.
     action :history_window, :map do
-      description "Readings of a numeric parameter in a time window, thinned out if there are many."
+      description "Readings of a plotted parameter (number, enum, numeric array or struct) in a time window, thinned out if there are many."
 
       argument :parameter_id, :integer, allow_nil?: false
       # Unix milliseconds, inclusive; nil = from the first / to the last reading
-      argument :from_ms, :integer
-      argument :to_ms, :integer
+      argument :from_ms, :integer, constraints: [min: @min_unix_ms, max: @max_unix_ms]
+      argument :to_ms, :integer, constraints: [min: @min_unix_ms, max: @max_unix_ms]
       # a window with at most this many readings is returned in full
-      argument :max_raw, :integer, constraints: [min: 1]
+      argument :max_raw, :integer, constraints: [min: 1, max: 50_000]
       # otherwise it is split into at most this many time buckets
-      argument :max_buckets, :integer, constraints: [min: 1]
+      argument :max_buckets, :integer, constraints: [min: 1, max: 5_000]
 
       run SecantService.SecNodes.Actions.HistoryWindow
     end
@@ -91,10 +96,10 @@ defmodule SecantService.SecNodes.Parameter do
       description "How :history_window would answer (thinned out or not, bucket width), without loading the readings."
 
       argument :parameter_id, :integer, allow_nil?: false
-      argument :from_ms, :integer
-      argument :to_ms, :integer
-      argument :max_raw, :integer, constraints: [min: 1]
-      argument :max_buckets, :integer, constraints: [min: 1]
+      argument :from_ms, :integer, constraints: [min: @min_unix_ms, max: @max_unix_ms]
+      argument :to_ms, :integer, constraints: [min: @min_unix_ms, max: @max_unix_ms]
+      argument :max_raw, :integer, constraints: [min: 1, max: 50_000]
+      argument :max_buckets, :integer, constraints: [min: 1, max: 5_000]
 
       run SecantService.SecNodes.Actions.HistoryWindow
     end

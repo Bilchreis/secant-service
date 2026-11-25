@@ -16,7 +16,7 @@ defmodule SecantService.SecNodes.Actions.HistoryWindow do
     opts = args |> Map.take([:max_raw, :max_buckets]) |> Enum.reject(&is_nil(elem(&1, 1)))
 
     with {:ok, parameter} <- Ash.get(Parameter, id, scope: context),
-         :ok <- numeric(parameter) do
+         :ok <- thinnable(parameter) do
       from_ms = Map.get(args, :from_ms)
       to_ms = Map.get(args, :to_ms)
 
@@ -27,8 +27,8 @@ defmodule SecantService.SecNodes.Actions.HistoryWindow do
     end
   end
 
-  defp numeric(parameter) do
-    if History.numeric?(parameter) do
+  defp thinnable(parameter) do
+    if History.thinnable?(parameter) do
       :ok
     else
       {:error,
@@ -36,7 +36,8 @@ defmodule SecantService.SecNodes.Actions.HistoryWindow do
          errors: [
            Ash.Error.Changes.InvalidArgument.exception(
              field: :parameter_id,
-             message: "is not a numeric parameter (double, int or scaled)"
+             message:
+               "has no values a plot draws (numbers, enums, numeric arrays or structs of them)"
            )
          ]
        )}

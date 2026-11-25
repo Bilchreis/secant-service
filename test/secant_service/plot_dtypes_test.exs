@@ -152,4 +152,114 @@ defmodule SecantService.PlotDB.DTypesTest do
       assert %{data: [[10, 1.0], [11, 2.0]]} = Enum.find(updates, &(&1.seriesIndex == t_index))
     end
   end
+
+  describe "Struct with array fields" do
+    @mfc %{
+      "type" => "struct",
+      "members" => %{
+        "flow" => @double,
+        "mix" => %{"type" => "array", "maxlen" => 2, "members" => %{"type" => "double"}}
+      }
+    }
+
+    defp mfc_option do
+      Struct.build_struct_option(
+        "value",
+        [1, 2],
+        [%{"flow" => 1.0, "mix" => [30.0, 70.0]}, %{"flow" => 2.0, "mix" => [40.0, 60.0]}],
+        @mfc,
+        :historical,
+        target: {[1], [%{"flow" => 0.0, "mix" => [100.0, 0.0]}]}
+      )
+    end
+
+    test "value and target of an array share each heatmap cell, value on top" do
+      option = mfc_option()
+
+      assert [value, target] = Enum.filter(option.series, & &1[:_arrayHeat])
+      assert %{name: "value.mix", _heatHalf: "upper", _arrayLen: 2} = value
+      assert %{name: "target.mix", _heatHalf: "lower", _targetArray: true} = target
+      assert value.yAxisIndex == target.yAxisIndex
+    end
+
+    test "a length the node got wrong does not break the plot" do
+      for len <- ["2", 2.0, -1, 1_000_000_000] do
+        bad = put_in(@mfc, ["members", "mix", "maxlen"], len)
+
+        option =
+          Struct.build_struct_option("value", [1], [%{"mix" => [1.0, 2.0]}], bad, :historical)
+
+        assert [%{_arrayLen: 2}] = Enum.filter(option.series, & &1[:_arrayHeat]), inspect(len)
+      end
+    end
+
+    test "the colour scale spans the values of value and target" do
+      assert [%{min: +0.0, max: 100.0}] = mfc_option().visualMap
+    end
+
+    test "updates of the target's array go to the target heatmap" do
+      option = mfc_option()
+      target_idx = Enum.find_index(option.series, &(&1[:name] == "target.mix"))
+      value_idx = Enum.find_index(option.series, &(&1[:name] == "value.mix"))
+
+      assert [%{seriesIndex: ^target_idx, data: [[5, 0, 1.0], [5, 1, 2.0]]}] =
+               option
+               |> Struct.series_updates([{%{"mix" => [1.0, 2.0]}, 5}], "target")
+               |> Enum.filter(&(&1.seriesIndex in [target_idx, value_idx]))
+    end
+  end
+
+  describe "historical plots" do
+    @array %{"type" => "array", "maxlen" => 2, "members" => %{"type" => "double"}}
+
+    defp historical_options do
+      %{
+        scalar: Scalar.timeseries_option([], "K", :historical),
+        enum: EnumDType.enum_timeseries_option([], @enum["members"], "value", :historical),
+        array: ArrayHeatmap.heatmap_option([], 2, nil, :historical),
+        struct:
+          Struct.build_struct_option(
+            "p",
+            [],
+            [],
+            %{"type" => "struct", "members" => %{"t" => @double, "a" => @array}},
+            :historical
+          )
+      }
+    end
+
+    test "every type zooms and asks for the readings of the zoomed window" do
+      for {type, option} <- historical_options() do
+        assert %{aggregated: false, bucket_ms: nil} = option[:_windowFetch], "#{type}"
+        assert [%{type: "inside"}] = option.dataZoom, "#{type}"
+        assert %{feature: %{dataZoom: _, restore: _}} = option.toolbox, "#{type}"
+      end
+    end
+
+    test "a struct zooms all its time axes together" do
+      %{struct: option} = historical_options()
+
+      assert [%{xAxisIndex: [0, 1]}] = option.dataZoom
+      assert option.toolbox.feature.dataZoom.xAxisIndex == [0, 1]
+    end
+
+    test "plots of held values keep the readings outside the zoomed window" do
+      options = historical_options()
+
+      for type <- [:enum, :array, :struct] do
+        assert [%{filterMode: "none"}] = options[type].dataZoom, "#{type}"
+      end
+
+      assert [%{filterMode: "filter"}] = options.scalar.dataZoom
+    end
+
+    test "live plots do not fetch windows" do
+      refute Map.has_key?(ArrayHeatmap.heatmap_option([], 2, nil, :live), :_windowFetch)
+
+      refute Map.has_key?(
+               EnumDType.enum_timeseries_option([], @enum["members"], "v", :live),
+               :dataZoom
+             )
+    end
+  end
 end
