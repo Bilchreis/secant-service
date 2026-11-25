@@ -46,6 +46,9 @@ defmodule SecantService.PlotDB.History.Channels do
   @wide_array 16
   # elements assumed for an array whose datainfo has no maxlen
   @default_array_len 16
+  # longest declared array length believed (the plots draw one row or line
+  # per element)
+  @max_declared_len 1_000
   # values assumed for an int picked by :each_state
   @default_states 8
 
@@ -71,6 +74,19 @@ defmodule SecantService.PlotDB.History.Channels do
     do: channels(datainfo, {:column, Storage.column(datainfo)})
 
   def from_datainfo(_datainfo), do: []
+
+  @doc """
+  The length an array's datainfo declares (`maxlen`, else `minlen`), or nil.
+  The datainfo comes from the node, so only a positive integer up to
+  #{@max_declared_len} counts; longer arrays still plot as long as their
+  readings are.
+  """
+  def declared_length(datainfo) do
+    Enum.find(
+      [datainfo["maxlen"], datainfo["minlen"]],
+      &(is_integer(&1) and &1 > 0 and &1 <= @max_declared_len)
+    )
+  end
 
   @doc "Arrays wider than this are picked as a whole, not per element."
   def wide_array, do: @wide_array
@@ -104,13 +120,7 @@ defmodule SecantService.PlotDB.History.Channels do
 
   defp channels(%{"type" => "array", "members" => %{"type" => member}} = datainfo, source)
        when member in @number_types do
-    # the datainfo comes from the node: use its length only if it is one
-    elements =
-      Enum.find(
-        [datainfo["maxlen"], datainfo["minlen"]],
-        @default_array_len,
-        &(is_integer(&1) and &1 > 0)
-      )
+    elements = declared_length(datainfo) || @default_array_len
 
     [
       %{

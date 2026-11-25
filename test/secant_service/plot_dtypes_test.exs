@@ -182,6 +182,17 @@ defmodule SecantService.PlotDB.DTypesTest do
       assert value.yAxisIndex == target.yAxisIndex
     end
 
+    test "a length the node got wrong does not break the plot" do
+      for len <- ["2", 2.0, -1, 1_000_000_000] do
+        bad = put_in(@mfc, ["members", "mix", "maxlen"], len)
+
+        option =
+          Struct.build_struct_option("value", [1], [%{"mix" => [1.0, 2.0]}], bad, :historical)
+
+        assert [%{_arrayLen: 2}] = Enum.filter(option.series, & &1[:_arrayHeat]), inspect(len)
+      end
+    end
+
     test "the colour scale spans the values of value and target" do
       assert [%{min: +0.0, max: 100.0}] = mfc_option().visualMap
     end

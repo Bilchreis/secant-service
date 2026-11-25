@@ -4,6 +4,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
   alias SecantService.PlotDB.DTypePlot
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
+  alias SecantService.PlotDB.History.Channels
   alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
 
   @impl true
@@ -273,7 +274,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
 
               array_len =
                 max(
-                  sub_datainfo["minlen"] || sub_datainfo["maxlen"] || 0,
+                  Channels.declared_length(sub_datainfo) || 0,
                   ArrayHeatmap.max_len(field_vals)
                 )
 

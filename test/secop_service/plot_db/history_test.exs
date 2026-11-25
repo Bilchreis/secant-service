@@ -54,9 +54,11 @@ defmodule SecantService.PlotDB.HistoryTest do
     end
 
     test "an array length the node got wrong falls back to the default" do
-      for len <- [100.0, "100", 0, -3, nil] do
+      default = History.limits(%Parameter{datainfo: Map.delete(array_info(4), "maxlen")})
+
+      for len <- [100.0, "100", 0, -3, nil, 1_000_000_000] do
         datainfo = %{array_info(4) | "maxlen" => len}
-        assert {_, _} = History.limits(%Parameter{datainfo: datainfo}), inspect(len)
+        assert History.limits(%Parameter{datainfo: datainfo}) == default, inspect(len)
       end
     end
 
@@ -255,7 +257,10 @@ defmodule SecantService.PlotDB.HistoryTest do
                SecNodes.history_window(parameter.id, 1_000_000_000_000_000_000, nil)
 
       assert {:error, %Ash.Error.Invalid{}} =
-               SecNodes.history_resolution(parameter.id, -1, nil)
+               SecNodes.history_resolution(parameter.id, -100_000_000_000_000_000, nil)
+
+      # readings a node stamped before 1970 still load
+      assert %{values: []} = SecNodes.history_window!(parameter.id, -1_000, nil)
 
       assert {:error, %Ash.Error.Invalid{}} =
                SecNodes.history_window(parameter.id, nil, nil, %{max_raw: 10_000_000})
