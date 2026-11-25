@@ -241,6 +241,16 @@ defmodule SecantService.PlotDB.HistoryTest do
                SecNodes.history_window!(parameter.id, nil, nil)
     end
 
+    test "cap how many readings a caller may ask for" do
+      parameter = generate(parameter(datainfo: %{"type" => "double"}))
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               SecNodes.history_window(parameter.id, nil, nil, %{max_raw: 10_000_000})
+
+      assert {:error, %Ash.Error.Invalid{}} =
+               SecNodes.history_window(parameter.id, nil, nil, %{max_buckets: 10_000_000})
+    end
+
     test "refuse parameters that are not plotted, and unknown ones" do
       parameter = generate(parameter(datainfo: %{"type" => "string"}))
 
@@ -356,6 +366,8 @@ defmodule SecantService.PlotDB.HistoryTest do
         400 -> %{base | "inner" => %{"p" => 70}}
         # junk a node might send: must not break the query
         500 -> %{base | "flow" => "n/a", "temps" => "broken"}
+        # a number beyond float8's range
+        600 -> %{base | "flow" => Integer.pow(10, 400), "temps" => [Integer.pow(10, 400), 1.0]}
         _ -> base
       end
 

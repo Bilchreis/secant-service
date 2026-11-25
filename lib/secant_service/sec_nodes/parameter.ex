@@ -80,9 +80,9 @@ defmodule SecantService.SecNodes.Parameter do
       argument :from_ms, :integer
       argument :to_ms, :integer
       # a window with at most this many readings is returned in full
-      argument :max_raw, :integer, constraints: [min: 1]
+      argument :max_raw, :integer, constraints: [min: 1, max: 50_000]
       # otherwise it is split into at most this many time buckets
-      argument :max_buckets, :integer, constraints: [min: 1]
+      argument :max_buckets, :integer, constraints: [min: 1, max: 5_000]
 
       run SecantService.SecNodes.Actions.HistoryWindow
     end
@@ -93,8 +93,8 @@ defmodule SecantService.SecNodes.Parameter do
       argument :parameter_id, :integer, allow_nil?: false
       argument :from_ms, :integer
       argument :to_ms, :integer
-      argument :max_raw, :integer, constraints: [min: 1]
-      argument :max_buckets, :integer, constraints: [min: 1]
+      argument :max_raw, :integer, constraints: [min: 1, max: 50_000]
+      argument :max_buckets, :integer, constraints: [min: 1, max: 5_000]
 
       run SecantService.SecNodes.Actions.HistoryWindow
     end

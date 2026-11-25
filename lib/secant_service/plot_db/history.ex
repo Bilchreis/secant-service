@@ -13,13 +13,14 @@ defmodule SecantService.PlotDB.History do
   stored, so every plot draws them like any other readings. Zooming in asks
   for a smaller window, which gets narrower buckets and finally every reading.
 
-  Ties (several readings with the same lowest value, say) go to the
-  earliest reading, so a window always comes back the same, however the
-  rows are stored (compressed chunks are scanned in another order).
+  For arrays and structs, ties (several readings with the same lowest value,
+  say) go to the earliest reading, so a window always comes back the same,
+  however the rows are stored (compressed chunks are scanned in another
+  order).
 
-  Picking and fetching are one statement: the picks are collected in a CTE,
-  and the readings are then looked up by id on the primary key. (Joining
-  the picks instead makes Postgres scan the whole window a second time.)
+  A plain number or enum in its own column is thinned in one aggregate pass
+  that returns the kept values directly. Arrays and structs pick reading ids
+  in a CTE and fetch those readings in the same statement.
 
   The limits follow from a budget of values per chart (`@point_budget`): a
   reading of a 50-element array costs 50 values, so its window gets fewer
@@ -200,46 +201,121 @@ defmodule SecantService.PlotDB.History do
 
   # -- thinning ------------------------------------------------------------------
 
+  # Three ways to thin a window, cheapest first. A plain number or enum in
+  # its own column gets its kept values straight from one aggregate pass, as
+  # the readings are short; arrays and structs pick reading ids, then fetch
+  # those readings whole.
   defp bucketed(param, col, from, to, bucket_ms) do
-    base = readings(col, param.id, from, to)
     width = %Postgrex.Interval{microsecs: bucket_ms * 1000}
-    channels = Channels.from_datainfo(param.datainfo)
 
-    # a single value in its own column picks the bucket ends in the same
-    # pass as its extremes; anything else needs one pass for them
-    {queries, ends?} =
-      case channels do
-        [%Channels{source: {:column, _}, kind: kind, picker: :extremes} = channel]
-        when kind in [:number, :state] ->
-          {[extremes(base, width, channel, true)], true}
+    case Channels.from_datainfo(param.datainfo) do
+      [%Channels{source: {:column, _}, kind: :number, picker: :extremes}] ->
+        number_buckets(col, param.id, from, to, width)
 
-        _ ->
-          {Enum.flat_map(channels, &channel_picks(base, width, &1)), false}
-      end
+      [%Channels{source: {:column, _}, kind: :state, picker: :each_state}] ->
+        state_buckets(col, param.id, from, to, width)
+
+      channels ->
+        picked_readings(channels, col, param.id, from, to, width)
+    end
+    |> to_window(col, true, bucket_ms)
+  end
+
+  # Per bucket the first, last, lowest and highest reading, as `[ts, value]`
+  # rows. TimescaleDB's `first(a, b)` is "a of the row with the smallest b".
+  # Ties between equal values go to whichever reading the scan meets first,
+  # which does not change the drawn line.
+  defp number_buckets(col, id, from, to, width) do
+    from(v in readings(col, id, from, to),
+      group_by: fragment("time_bucket(?::interval, ?)", ^width, v.timestamp),
+      select: [
+        min(v.timestamp),
+        fragment("first(?, ?)", field(v, ^col), v.timestamp),
+        fragment("first(?, ?)", v.timestamp, field(v, ^col)),
+        min(field(v, ^col)),
+        fragment("last(?, ?)", v.timestamp, field(v, ^col)),
+        max(field(v, ^col)),
+        max(v.timestamp),
+        fragment("last(?, ?)", field(v, ^col), v.timestamp)
+      ]
+    )
+    |> Repo.all()
+    |> Enum.flat_map(&Enum.chunk_every(&1, 2))
+    |> sorted_unique()
+  end
+
+  # Per bucket the first reading of each state and the bucket's last reading,
+  # as `[ts, value]` rows, from one pass grouped by bucket and state: the
+  # state whose last reading is the bucket's latest held at its end.
+  defp state_buckets(col, id, from, to, width) do
+    rows =
+      from v in readings(col, id, from, to),
+        select: %{
+          b: fragment("time_bucket(?::interval, ?)", ^width, v.timestamp),
+          v: field(v, ^col),
+          ts: v.timestamp
+        }
+
+    groups =
+      from r in subquery(rows),
+        group_by: [r.b, r.v],
+        select: %{b: r.b, v: r.v, t0: min(r.ts), t1: max(r.ts)}
+
+    from(g in subquery(groups),
+      select: [
+        g.t0,
+        g.v,
+        g.t1,
+        g.v,
+        fragment("? = max(?) OVER (PARTITION BY ?)", g.t1, g.t1, g.b)
+      ]
+    )
+    |> Repo.all()
+    |> Enum.flat_map(fn [t0, v, t1, v, last?] ->
+      if last?, do: [[t0, v], [t1, v]], else: [[t0, v]]
+    end)
+    |> sorted_unique()
+  end
+
+  defp sorted_unique(points),
+    do: points |> Enum.uniq_by(&hd/1) |> Enum.sort_by(&hd/1, NaiveDateTime)
+
+  # Arrays and structs: each channel picks reading ids (see `bucket_ends/2`),
+  # and the picked readings are then fetched whole. The ids go through a
+  # materialized CTE into a hash semi-join: compressed chunks have no index
+  # on id, so `id = ANY(array)` would compare every row of the window with
+  # every pick.
+  defp picked_readings(channels, col, id, from, to, width) do
+    base = readings(col, id, from, to)
 
     picks =
-      if ends?,
-        do: union_all_of(queries),
-        else: union_all_of([bucket_ends(base, width) | queries])
+      union_all_of([
+        bucket_ends(base, width) | Enum.flat_map(channels, &channel_picks(base, width, &1))
+      ])
 
     # the id is the last element of every pick key
-    from(v in readings(col, param.id, from, to),
-      where:
-        fragment(
-          """
-          ? = ANY(ARRAY(
-            SELECT k[array_upper(k, 1)]::bigint
-            FROM picks, LATERAL (VALUES (first), (last), (lo), (hi)) AS ks(k)
-            WHERE k IS NOT NULL))
-          """,
-          v.id
-        ),
+    ids =
+      from p in "picks",
+        cross_lateral_join:
+          k in fragment(
+            "SELECT k FROM (VALUES (?), (?), (?), (?)) AS ks(k)",
+            p.first,
+            p.last,
+            p.lo,
+            p.hi
+          ),
+        where: not is_nil(k.k),
+        distinct: true,
+        select: %{id: fragment("(?)[array_upper(?, 1)]::bigint", k.k, k.k)}
+
+    from(v in readings(col, id, from, to),
+      where: v.id in subquery(from i in "ids", select: i.id),
       order_by: v.timestamp,
       select: [v.timestamp, field(v, ^col)]
     )
     |> with_cte("picks", as: ^picks)
+    |> with_cte("ids", as: ^ids, materialized: true)
     |> Repo.all()
-    |> to_window(col, true, bucket_ms)
   end
 
   defp union_all_of([first | rest]), do: Enum.reduce(rest, first, &union_all(&2, ^&1))
@@ -271,7 +347,7 @@ defmodule SecantService.PlotDB.History do
   defp channel_picks(_base, _width, %Channels{picker: :first_last}), do: []
 
   defp channel_picks(base, width, %Channels{picker: :extremes} = channel),
-    do: [extremes(base, width, channel, false)]
+    do: [extremes(base, width, channel)]
 
   # the first reading of each value
   defp channel_picks(base, width, %Channels{picker: :each_state} = channel) do
@@ -291,31 +367,19 @@ defmodule SecantService.PlotDB.History do
     [group_per_element(query, channel)]
   end
 
-  # the readings with the lowest and the highest value, and with `ends?`
-  # also the first and last
-  defp extremes(base, width, channel, ends?) do
+  # the readings with the lowest and the highest value
+  defp extremes(base, width, channel) do
     values = channel_values(base, width, channel)
 
     query =
       from c in subquery(values),
         where: not is_nil(c.v),
         select: %{
+          first: fragment("NULL::float8[]"),
+          last: fragment("NULL::float8[]"),
           lo: fragment("min(ARRAY[?, ?, ?::float8])", c.v, c.t, c.id),
           hi: fragment("max(ARRAY[?, ?, ?::float8])", c.v, c.t, c.id)
         }
-
-    query =
-      if ends? do
-        select_merge(query, [c], %{
-          first: fragment("min(ARRAY[?, ?::float8])", c.t, c.id),
-          last: fragment("max(ARRAY[?, ?::float8])", c.t, c.id)
-        })
-      else
-        select_merge(query, [c], %{
-          first: fragment("NULL::float8[]"),
-          last: fragment("NULL::float8[]")
-        })
-      end
 
     group_per_element(query, channel)
   end
@@ -341,7 +405,9 @@ defmodule SecantService.PlotDB.History do
   end
 
   # Every value is a float8: enum states are integers, and the pick keys
-  # are float8 arrays.
+  # are float8 arrays. A JSON number beyond float8's range (a node can send
+  # any number) counts as no value instead of failing the whole query; the
+  # nested CASE makes sure only numbers reach the casts.
   defp values(query, kind, {:column, col}) when kind in [:number, :state],
     do: select_merge(query, [v], %{i: 0, v: fragment("?::float8", field(v, ^col))})
 
@@ -350,7 +416,16 @@ defmodule SecantService.PlotDB.History do
       i: 0,
       v:
         fragment(
-          "CASE WHEN jsonb_typeof(? #> ?) = 'number' THEN (? #>> ?)::float8 END",
+          """
+          CASE WHEN jsonb_typeof(? #> ?) = 'number' THEN
+            CASE WHEN abs((? #> ?)::numeric) = 0 OR abs((? #> ?)::numeric) BETWEEN 1e-300 AND 1e300
+            THEN (? #> ?)::numeric::float8 END
+          END
+          """,
+          v.value_json,
+          type(^path, {:array, :string}),
+          v.value_json,
+          type(^path, {:array, :string}),
           v.value_json,
           type(^path, {:array, :string}),
           v.value_json,
@@ -374,7 +449,10 @@ defmodule SecantService.PlotDB.History do
       cross_lateral_join:
         e in fragment(
           """
-          SELECT CASE WHEN jsonb_typeof(x.e) = 'number' THEN (x.e #>> '{}')::float8 END AS v, x.i
+          SELECT CASE WHEN jsonb_typeof(x.e) = 'number' THEN
+              CASE WHEN abs(x.e::numeric) = 0 OR abs(x.e::numeric) BETWEEN 1e-300 AND 1e300
+              THEN x.e::numeric::float8 END
+            END AS v, x.i
           FROM jsonb_array_elements(
             CASE WHEN jsonb_typeof(? #> ?) = 'array' THEN ? #> ? ELSE '[]'::jsonb END
           ) WITH ORDINALITY AS x(e, i)

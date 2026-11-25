@@ -27,6 +27,9 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     end
   end
 
+  # earliest time a zoomed window may start: 2000-01-01
+  @earliest_window_ms 946_684_800_000
+
   @impl true
   def mount(socket) do
     {:ok, assign(socket, :chart_height, 340)}
@@ -311,9 +314,17 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       )
       when is_number(from_ms) and is_number(to_ms) and from_ms <= to_ms do
     secop_obj = socket.assigns.secop_obj
+    # the window comes from the browser: keep it to dates the database holds
+    # (year 2000 up to a day from now), so a forged one can't crash the fetch
+    latest = latest_window_ms()
+    from_ms = from_ms |> max(@earliest_window_ms) |> min(latest)
+    to_ms = to_ms |> max(from_ms) |> min(latest)
 
     socket =
-      start_async(socket, :fetch_chart_window, fn ->
+      socket
+      # only the newest window matters: stop a fetch still running
+      |> cancel_async(:fetch_chart_window)
+      |> start_async(:fetch_chart_window, fn ->
         windows =
           for param <- PlotDB.history_params(secop_obj) do
             {param, SecNodes.history_window!(param.id, trunc(from_ms), trunc(to_ms))}
@@ -734,6 +745,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   # that start, and the chart drops overview points inside a detail window:
   # a window from the start holds that reading again. A setpoint holds until
   # the next one, so every window starts with the setpoint in force.
+  defp latest_window_ms, do: System.os_time(:millisecond) + :timer.hours(24)
+
   defp held_window(param, from_ms, window) do
     if param.name == "target" or from_ms <= Builders.plot_start_ms(param) do
       Builders.hold_from(param, from_ms, window.values, window.timestamps)
