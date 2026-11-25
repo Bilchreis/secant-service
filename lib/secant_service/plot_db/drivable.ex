@@ -19,7 +19,7 @@ defmodule SecantService.PlotDB.Drivable do
     value_param = find_param(module, "value")
 
     if value_param do
-      {v_val, v_ts} = fetch_param_data(value_param, mode)
+      {v_val, v_ts, v_res} = fetch_param_window(value_param, mode)
       unit = get_in(value_param.datainfo, ["unit"])
       dtype_mod = DTypePlot.for_datainfo(value_param.datainfo)
 
@@ -52,11 +52,12 @@ defmodule SecantService.PlotDB.Drivable do
                _plot_spec_module: __MODULE__,
                _param_dtype_modules: %{"value" => dtype_mod}
              }}
+            |> with_resolution([v_res])
           end
 
         StructDType ->
           target_param = find_param(module, "target")
-          {t_val, t_ts} = fetch_param_data(target_param, mode)
+          {t_val, t_ts, t_res} = fetch_param_window(target_param, mode)
           target_opt = if t_val != [], do: [target: {t_ts, t_val}], else: []
 
           option =
@@ -82,10 +83,11 @@ defmodule SecantService.PlotDB.Drivable do
              _plot_spec_module: __MODULE__,
              _param_dtype_modules: param_mods
            }}
+          |> with_resolution([v_res, t_res])
 
         _enum_or_scalar ->
           target_param = find_param(module, "target")
-          {t_val, t_ts} = fetch_held_param_data(target_param, mode)
+          {t_val, t_ts, t_res} = fetch_held_param_window(target_param, mode)
 
           {v_series, t_series, extra_opts} =
             if value_param.datainfo["type"] == "enum" do
@@ -116,6 +118,7 @@ defmodule SecantService.PlotDB.Drivable do
              _plot_spec_module: __MODULE__,
              _param_dtype_modules: %{"value" => dtype_mod, "target" => dtype_mod}
            }}
+          |> with_resolution([v_res, t_res])
       end
     else
       :not_plottable
