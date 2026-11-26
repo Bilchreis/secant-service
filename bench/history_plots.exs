@@ -26,6 +26,15 @@
 # (from the Repo's telemetry), the time spent in Elixir, the JSON time, the
 # payload size and the number of readings sent.
 #
+# Before that, an aggregates section refreshes the continuous aggregates over
+# the readings (`SecantService.SecNodes.Reading.AggregateViews`), and times
+# `PlotDB.Aggregates.numbers/4` at 15-minute buckets over the recording for
+# the double, array and struct, and for an array of BENCH_WIDE_LEN elements
+# with a reading a minute (a 1-minute view's size depends on its buckets and
+# elements, not on how often the parameter reads). It reports each view's size
+# and the timings with the 1-minute views uncompressed and compressed. The
+# views' policy jobs are paused, so the bench refreshes them itself.
+#
 # Environment variables (defaults in brackets):
 #
 #   BENCH_HOURS        length of each recording [72]
@@ -48,6 +57,9 @@
 #   BENCH_LOAD         path prefix of saved results to compare with [none]
 #   BENCH_DB           database name [secant_service_bench]
 #   BENCH_RESEED       1 seeds this size's recording again [0]
+#   BENCH_AGGREGATES   0 skips the aggregates section [1]
+#   BENCH_PLOTS        0 skips the plot breakdown and benchee [1]
+#   BENCH_WIDE_LEN     elements of the aggregates section's wide array [1000]
 
 defmodule HistoryBench.Config do
   @moduledoc false
@@ -68,7 +80,10 @@ defmodule HistoryBench.Config do
       save: System.get_env("BENCH_SAVE"),
       load: System.get_env("BENCH_LOAD"),
       database: System.get_env("BENCH_DB", "secant_service_bench"),
-      reseed?: System.get_env("BENCH_RESEED") == "1"
+      reseed?: System.get_env("BENCH_RESEED") == "1",
+      aggregates?: System.get_env("BENCH_AGGREGATES", "1") != "0",
+      plots?: System.get_env("BENCH_PLOTS", "1") != "0",
+      wide_len: int("BENCH_WIDE_LEN", 1000)
     }
   end
 
@@ -125,6 +140,8 @@ defmodule HistoryBench.Setup do
         # the pool the app runs on in production, not the test sandbox
         pool: DBConnection.ConnectionPool,
         pool_size: 10,
+        # the aggregates section reads a 1000-element array's 288,000 buckets
+        timeout: 120_000,
         log: false
       )
 
@@ -145,6 +162,15 @@ defmodule HistoryBench.Setup do
     # the columnstore policy would compress chunks in the background, in the
     # middle of a run; the bench sets the storage itself
     Repo.query!("CALL remove_columnstore_policy('readings', if_exists => true)")
+
+    # the same for the aggregates' refresh and columnstore jobs
+    Repo.query!("""
+    SELECT (alter_job(j.job_id, scheduled => false)).job_id
+    FROM timescaledb_information.jobs j
+    JOIN timescaledb_information.continuous_aggregates c
+      ON c.view_schema = j.hypertable_schema AND c.view_name = j.hypertable_name
+    WHERE j.scheduled
+    """)
   end
 
   def datainfo("double"), do: %{"type" => "double", "unit" => "K"}
@@ -249,6 +275,92 @@ defmodule HistoryBench.Setup do
 
       Repo.query!("ANALYZE readings", [], timeout: :infinity)
       IO.puts(" done")
+    end
+  end
+
+  @doc """
+  An array of `config.wide_len` doubles with a reading a minute over the
+  recording's span, on its own SEC node; seeded unless already there.
+  """
+  def wide_array(config) do
+    equipment_id = "aggregates_bench_#{config.hours}h_wide#{config.wide_len}"
+    readings = config.hours * 60
+
+    node =
+      SecantService.SecNodes.SecNode
+      |> Ash.Query.filter(equipment_id == ^equipment_id)
+      |> Ash.read_one!()
+
+    {node, param} =
+      case node do
+        nil ->
+          node =
+            Ash.Generator.generate(SecantService.Generators.sec_node(equipment_id: equipment_id))
+
+          module =
+            Ash.Generator.generate(
+              SecantService.Generators.sec_module(sec_node_id: node.uuid, name: "wide")
+            )
+
+          param =
+            Ash.Generator.generate(
+              SecantService.Generators.parameter(
+                module_id: module.id,
+                datainfo: %{
+                  "type" => "array",
+                  "members" => %{"type" => "double"},
+                  "maxlen" => config.wide_len
+                }
+              )
+            )
+
+          # the recording ends about now, as in create_node/2
+          t0 =
+            DateTime.utc_now() |> DateTime.add(-config.hours, :hour) |> DateTime.truncate(:second)
+
+          Repo.query!("UPDATE sec_nodes SET inserted_at = $1 WHERE uuid = $2", [
+            DateTime.to_naive(t0),
+            Ecto.UUID.dump!(node.uuid)
+          ])
+
+          {%{node | inserted_at: t0}, param}
+
+        node ->
+          [module] =
+            Module
+            |> Ash.Query.filter(sec_node_id == ^node.uuid)
+            |> Ash.Query.load(:parameters)
+            |> Ash.read!()
+
+          {node, hd(module.parameters)}
+      end
+
+    t0 = node.inserted_at
+    seed_wide(param, t0, readings, config)
+    %{param: param, t0: t0, readings: readings}
+  end
+
+  defp seed_wide(param, t0, readings, config) do
+    %{rows: [[stored]]} =
+      Repo.query!("SELECT count(*) FROM readings WHERE parameter_id = $1", [param.id])
+
+    if stored != readings or config.reseed? do
+      Repo.query!("DELETE FROM readings WHERE parameter_id = $1", [param.id], timeout: :infinity)
+      IO.write("Seeding #{readings} readings of a #{config.wide_len}-element array ... ")
+
+      Repo.query!(
+        """
+        INSERT INTO readings (parameter_id, timestamp, value_float_array, qualifiers)
+        SELECT $1, $2::timestamp + i * interval '1 minute',
+          ARRAY(SELECT sin(i / 60.0 + k / 50.0) * 10 + random() FROM generate_series(1, $3) AS k),
+          '{}'::jsonb
+        FROM generate_series(0, $4::bigint - 1) AS i
+        """,
+        [param.id, DateTime.to_naive(t0), config.wide_len, readings],
+        timeout: :infinity
+      )
+
+      IO.puts("done")
     end
   end
 
@@ -364,6 +476,131 @@ defmodule HistoryBench.Steps do
   end
 end
 
+defmodule HistoryBench.Aggregates do
+  @moduledoc false
+  # The continuous aggregates: refresh, sizes, and reading them.
+
+  alias HistoryBench.Breakdown
+  alias SecantService.PlotDB.Aggregates
+  alias SecantService.Repo
+  alias SecantService.SecNodes.Reading.AggregateViews
+
+  @bucket_ms 15 * 60_000
+
+  def run(config, recording, wide) do
+    IO.puts("\n== Aggregates ==\n")
+
+    for view <- AggregateViews.views() do
+      {us, _} =
+        :timer.tc(fn ->
+          # batched as the policies are: a manual refresh otherwise runs in
+          # 10-bucket batches, newest first, and takes many times as long
+          Repo.query!(
+            "CALL refresh_continuous_aggregate($1::text::regclass, NULL, NULL, options => $2)",
+            [view, %{buckets_per_batch: 360, refresh_newest_first: false}],
+            timeout: :infinity
+          )
+        end)
+
+      IO.puts("refreshed #{String.pad_trailing(view, 26)} #{ms(us)} ms")
+    end
+
+    params =
+      [{"wide", wide} | Enum.map(~w(double array struct), &{&1, recording[&1]})]
+      |> Enum.reject(fn {_dtype, rec} -> rec == nil end)
+
+    # an earlier run may have left them compressed
+    set_minute_storage("decompress_chunk(c, if_compressed => true)")
+    uncompressed = reads(params, config)
+    before = sizes()
+
+    IO.write("\nCompressing the 1-minute views ... ")
+    set_minute_storage("compress_chunk(c, if_not_compressed => true)")
+    IO.puts("done")
+    compressed = reads(params, config)
+    after_ = sizes()
+
+    IO.puts("\nview                        rows        uncompressed  compressed")
+
+    for view <- AggregateViews.views() do
+      {rows, size} = before[view]
+      {_rows, compressed_size} = after_[view]
+
+      IO.puts(
+        "#{String.pad_trailing(view, 26)}  #{String.pad_leading(to_string(rows), 10)}  " <>
+          "#{String.pad_leading(mb(size), 12)}  #{String.pad_leading(mb(compressed_size), 10)}"
+      )
+    end
+
+    IO.puts("\nnumbers/4, 15-minute buckets over #{config.hours} h (median of 5 runs)")
+    IO.puts("type     buckets  uncompressed_ms  compressed_ms  queries")
+
+    for {{dtype, n, u}, {_, _, c}} <- Enum.zip(uncompressed, compressed) do
+      IO.puts(
+        "#{String.pad_trailing(dtype, 7)}  #{String.pad_leading(to_string(n), 7)}  " <>
+          "#{String.pad_leading(ms(u.wall_us), 15)}  #{String.pad_leading(ms(c.wall_us), 13)}  " <>
+          "#{String.pad_leading(to_string(u.queries), 7)}"
+      )
+    end
+  end
+
+  # compresses or decompresses the 1-minute views, then vacuums them, as
+  # autovacuum would, so reads don't pay for the rows' first visibility check
+  defp set_minute_storage(call) do
+    %{rows: views} =
+      Repo.query!("""
+      SELECT view_name, format('%I.%I', materialization_hypertable_schema,
+        materialization_hypertable_name)
+      FROM timescaledb_information.continuous_aggregates WHERE view_name LIKE '%\\_1m'
+      """)
+
+    for [view, hypertable] <- views do
+      Repo.query!("SELECT #{call} FROM show_chunks($1::text::regclass) c", [view],
+        timeout: :infinity
+      )
+
+      Repo.query!("VACUUM ANALYZE #{hypertable}", [], timeout: :infinity)
+    end
+  end
+
+  # numbers/4 for each parameter over its recording
+  defp reads(params, config) do
+    for {dtype, rec} <- params do
+      from = DateTime.to_unix(rec.t0, :millisecond)
+      to = from + config.hours * 3_600_000
+
+      {:ok, %{buckets: buckets}} = Aggregates.numbers(rec.param, from, to, @bucket_ms)
+
+      timing =
+        Breakdown.measure(fn ->
+          _ = Aggregates.numbers(rec.param, from, to, @bucket_ms)
+          nil
+        end)
+
+      {dtype, length(buckets), timing}
+    end
+  end
+
+  # rows and total size per view, from its materialization hypertable
+  defp sizes do
+    %{rows: rows} =
+      Repo.query!("""
+      SELECT c.view_name,
+        hypertable_size(format('%I.%I', c.materialization_hypertable_schema,
+          c.materialization_hypertable_name)::regclass)
+      FROM timescaledb_information.continuous_aggregates c
+      """)
+
+    Map.new(rows, fn [view, size] ->
+      %{rows: [[count]]} = Repo.query!("SELECT count(*) FROM #{view}", [], timeout: :infinity)
+      {view, {count, size}}
+    end)
+  end
+
+  defp mb(bytes), do: :erlang.float_to_binary(bytes / 1_048_576, decimals: 1) <> " MB"
+  defp ms(us), do: :erlang.float_to_binary(us / 1000, decimals: 1)
+end
+
 defmodule HistoryBench.Breakdown do
   @moduledoc false
   # Where a step's time goes: database (Repo telemetry), Elixir, JSON.
@@ -476,7 +713,7 @@ saved = fn config, storage ->
   save ++ load
 end
 
-alias HistoryBench.{Breakdown, Config, Setup, Steps}
+alias HistoryBench.{Aggregates, Breakdown, Config, Setup, Steps}
 
 config = Config.get()
 Setup.start(config)
@@ -491,7 +728,11 @@ Recording: #{config.hours} h, a reading every #{config.interval_ms} ms \
 (#{div(span_ms, config.interval_ms)} per type), arrays of #{config.array_len}
 """)
 
-for storage <- config.storage do
+if config.aggregates? do
+  Aggregates.run(config, recording, Setup.wide_array(config))
+end
+
+for storage <- if(config.plots?, do: config.storage, else: []) do
   Setup.set_storage(storage)
 
   # what each step works on, loaded once
