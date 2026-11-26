@@ -24,8 +24,20 @@ defmodule SecantService.PlotDB.Aggregates do
   Nothing reads these yet; the plots switch over in a later change.
   """
 
+  alias SecantService.PlotDB.Aggregates.Queries
   alias SecantService.Repo
   alias SecantService.SecNodes.Parameter
+
+  # the queries, built from Aggregates.Queries when this module compiles
+  @numbers_1m Queries.read(:numbers, :minute)
+  @numbers_1h Queries.read(:numbers, :hour)
+  @member_numbers_1m Queries.read(:member_numbers, :minute)
+  @member_numbers_1h Queries.read(:member_numbers, :hour)
+  @states_1m Queries.read(:states, :minute)
+  @states_1h Queries.read(:states, :hour)
+  @member_states_1m Queries.read(:member_states, :minute)
+  @member_states_1h Queries.read(:member_states, :hour)
+  @watermark_query Queries.watermark()
 
   @minute_ms 60_000
   @hour_ms 60 * @minute_ms
@@ -80,10 +92,8 @@ defmodule SecantService.PlotDB.Aggregates do
   and `states/4` do.
   """
   @spec materialized_until(String.t()) :: DateTime.t() | nil
-  # the SQL interpolates only view and function names from this module
-  # sobelow_skip ["SQL.Query"]
   def materialized_until(view) when is_binary(view) do
-    %{rows: [[until]]} = Repo.query!("SELECT #{watermark("$1::text")}", [view])
+    %{rows: [[until]]} = Repo.query!(@watermark_query, [view])
     decode_watermark(until)
   end
 
@@ -137,68 +147,14 @@ defmodule SecantService.PlotDB.Aggregates do
   defp members(%{"members" => members}) when is_list(members), do: members
   defp members(_datainfo), do: []
 
-  # view name prefix, group keys, and the rollup of each kind (design
-  # decision 5 of add-reading-aggregates)
-  defp kind(:numbers), do: {"reading_numbers", ["idx"], &number_rollup/0}
-  defp kind(:member_numbers), do: {"reading_member_numbers", ["member", "idx"], &number_rollup/0}
-  defp kind(:states), do: {"reading_states", ["idx", "state"], &state_rollup/0}
-
-  defp kind(:member_states),
-    do: {"reading_member_states", ["member", "idx", "state"], &state_rollup/0}
-
-  defp number_rollup do
-    """
-    min(lo) AS lo, max(hi) AS hi, sum(sum) AS sum, sum(count)::bigint AS count,
-    min(first_key) AS first_key, max(last_key) AS last_key
-    """
-  end
-
-  defp state_rollup do
-    "min(first_at) AS first_at, max(last_at) AS last_at, sum(count)::bigint AS count"
-  end
-
   # -- the query ---------------------------------------------------------------
 
-  # One query: the watermark, and the rolled-up buckets that end by it. The
-  # LEFT JOIN keeps the watermark row when there are no buckets. For the
-  # 1-hour tier the 1-minute view's watermark counts too, since the hourly
-  # view is built from it.
-  # sobelow_skip ["SQL.Query"]
+  # One query: the watermark, and the rolled-up buckets that end by it (see
+  # Aggregates.Queries). The SQL of every kind and tier is built when this
+  # module compiles; only the parameter, width and window are parameters.
   defp read(kind, tier, param, from_ms, to_ms, bucket_ms) do
-    {prefix, keys, rollup} = kind(kind)
-    view = prefix <> if(tier == :hour, do: "_1h", else: "_1m")
-    keys_sql = Enum.join(keys, ", ")
-
-    until =
-      case tier do
-        :hour -> "LEAST(#{watermark("'#{view}'")}, #{watermark("'#{prefix}_1m'")})"
-        :minute -> watermark("'#{view}'")
-      end
-
-    # `w` is MATERIALIZED and read through a scalar subquery, so the watermark
-    # is computed once: as a join condition the planner pushed it into the
-    # scan and computed it for every row (175 s instead of 2.5 s for the
-    # bench's 1000-element array).
-    sql = """
-    WITH w AS MATERIALIZED (SELECT #{until} AS until),
-    b AS (
-      SELECT time_bucket($2::interval, bucket) AS start, #{keys_sql}, #{rollup.()}
-      FROM #{view}
-      WHERE parameter_id = $1
-        AND bucket >= time_bucket($2::interval, $3::timestamp)
-        AND bucket < time_bucket($2::interval, $4::timestamp)
-        AND time_bucket($2::interval, bucket) + $2::interval
-          <= (SELECT _timescaledb_functions.to_timestamp_without_timezone(until) FROM w)
-      GROUP BY start, #{keys_sql}
-    )
-    SELECT w.until, b.*
-    FROM w
-    LEFT JOIN b ON true
-    ORDER BY b.start, #{keys_sql}
-    """
-
     %{columns: [_until | columns], rows: rows} =
-      Repo.query!(sql, [
+      run(kind, tier, [
         param.id,
         %Postgrex.Interval{secs: div(bucket_ms, 1000)},
         to_naive(from_ms),
@@ -215,13 +171,16 @@ defmodule SecantService.PlotDB.Aggregates do
     {:ok, %{tier: tier, materialized_until: decode_watermark(until), buckets: buckets}}
   end
 
-  defp watermark(view_sql) do
-    """
-    _timescaledb_functions.cagg_watermark(
-      (SELECT mat_hypertable_id FROM _timescaledb_catalog.continuous_agg
-       WHERE user_view_name = #{view_sql}))\
-    """
-  end
+  # Each query is a module attribute in the call, so it is a fixed string
+  # (and Sobelow can see it is one).
+  defp run(:numbers, :minute, params), do: Repo.query!(@numbers_1m, params)
+  defp run(:numbers, :hour, params), do: Repo.query!(@numbers_1h, params)
+  defp run(:member_numbers, :minute, params), do: Repo.query!(@member_numbers_1m, params)
+  defp run(:member_numbers, :hour, params), do: Repo.query!(@member_numbers_1h, params)
+  defp run(:states, :minute, params), do: Repo.query!(@states_1m, params)
+  defp run(:states, :hour, params), do: Repo.query!(@states_1h, params)
+  defp run(:member_states, :minute, params), do: Repo.query!(@member_states_1m, params)
+  defp run(:member_states, :hour, params), do: Repo.query!(@member_states_1h, params)
 
   defp bucket(row, kind) when kind in [:numbers, :member_numbers] do
     [min, min_at, _] = row["lo"]

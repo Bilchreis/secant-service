@@ -67,7 +67,7 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     $fn$
     """)
 
-    execute("""
+    execute(~S"""
     CREATE MATERIALIZED VIEW reading_numbers_1m
     WITH (
       timescaledb.continuous,
@@ -107,11 +107,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     WITH NO DATA
     """)
 
-    execute("""
+    execute(~S"""
     CREATE INDEX reading_numbers_1m_parameter_id_bucket_index ON reading_numbers_1m (parameter_id, bucket)
     """)
 
-    execute("""
+    execute(~S"""
     ALTER MATERIALIZED VIEW reading_numbers_1m SET (
       timescaledb.enable_columnstore = true,
       timescaledb.segmentby = 'parameter_id',
@@ -119,11 +119,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CALL add_columnstore_policy('reading_numbers_1m', after => INTERVAL '2 days')
     """)
 
-    execute("""
+    execute(~S"""
     SELECT add_continuous_aggregate_policy('reading_numbers_1m',
       start_offset => NULL,
       end_offset => INTERVAL '1 minute',
@@ -133,7 +133,7 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CREATE MATERIALIZED VIEW reading_states_1m
     WITH (
       timescaledb.continuous,
@@ -173,11 +173,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     WITH NO DATA
     """)
 
-    execute("""
+    execute(~S"""
     CREATE INDEX reading_states_1m_parameter_id_bucket_index ON reading_states_1m (parameter_id, bucket)
     """)
 
-    execute("""
+    execute(~S"""
     ALTER MATERIALIZED VIEW reading_states_1m SET (
       timescaledb.enable_columnstore = true,
       timescaledb.segmentby = 'parameter_id',
@@ -185,11 +185,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CALL add_columnstore_policy('reading_states_1m', after => INTERVAL '2 days')
     """)
 
-    execute("""
+    execute(~S"""
     SELECT add_continuous_aggregate_policy('reading_states_1m',
       start_offset => NULL,
       end_offset => INTERVAL '1 minute',
@@ -199,7 +199,7 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CREATE MATERIALIZED VIEW reading_member_numbers_1m
     WITH (
       timescaledb.continuous,
@@ -278,11 +278,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     WITH NO DATA
     """)
 
-    execute("""
+    execute(~S"""
     CREATE INDEX reading_member_numbers_1m_parameter_id_bucket_index ON reading_member_numbers_1m (parameter_id, bucket)
     """)
 
-    execute("""
+    execute(~S"""
     ALTER MATERIALIZED VIEW reading_member_numbers_1m SET (
       timescaledb.enable_columnstore = true,
       timescaledb.segmentby = 'parameter_id',
@@ -290,11 +290,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CALL add_columnstore_policy('reading_member_numbers_1m', after => INTERVAL '2 days')
     """)
 
-    execute("""
+    execute(~S"""
     SELECT add_continuous_aggregate_policy('reading_member_numbers_1m',
       start_offset => NULL,
       end_offset => INTERVAL '1 minute',
@@ -304,7 +304,7 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CREATE MATERIALIZED VIEW reading_member_states_1m
     WITH (
       timescaledb.continuous,
@@ -349,11 +349,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     WITH NO DATA
     """)
 
-    execute("""
+    execute(~S"""
     CREATE INDEX reading_member_states_1m_parameter_id_bucket_index ON reading_member_states_1m (parameter_id, bucket)
     """)
 
-    execute("""
+    execute(~S"""
     ALTER MATERIALIZED VIEW reading_member_states_1m SET (
       timescaledb.enable_columnstore = true,
       timescaledb.segmentby = 'parameter_id',
@@ -361,11 +361,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CALL add_columnstore_policy('reading_member_states_1m', after => INTERVAL '2 days')
     """)
 
-    execute("""
+    execute(~S"""
     SELECT add_continuous_aggregate_policy('reading_member_states_1m',
       start_offset => NULL,
       end_offset => INTERVAL '1 minute',
@@ -375,7 +375,7 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CREATE MATERIALIZED VIEW reading_numbers_1h
     WITH (
       timescaledb.continuous,
@@ -398,11 +398,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     WITH NO DATA
     """)
 
-    execute("""
+    execute(~S"""
     CREATE INDEX reading_numbers_1h_parameter_id_bucket_index ON reading_numbers_1h (parameter_id, bucket)
     """)
 
-    execute("""
+    execute(~S"""
     SELECT add_continuous_aggregate_policy('reading_numbers_1h',
       start_offset => NULL,
       end_offset => INTERVAL '1 hour',
@@ -412,7 +412,7 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CREATE MATERIALIZED VIEW reading_states_1h
     WITH (
       timescaledb.continuous,
@@ -432,11 +432,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     WITH NO DATA
     """)
 
-    execute("""
+    execute(~S"""
     CREATE INDEX reading_states_1h_parameter_id_bucket_index ON reading_states_1h (parameter_id, bucket)
     """)
 
-    execute("""
+    execute(~S"""
     SELECT add_continuous_aggregate_policy('reading_states_1h',
       start_offset => NULL,
       end_offset => INTERVAL '1 hour',
@@ -446,7 +446,7 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CREATE MATERIALIZED VIEW reading_member_numbers_1h
     WITH (
       timescaledb.continuous,
@@ -469,11 +469,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     WITH NO DATA
     """)
 
-    execute("""
+    execute(~S"""
     CREATE INDEX reading_member_numbers_1h_parameter_id_bucket_index ON reading_member_numbers_1h (parameter_id, bucket)
     """)
 
-    execute("""
+    execute(~S"""
     SELECT add_continuous_aggregate_policy('reading_member_numbers_1h',
       start_offset => NULL,
       end_offset => INTERVAL '1 hour',
@@ -483,7 +483,7 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     )
     """)
 
-    execute("""
+    execute(~S"""
     CREATE MATERIALIZED VIEW reading_member_states_1h
     WITH (
       timescaledb.continuous,
@@ -503,11 +503,11 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
     WITH NO DATA
     """)
 
-    execute("""
+    execute(~S"""
     CREATE INDEX reading_member_states_1h_parameter_id_bucket_index ON reading_member_states_1h (parameter_id, bucket)
     """)
 
-    execute("""
+    execute(~S"""
     SELECT add_continuous_aggregate_policy('reading_member_states_1h',
       start_offset => NULL,
       end_offset => INTERVAL '1 hour',
@@ -519,131 +519,35 @@ defmodule SecantService.Repo.Migrations.AddReadingAggregates do
   end
 
   def down do
-    execute("""
-    SELECT remove_continuous_aggregate_policy('reading_member_states_1h')
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
+    execute(~S"""
     DROP MATERIALIZED VIEW reading_member_states_1h
     """)
 
-    execute("""
-    SELECT remove_continuous_aggregate_policy('reading_member_numbers_1h')
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
+    execute(~S"""
     DROP MATERIALIZED VIEW reading_member_numbers_1h
     """)
 
-    execute("""
-    SELECT remove_continuous_aggregate_policy('reading_states_1h')
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
+    execute(~S"""
     DROP MATERIALIZED VIEW reading_states_1h
     """)
 
-    execute("""
-    SELECT remove_continuous_aggregate_policy('reading_numbers_1h')
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
+    execute(~S"""
     DROP MATERIALIZED VIEW reading_numbers_1h
     """)
 
-    execute("""
-    SELECT remove_continuous_aggregate_policy('reading_member_states_1m')
-    """)
-
-    execute("""
-    CALL remove_columnstore_policy('reading_member_states_1m')
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
+    execute(~S"""
     DROP MATERIALIZED VIEW reading_member_states_1m
     """)
 
-    execute("""
-    SELECT remove_continuous_aggregate_policy('reading_member_numbers_1m')
-    """)
-
-    execute("""
-    CALL remove_columnstore_policy('reading_member_numbers_1m')
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
+    execute(~S"""
     DROP MATERIALIZED VIEW reading_member_numbers_1m
     """)
 
-    execute("""
-    SELECT remove_continuous_aggregate_policy('reading_states_1m')
-    """)
-
-    execute("""
-    CALL remove_columnstore_policy('reading_states_1m')
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
+    execute(~S"""
     DROP MATERIALIZED VIEW reading_states_1m
     """)
 
-    execute("""
-    SELECT remove_continuous_aggregate_policy('reading_numbers_1m')
-    """)
-
-    execute("""
-    CALL remove_columnstore_policy('reading_numbers_1m')
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
-    SELECT 1
-    """)
-
-    execute("""
+    execute(~S"""
     DROP MATERIALIZED VIEW reading_numbers_1m
     """)
 

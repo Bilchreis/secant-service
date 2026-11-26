@@ -3,8 +3,7 @@ defmodule SecantService.SecNodes.Reading.AggregateViews do
   The SQL of the continuous aggregates over `readings`, as custom statements
   for `SecantService.SecNodes.Reading`, in the order they are created.
 
-  Each statement is one SQL command, because a migration's `execute/1` runs
-  one command at a time. See the `Reading` moduledoc for what the views hold.
+  See the `Reading` moduledoc for what the views hold.
   """
 
   # Types whose readings are aggregated as numbers and as states.
@@ -43,7 +42,13 @@ defmodule SecantService.SecNodes.Reading.AggregateViews do
   @minute_batch 360
   @hour_batch 24
 
-  @doc "The custom statements, as `%{name:, up:, down:}`."
+  @doc """
+  The custom statements, as `%{name:, up:, down:}` (with `code?: true` for
+  the views): the member function, then each 1-minute view, then each 1-hour
+  view. A view's statement runs several `execute/1` calls, because a
+  migration's `execute/1` runs one SQL command at a time. Its `down` drops
+  the view, which drops its index, columnstore and policies with it.
+  """
   def statements do
     [
       %{
@@ -52,87 +57,65 @@ defmodule SecantService.SecNodes.Reading.AggregateViews do
         down: "DROP FUNCTION reading_member_values(jsonb, jsonb)"
       }
     ] ++
-      Enum.flat_map(kinds(), fn {kind, select, _rollup} -> minute_tier(kind, select) end) ++
-      Enum.flat_map(kinds(), fn {kind, _select, rollup} -> hour_tier(kind, rollup) end)
-  end
-
-  # Each kind of view: its 1-minute query over readings, and its 1-hour
-  # rollup of the 1-minute view. All 1-minute views come first, so the
-  # migration's down drops the 1-hour views before their sources.
-  defp kinds do
-    [
-      {:reading_numbers, numbers_1m(), number_rollup("idx")},
-      {:reading_states, states_1m(), state_rollup("idx, state")},
-      {:reading_member_numbers, member_numbers_1m(), number_rollup("member, idx")},
-      {:reading_member_states, member_states_1m(), state_rollup("member, idx, state")}
-    ]
+      Enum.map(kinds(), fn {minute, _hour, select, _rollup} -> minute_view(minute, select) end) ++
+      Enum.map(kinds(), fn {minute, hour, _select, rollup} -> hour_view(hour, minute, rollup) end)
   end
 
   @doc "The names of the views, 1-minute views first."
   def views do
-    for tier <- ["1m", "1h"],
-        kind <- ~w(reading_numbers reading_states reading_member_numbers reading_member_states),
-        do: "#{kind}_#{tier}"
+    Enum.map(kinds(), &Atom.to_string(elem(&1, 0))) ++
+      Enum.map(kinds(), &Atom.to_string(elem(&1, 1)))
   end
 
-  # The 1-minute view over readings with its columnstore, and the 1-hour view
-  # rolled up from it, each with a refresh policy. Policies process the whole
-  # range (start_offset NULL), oldest first, and as many batches per run as
-  # are pending: see design decision 7 of add-reading-aggregates.
-  # statement names, built from this module's constants at compile time
-  # sobelow_skip ["DOS.BinToAtom"]
-  defp minute_tier(kind, select) do
-    minute = :"#{kind}_1m"
-
-    view(minute, select) ++
-      [
-        %{
-          name: :"#{minute}_columnstore",
-          up: """
-          ALTER MATERIALIZED VIEW #{minute} SET (
-            timescaledb.enable_columnstore = true,
-            timescaledb.segmentby = 'parameter_id',
-            timescaledb.orderby = 'bucket'
-          )
-          """,
-          # dropping the view drops its columnstore; turning it off would fail
-          # while compressed chunks exist
-          down: "SELECT 1"
-        },
-        %{
-          name: :"#{minute}_columnstore_policy",
-          up: "CALL add_columnstore_policy('#{minute}', after => INTERVAL '2 days')",
-          down: "CALL remove_columnstore_policy('#{minute}')"
-        },
-        policy(minute, "1 minute", "1 minute", @minute_batch)
-      ]
+  # Each kind of view: the names of its 1-minute and 1-hour views, its
+  # 1-minute query over readings, and its 1-hour rollup of the 1-minute view.
+  # All 1-minute views come first, so the migration's down drops the 1-hour
+  # views before their sources.
+  defp kinds do
+    [
+      {:reading_numbers_1m, :reading_numbers_1h, numbers_1m(), number_rollup("idx")},
+      {:reading_states_1m, :reading_states_1h, states_1m(), state_rollup("idx, state")},
+      {:reading_member_numbers_1m, :reading_member_numbers_1h, member_numbers_1m(),
+       number_rollup("member, idx")},
+      {:reading_member_states_1m, :reading_member_states_1h, member_states_1m(),
+       state_rollup("member, idx, state")}
+    ]
   end
 
-  # statement names, built from this module's constants at compile time
-  # sobelow_skip ["DOS.BinToAtom"]
-  defp hour_tier(kind, rollup) do
-    hour = :"#{kind}_1h"
-
-    view(hour, String.replace(rollup, "$source", "#{kind}_1m")) ++
-      [policy(hour, "1 hour", "15 minutes", @hour_batch)]
-  end
-
-  # statement names, built from this module's constants at compile time
-  # sobelow_skip ["DOS.BinToAtom"]
-  defp policy(view, end_offset, schedule, batch) do
-    %{
-      name: :"#{view}_policy",
-      up: """
-      SELECT add_continuous_aggregate_policy('#{view}',
-        start_offset => NULL,
-        end_offset => INTERVAL '#{end_offset}',
-        schedule_interval => INTERVAL '#{schedule}',
-        buckets_per_batch => #{batch},
-        refresh_newest_first => false
+  # The 1-minute view over readings, with its columnstore and a refresh
+  # policy. Policies process the whole range (start_offset NULL), oldest
+  # first, and as many batches per run as are pending: see design decision 7
+  # of add-reading-aggregates.
+  defp minute_view(name, select) do
+    view(name, select, [
+      """
+      ALTER MATERIALIZED VIEW #{name} SET (
+        timescaledb.enable_columnstore = true,
+        timescaledb.segmentby = 'parameter_id',
+        timescaledb.orderby = 'bucket'
       )
       """,
-      down: "SELECT remove_continuous_aggregate_policy('#{view}')"
-    }
+      "CALL add_columnstore_policy('#{name}', after => INTERVAL '2 days')",
+      policy(name, "1 minute", "1 minute", @minute_batch)
+    ])
+  end
+
+  defp hour_view(name, source, rollup) do
+    view(name, String.replace(rollup, "$source", "#{source}"), [
+      policy(name, "1 hour", "15 minutes", @hour_batch)
+    ])
+  end
+
+  defp policy(view, end_offset, schedule, batch) do
+    """
+    SELECT add_continuous_aggregate_policy('#{view}',
+      start_offset => NULL,
+      end_offset => INTERVAL '#{end_offset}',
+      schedule_interval => INTERVAL '#{schedule}',
+      buckets_per_batch => #{batch},
+      refresh_newest_first => false
+    )
+    """
   end
 
   # The 1-hour rollups (design decision 5). `count` is cast back to bigint,
@@ -169,36 +152,36 @@ defmodule SecantService.SecNodes.Reading.AggregateViews do
     """
   end
 
-  # A view, created empty, and its index on (parameter_id, bucket). The
-  # group indexes TimescaleDB would add are off: the only one it would add
-  # besides that, on (idx, bucket), no query uses.
-  # statement names, built from this module's constants at compile time
-  # sobelow_skip ["DOS.BinToAtom"]
-  defp view(name, select) do
-    [
-      %{
-        name: name,
-        up: """
-        CREATE MATERIALIZED VIEW #{name}
-        WITH (
-          timescaledb.continuous,
-          timescaledb.materialized_only = true,
-          timescaledb.create_group_indexes = false
-        ) AS
-        #{select}
-        WITH NO DATA
-        """,
-        down: "DROP MATERIALIZED VIEW #{name}"
-      },
-      %{
-        name: :"#{name}_index",
-        up: "CREATE INDEX #{name}_parameter_id_bucket_index ON #{name} (parameter_id, bucket)",
-        # the index is on the view's materialization hypertable, in
-        # _timescaledb_internal, and goes with the view
-        down: "SELECT 1"
-      }
+  # A view's statement: the view, created empty, its index on
+  # (parameter_id, bucket), then `more` (columnstore and policies). The group
+  # indexes TimescaleDB would add are off: the only one it would add besides
+  # that, on (idx, bucket), no query uses.
+  defp view(name, select, more) do
+    sql = [
+      """
+      CREATE MATERIALIZED VIEW #{name}
+      WITH (
+        timescaledb.continuous,
+        timescaledb.materialized_only = true,
+        timescaledb.create_group_indexes = false
+      ) AS
+      #{select}
+      WITH NO DATA
+      """,
+      "CREATE INDEX #{name}_parameter_id_bucket_index ON #{name} (parameter_id, bucket)"
+      | more
     ]
+
+    %{
+      name: name,
+      code?: true,
+      up: Enum.map_join(sql, "\n", &execute/1),
+      down: execute("DROP MATERIALIZED VIEW #{name}")
+    }
   end
+
+  # migration code that runs one SQL command
+  defp execute(sql), do: ~s|execute(~S"""\n#{String.trim(sql)}\n""")\n|
 
   # Unpacks the direct members of a struct or tuple reading: one row per
   # member value, with `idx` 1 for a scalar member, 1.. for the elements of an

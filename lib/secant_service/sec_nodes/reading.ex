@@ -137,6 +137,7 @@ defmodule SecantService.SecNodes.Reading do
         statement aggregate.name do
           up aggregate.up
           down aggregate.down
+          code? Map.get(aggregate, :code?, false)
         end
       end
     end
