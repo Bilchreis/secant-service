@@ -67,10 +67,11 @@ A function `reading_member_values(reading jsonb, datainfo jsonb) RETURNS TABLE(m
 - unpacks array members into elements (1-based `idx`), with `idx = 1` for a scalar member;
 - yields, for each array member of any aggregated element type, its length as `idx = 0` with `type = 'length'`, as decision 2 does for top-level arrays;
 - yields only members whose declared type (or array element type) is `double`, `int`, `scaled`, `enum` or `bool`. Nested structs, tuples and strings yield nothing, which is how depth 1 is enforced;
-- checks shapes before unpacking: a struct reading must be a JSON object and a tuple reading a JSON array (`jsonb_typeof`), and an array member must be a JSON array. A reading or member of the wrong shape yields nothing instead of failing the refresh.
+- checks shapes before unpacking: a struct reading must be a JSON object and a tuple reading a JSON array (`jsonb_typeof`), and an array member must be a JSON array. A reading or member of the wrong shape yields nothing instead of failing the refresh;
+- unpacks an array member only if every element fits its declared type, as `Reading.Storage` decides for a top-level value: a double within float8 (up to its largest finite number as an exact integer, as in `Storage`), an int, scaled or enum a whole number within bigint, a bool a boolean. The check runs once per member (a lateral subquery with `OFFSET 0`, so Postgres doesn't pull it up into both branches). A top-level array with such an element is kept as JSON and not aggregated, so an array member like that yields neither its length nor its elements. The struct's other members are still aggregated.
 
 Both member views call it. `reading_member_numbers` takes `type IN ('double','int','scaled','length')` and `reading_member_states` takes `type IN ('enum','bool')`, and both validate `v` as decision 6 describes.
-- **Measured:** a full refresh of the 72 h struct took 5.2 s with the function and 3.6 s with the SQL written into the view, with the function as first written, which Postgres did not inline. A non-`STRICT` SQL function made of a single `SELECT` was inlined into the plan in round-3 testing, so the function is written that way and not marked `STRICT`. Task 2.2 compares its refresh time with SQL written into the view. Accepted either way: a refresh only processes new buckets, so this costs time only once, during backfill.
+- **Measured:** a full refresh of the 72 h struct took 5.2 s with the function and 3.6 s with the SQL written into the view, with the function as first written, which Postgres did not inline. A non-`STRICT` SQL function made of a single `SELECT` was inlined into the plan in round-3 testing, so the function is written that way and not marked `STRICT`. Implementation confirmed it: `EXPLAIN` of the member view's query shows no scan of `reading_member_values`, only the `jsonb_each` and `jsonb_array_elements` inside it, so the view runs the same plan as SQL written into it. Accepted either way: a refresh only processes new buckets, so this costs time only once, during backfill.
 - **Alternative:** writing the SQL into each view duplicates the struct and tuple branches four times (two views per tier, two tiers).
 
 ### 5. Extremes, first and last are stored as float8 array keys
@@ -106,7 +107,7 @@ Why:
 ### 6. Values that are left out
 
 - **Number views** keep a value only if `abs(v) < 1e290`. That drops NaN, ±Infinity and values too large to sum safely (decision 5). No instrument reading comes near 1e290.
-- **Member numbers** must be JSON numbers within that range, checked on `numeric` before any cast to float8, as `History.values/3` does. JSON accepts numbers such as `1e400` and `1e-400`, and casting them to float8 raises an error. So the check is `abs(n) < 1e290 AND (n = 0 OR abs(n) > 1e-290)` on `n = v::numeric`, and only then `n::float8`. Members declared `int` or `scaled` must also have no fractional part (`n = trunc(n)`), like the top-level `int`, whose fractional values end up in the JSON fallback. JSON has no NaN or Infinity, so members can't hold them.
+- **Member numbers** must be JSON numbers within that range, checked on `numeric` before any cast to float8, as `History.values/3` does. Members declared `int` or `scaled` must also be within bigint, as a top-level `int` must. JSON accepts numbers such as `1e400` and `1e-400`, and casting them to float8 raises an error. So the check is `abs(n) < 1e290 AND (n = 0 OR abs(n) > 2.4703282292062328e-324)` on `n = v::numeric`, and only then `n::float8`. The lower bound is half the smallest subnormal double: a nonzero number at or below it rounds to zero, and the cast raises. Members declared `int` or `scaled` (and enums) must also be whole numbers (`n = trunc(n)`) within bigint. Unlike a top-level `int`, whose floats `Reading.Storage` keeps as JSON, a whole-number float in a member counts as an integer: once in `jsonb` it can't be told from one. Jason writes `1000.0` as `1.0e3`, which `jsonb` stores as the integer 1000, and checking the scale would treat `2.0` and `1000.0` differently. Fractional values, such as 1.5, are left out. JSON has no NaN or Infinity, so members can't hold them.
 - **State views keep only non-NULL states.** An enum or bool reading that did not fit its type has NULL in its typed column, and the scalar `ARRAY[value_int]` would otherwise unnest it into a NULL state.
 - **Member enum states** must be JSON numbers with no fractional part, within the bigint range (−2^63 ≤ v < 2^63). A 1.5 would otherwise be cast to state 2, and a 1e30 would fail the refresh with `bigint out of range`. Oldest-first batches would then retry the failing batch on every run, and the view would stop advancing for every parameter.
 - **Member bool states** must be JSON booleans, mapped to 0 and 1 with `CASE`.
@@ -130,7 +131,7 @@ Each view is created with `timescaledb.create_group_indexes = false` and one exp
 
 ### 9. Read API: `SecantService.PlotDB.Aggregates`
 
-- `numbers(param, from, to, bucket_ms)` and `states(param, from, to, bucket_ms)` return `{:ok, %{tier:, materialized_until:, buckets: [...]}}`, `{:error, :unsupported_width}`, or `{:error, :not_aggregated}`. The last one comes back when the parameter has no aggregates of that kind: `numbers/4` on a string or a scalar enum, `states/4` on a double.
+- `numbers(param, from, to, bucket_ms)` and `states(param, from, to, bucket_ms)` return `{:ok, %{tier:, materialized_until:, buckets: [...]}}`, `{:error, :unsupported_width}`, or `{:error, :not_aggregated}`. The last one comes back when the parameter has no aggregates of that kind: `numbers/4` on a string or a scalar enum, `states/4` on a double, or either on a struct or tuple with no direct member of that kind, judged from the declared members.
 - The function picks the column or member view from the datainfo, and the coarsest tier that divides `bucket_ms` (`_1h` when it divides, else `_1m`; below 1 minute or not a multiple of it, an error).
 - **Window edges:** `from` and `to` are floored to the width in SQL, with `time_bucket(width, …)`, so the window uses the same origin as the rollup, also for multi-day widths. This is the normalized window: half-open, `[floor(from), floor(to))`. A bucket is returned only if it lies fully inside the normalized window and ends at or before `materialized_until`.
 - It rolls up with `time_bucket(width, bucket)` in one Ecto query, using the rollup in decision 5. Each bucket is a map with `bucket`, `member` (nil for non-member views), `idx`, and the plain fields. The query returns `sum` and `count`, and the mean (`sum / count`) is computed in Elixir. In SQL, `5e-324::float8 / 3` raises an underflow error, while Elixir returns 0.0.
@@ -146,7 +147,16 @@ Each view is created with `timescaledb.create_group_indexes = false` and one exp
   - One query per call. A struct with number and state members needs two calls.
   - About 288 rows for a scalar, 288 × 51 = 14,688 rows for a 50-element array (50 elements plus the length at idx 0), and 288 × (number of states) for an enum.
   - For 4 weeks at 2-hour buckets from `_1h`: 336 rows per element, read from 672 stored rows.
-  - Measured on the bench with the decision 5 columns: the 15-minute per-element rollup of the 50-element array took 153–166 ms uncompressed and 186 ms compressed, against 1.7 s for today's thinning.
+  - Measured with `Aggregates.numbers/4` on the bench (task 6.1), 15-minute buckets over 72 h, median of 5 runs, with the 1-minute views uncompressed and compressed:
+
+    | Parameter | Buckets returned | Uncompressed | Compressed |
+    |---|---|---|---|
+    | double | 288 | 10 ms | 12 ms |
+    | struct (4 number members) | 1,152 | 24 ms | 26 ms |
+    | 50-element array | 14,688 | 380 ms | 336 ms |
+    | 1000-element array | 288,288 | 5.7 s | 8.5 s |
+
+    Today's thinning takes 1.7 s for the 50-element array. The times include decoding the rows into maps in Elixir.
 
 ### 10. Migration via custom statements on `Reading`
 
@@ -160,19 +170,28 @@ Each view is created with `timescaledb.create_group_indexes = false` and one exp
 
 ## Risks / Trade-offs
 
-- **[Per-element rows for wide arrays are large]** A 1000-element spectrum at 1 reading/s gives about 1.44 M `_1m` rows a day.
-  - On the bench, the number view over 72 h of all parameters, with the decision 5 columns, took 75 MB (235,426 rows: 59 MB heap, 16 MB indexes), and 18 MB compressed.
-  - That projects to about 360 MB a day uncompressed and 110 MB a day compressed for a 1000-element array at 1 Hz. Fewer indexes (decision 8) lower both figures.
-  - → Accepted. The bench's wide-array case (task 6.1) records the actual size.
+- **[Per-element rows for wide arrays are large]** A 1000-element spectrum gives 1001 `_1m` rows per minute, about 1.44 M a day, however often it reads.
+  - Measured in task 6.1: on the bench, `reading_numbers_1m` over 72 h held 4.56 M rows, 4.32 M of them from a 1000-element array. It took 1184 MB uncompressed and 257 MB compressed. That is about 395 MB a day uncompressed and 85 MB a day compressed for one such array. `reading_numbers_1h` took 20 MB.
+  - → Accepted. The columnstore policy compresses the 1-minute views after 2 days.
+- **[A wide array at a fine width is a large read]** 15-minute buckets of the 1000-element array over 72 h are 288,288 rows and took 5.7 s (8.5 s compressed). → For the follow-up: a plot of a wide array needs coarser buckets or fewer elements than a scalar's.
 - **[The join reads the current `parameters` row]** A continuous aggregate does not re-materialize when a joined table changes. In practice this can't happen: `secant_client` issues a new uuid whenever a node's description changes, so a changed datainfo comes with a new SEC node and new parameter ids (see `NodeManager`). The `Parameter` upsert only rewrites an identical description.
 - **[Backfill load after deploy]** The first policy runs materialize every existing recording. → Batched (`buckets_per_batch`), oldest first, in TimescaleDB background workers, so node connections and ingest are not involved. Recent data becomes readable only once the backfill reaches it. That is acceptable, because nothing reads the aggregates in this change.
 - **[The nightly purge re-aggregates broadly]** `purge_trashed_nodes` (03:00) deletes a trashed SEC node's readings by cascade. TimescaleDB invalidates the whole time range of the deleted rows, for every parameter, so the next refresh re-materializes that range for all parameters, not just the deleted ones. The cost depends on the purged time span and on how many readings other parameters have in it, not on how many parameters were deleted. The purge also runs on demand from the data browser.
-  - With the decision 5 columns, deleting one parameter on a 24 h slice of the bench re-materialized the other parameters in 4.7 s, as long as the first backfill of that slice took (4.76 s). That scales to about 14 s for 72 h of the number view. The first definition, with `extract` and a numeric sum, took 35.6 s for 72 h.
-  - Until the invalidated range is worked off, oldest first, `materialized_until` doesn't move, so the newest buckets wait.
-  - → Accepted by the user, with `start_offset => NULL` kept, so deletes and late readings are always reflected. Task 3.3 measures the refresh time after a purge and how long `materialized_until` takes to catch up, and the result is reported to the user before the plot change builds on it. A finite `start_offset` would cap the cost but leave older deletes and late readings stale.
+  - Measured in task 3.3 with the final views, on a copy of the bench readings (72 h, 1.07 M readings), with the 1-minute policies at 360 buckets per batch:
+
+    | Deleted | Invalidated span | `reading_numbers_1m` run | `reading_member_numbers_1m` run |
+    |---|---|---|---|
+    | none (first backfill) | 72 h | 14.7–15.2 s | 7.4–7.7 s |
+    | a node with 2 h of readings | 2 h | 0.5 s | 0.3 s |
+    | one parameter of a 72 h recording | 72 h | 14.8 s | 7.3 s |
+
+    So a purge costs about as much as the first backfill of the span it deletes from. In both cases the deleted buckets were gone after that one run, and a reading inserted after the delete appeared at the end of the same run.
+  - Until the invalidated range is worked off, oldest first, the newest buckets wait: in the 72 h case, about 15 s for the number view.
+  - → Accepted by the user, with `start_offset => NULL` kept, so deletes and late readings are always reflected. The task 3.3 measurements above were reported to the user. A finite `start_offset` would cap the cost but leave older deletes and late readings stale.
 - **[The watermark uses an internal function]** `_timescaledb_functions.cagg_watermark` is not public API. → It is isolated in the read module and covered by a test that inserts readings newer than any other test's, refreshes, and checks that `materialized_until` lands at the end of their newest bucket. An upgrade that changes the function then fails the test suite. There is no silent fallback: `max(bucket)` is not a completeness boundary.
-- **[`CREATE OR REPLACE` doesn't re-materialize]** Changing `reading_member_values` in place changes how new buckets are built, but already materialized buckets stay as they were. → The `Reading` moduledoc says that a change to the function, like a change to a view, needs a migration that drops and recreates the views The new views are then backfilled by their policies. A manual `refresh_continuous_aggregate` runs newest first, unless its batching `options` say otherwise.
-- **[Compressed aggregate reads are slower]** On the bench, the 15-minute rollup of the 50-element array took 186 ms from compressed `_1m` rows against 153–166 ms uncompressed. → Accepted. It is still far below today's 1.7 s.
+- **[`CREATE OR REPLACE` doesn't re-materialize]** Changing `reading_member_values` in place changes how new buckets are built, but already materialized buckets stay as they were. → The `Reading` moduledoc says that a change to the function, like a change to a view, needs a migration that drops and recreates the views. The new views are then backfilled by their policies. A manual `refresh_continuous_aggregate` runs newest first, unless its batching `options` say otherwise.
+- **[Compressed aggregate reads are not much slower]** In task 6.1, the 50-element array read in 336 ms from compressed `_1m` rows against 380 ms uncompressed. The 1000-element array took 8.5 s against 5.7 s (decision 9). → Accepted.
+- **[Manual refreshes are slow unless batched]** `refresh_continuous_aggregate` without `options` runs in 10-bucket batches, newest first. Over the bench's 72 h, `reading_states_1m` took 30 s that way, and 1.0 s with `options => '{"buckets_per_batch": 360, "refresh_newest_first": false}'`, the policies' batching. With that batching, `reading_numbers_1m`, including the 1000-element array, took 40 s. → The bench and the `Reading` moduledoc use the policies' batching. The test helper refreshes small fixtures, where it doesn't matter.
 - **[Sandbox tests can't refresh]** `refresh_continuous_aggregate` cannot run inside a transaction. → The aggregate tests run setup, assertions and cleanup with `Ecto.Adapters.SQL.Sandbox.unboxed_run/2`, `async: false`, without `DataCase`'s shared sandbox owner. They delete their own SEC node in an `on_exit`, then refresh again to clear the views.
 - **[Policy jobs also run on the test database]** The 12 jobs run there too, and the watermark of the shared test views never moves back. → The aggregate tests pause the refresh jobs (`alter_job(…, scheduled => false)`) and resume them in `on_exit`. They assert relative to the `materialized_until` a call returns, test the never-refreshed sentinel on a view created for that test, and seed typed NaN readings with SQL, because the storage helper does not accept a NaN float.
 - **[Refresh cost of the member function]** It refreshes about 1.45× slower than SQL written into the view. → Only backfill notices this. If it matters, the function can be replaced by SQL written into the views without changing their output.

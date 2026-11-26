@@ -2,7 +2,7 @@
 
 ## Why
 
-Historical plots thin long recordings at query time, and for arrays and structs that is slow. On the bench's 72 h recording, an array or a struct takes about 1.7 s per initial load. Almost all of that is the thinning query, which reads and unnests every reading in the window (see #172 and #173). The query does the same work on every load and gets slower as a recording grows, and recordings can run for weeks. TimescaleDB continuous aggregates move that work into a background refresh. On the bench, a 15-minute per-element envelope of the 50-element array came back in about 160 ms from 1-minute aggregate rows, against 1.7 s today. This change sets up the aggregates and a way to read them. A later change will switch the plots over to them.
+Historical plots thin long recordings at query time, and for arrays and structs that is slow. On the bench's 72 h recording, an array or a struct takes about 1.7 s per initial load. Almost all of that is the thinning query, which reads and unnests every reading in the window (see #172 and #173). The query does the same work on every load and gets slower as a recording grows, and recordings can run for weeks. TimescaleDB continuous aggregates move that work into a background refresh. On the bench, a 15-minute per-element envelope of the 50-element array came back in about 350 ms from 1-minute aggregate rows, against 1.7 s today. This change sets up the aggregates and a way to read them. A later change will switch the plots over to them.
 
 ## What Changes
 
@@ -38,7 +38,7 @@ None. No existing specs; plot behaviour does not change in this change.
 
 ## Impact
 
-- **Database:** eight new continuous aggregates (numbers, states, member numbers and member states, each at 1 min and 1 h), their refresh policies, the columnstore on the four 1-minute views, and the 12 background jobs those run. They add storage. Per-element arrays are the largest part: about 75 MB for 72 h of the bench's parameters, including a 50-element array at 1 s, and 18 MB after compression.
+- **Database:** eight new continuous aggregates (numbers, states, member numbers and member states, each at 1 min and 1 h), their refresh policies, the columnstore on the four 1-minute views, and the 12 background jobs those run. They add storage. Per-element arrays are the largest part: about 75 MB for 72 h of the bench's parameters, including a 50-element array at 1 s, and 18 MB after compression. A 1000-element array adds about 395 MB a day, 85 MB compressed.
 - **Code:** custom statements on `SecantService.SecNodes.Reading` (so `ash.codegen` generates the migration), a new read module under `SecantService.PlotDB`, and tests. `History`, `Channels` and the plots are unchanged.
 - **Tests:** a continuous aggregate can't be refreshed inside the sandbox transaction, so the aggregate tests run outside it and clean up after themselves.
 - **Bench:** `bench/history_plots.exs` gets an aggregate read case, so the follow-up change has a baseline.

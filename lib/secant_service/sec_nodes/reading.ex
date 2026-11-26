@@ -25,6 +25,43 @@ defmodule SecantService.SecNodes.Reading do
   generator would run the old `down` first, and compression can't be turned
   off while compressed chunks exist. The policy statement regenerates
   cleanly.
+
+  ## Aggregates
+
+  Continuous aggregates keep per-bucket summaries of the readings that plots
+  draw. Their SQL is in `SecantService.SecNodes.Reading.AggregateViews`, and
+  `SecantService.PlotDB.Aggregates` reads them. Each view exists at a
+  1-minute tier over `readings` and a 1-hour tier rolled up from it:
+
+  - `reading_numbers_*`: `double`, `int` and `scaled` parameters and arrays
+    of them, per element (`idx` 1.., a scalar is `idx` 1), plus the length of
+    every aggregated array as `idx` 0. Stores min and max as
+    `[value, time, id]` keys, first and last as `[time, id, value]` keys,
+    and sum and count for the mean.
+  - `reading_states_*`: `enum` and `bool` parameters and arrays of them, one
+    row per state that occurs, with its first and last time and its count.
+  - `reading_member_numbers_*` and `reading_member_states_*`: the same for
+    the direct members of structs (keyed by name) and tuples (by position),
+    unpacked by the SQL function `reading_member_values`.
+
+  Times in the keys are epoch microseconds in float8, exact up to
+  2106-02-07. Strings, nested members, whole structs and values kept in
+  `value_json` because they did not fit their type are not aggregated.
+
+  Policies refresh the 1-minute views every minute and the 1-hour views every
+  15 minutes, over the whole range, oldest first, so late readings and
+  deletes reach every bucket. A view's watermark (`materialized_until` in the
+  reader) is only a high-water mark: buckets before it are not guaranteed to
+  be current until the next refresh has covered them.
+
+  A continuous aggregate's query can't be altered, and `CREATE OR REPLACE` on
+  `reading_member_values` doesn't re-materialize buckets already built with
+  it. Changing a view or the function therefore needs a hand-written
+  migration that drops and recreates the views. The policies then backfill
+  them. A manual `refresh_continuous_aggregate` runs in 10-bucket batches,
+  newest first, unless its `options` say otherwise; batched like the policies
+  (`%{buckets_per_batch: 360, refresh_newest_first: false}`), the bench's
+  `reading_states_1m` refreshed in 1 s instead of 30 s.
   """
   use Ash.Resource,
     domain: SecantService.SecNodes,
@@ -93,6 +130,14 @@ defmodule SecantService.SecNodes.Reading do
       statement :readings_columnstore_policy do
         up "CALL add_columnstore_policy('readings', after => INTERVAL '1 day')"
         down "CALL remove_columnstore_policy('readings')"
+      end
+
+      # The continuous aggregates, in creation order (see AggregateViews).
+      for aggregate <- SecantService.SecNodes.Reading.AggregateViews.statements() do
+        statement aggregate.name do
+          up aggregate.up
+          down aggregate.down
+        end
       end
     end
   end

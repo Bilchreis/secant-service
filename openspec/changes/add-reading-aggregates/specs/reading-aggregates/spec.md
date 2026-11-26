@@ -101,6 +101,10 @@ For a `struct` or `tuple` parameter, the system SHALL aggregate each direct memb
 - **WHEN** a tuple's datainfo declares `[double, enum]`
 - **THEN** member `0` gets number aggregates and member `1` gets state aggregates
 
+#### Scenario: Whole-number float in an integer member
+- **WHEN** an `int` member of a struct holds 2.0 in one reading and 1000.0 in another
+- **THEN** both are counted, as 2 and 1000, because a whole-number float in a member can't reliably be told from an integer once stored; a top-level `int` that receives a float is kept as JSON and not aggregated
+
 #### Scenario: Member with an unexpected value
 - **WHEN** a struct reading holds a string for a member whose datainfo declares `double`
 - **THEN** that member's value is left out of that bucket's aggregates, and the struct's other members are still aggregated
@@ -118,7 +122,7 @@ For a `struct` or `tuple` parameter, the system SHALL aggregate each direct memb
 - **THEN** that reading is in no aggregate, the refresh succeeds, and the parameter's other readings are aggregated
 
 ### Requirement: Readings without aggregates
-The system SHALL NOT aggregate strings, arrays of strings, struct or tuple values as a whole (only their direct members, as above), arrays of structs or tuples, or readings kept as JSON because their value did not fit the declared type. NaN, infinite values and numbers with an absolute value of 1e290 or more SHALL be left out of number aggregates, and so SHALL member numbers that float8 cannot hold (absolute value between 0 and 1e-290).
+The system SHALL NOT aggregate strings, arrays of strings, struct or tuple values as a whole (only their direct members, as above), arrays of structs or tuples, or readings kept as JSON because their value did not fit the declared type. NaN, infinite values and numbers with an absolute value of 1e290 or more SHALL be left out of number aggregates, and so SHALL member numbers that float8 cannot hold: nonzero values that round to zero, and values beyond its largest finite number.
 
 #### Scenario: Value that did not fit its type
 - **WHEN** an `int` parameter receives a float, which is stored as JSON

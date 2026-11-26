@@ -4,7 +4,7 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
 
 ## 1. Member function and column-backed number view
 
-- [ ] 1.1 Load the `ash-framework` skill. Add custom statements to `SecantService.SecNodes.Reading`, after the hypertable statements:
+- [x] 1.1 Load the `ash-framework` skill. Add custom statements to `SecantService.SecNodes.Reading`, after the hypertable statements:
   - the `reading_member_values(reading jsonb, datainfo jsonb)` function (design decision 4, with the shape guards and the declared `type` column);
   - `reading_numbers_1m` `WITH NO DATA`, following design decisions 2, 3, 5, 6 and 8:
     - the `round(date_part(…) * 1e6)` time key;
@@ -15,7 +15,7 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
   - `down` statements that drop them.
 
   Generate a dev migration with `MIX_ENV=test mix ash.codegen --dev` and apply it with `MIX_ENV=test mix ecto.migrate`. Verify that the statements come out in order and the test database migrates.
-- [ ] 1.2 Add a test helper in `test/support/`. It runs setup, assertions and cleanup outside the sandbox with `Ecto.Adapters.SQL.Sandbox.unboxed_run/2`, without `DataCase`'s shared owner. It:
+- [x] 1.2 Add a test helper in `test/support/`. It runs setup, assertions and cleanup outside the sandbox with `Ecto.Adapters.SQL.Sandbox.unboxed_run/2`, without `DataCase`'s shared owner. It:
   - pauses the aggregate refresh jobs (`alter_job(…, scheduled => false)`) and resumes them in `on_exit`, looking them up by view and tolerating none (they exist only from task 3.1 on);
   - creates a SEC node, module and parameter with a given datainfo;
   - inserts readings through `Storage.to_row/4` and `SecNodes.insert_readings/1`, and typed NaN readings through SQL;
@@ -23,7 +23,7 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
   - in `on_exit`, deletes the SEC node and refreshes again.
 
   Verify it with the first test of 1.3, and check that no SEC node is left behind.
-- [ ] 1.3 Write tests in `test/secant_service/reading_aggregates_test.exs` for `reading_numbers_1m`. Cover these spec scenarios:
+- [x] 1.3 Write tests in `test/secant_service/reading_aggregates_test.exs` for `reading_numbers_1m`. Cover these spec scenarios:
   - double bucket;
   - equal extremes;
   - readings with the same timestamp;
@@ -45,7 +45,7 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
 
 ## 2. State views and member views
 
-- [ ] 2.1 Add `reading_states_1m`, `reading_member_numbers_1m` and `reading_member_states_1m` as custom statements, with the nested-`CASE` guards of design decision 6. Generate them with another `MIX_ENV=test mix ash.codegen --dev` and migrate the test database. Test them against these spec scenarios:
+- [x] 2.1 Add `reading_states_1m`, `reading_member_numbers_1m` and `reading_member_states_1m` as custom statements, with the nested-`CASE` guards of design decision 6. Generate them with another `MIX_ENV=test mix ash.codegen --dev` and migrate the test database. Test them against these spec scenarios:
   - enum changes state;
   - bool as 0/1;
   - int is not a state;
@@ -60,7 +60,7 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
   - the length (element 0) of an array member.
 
   Also test that a fractional value of an `int` member is left out, and the spec scenario "Enum reading that did not fit its type" (no NULL state row). Add these to `reading_aggregates_test.exs` and verify they pass.
-- [ ] 2.2 Test `reading_member_values` directly. Cover at least:
+- [x] 2.2 Test `reading_member_values` directly. Cover at least:
   - struct, tuple and array members with their `length` row (idx 0), including enum and bool arrays;
   - the declared `type` of each row;
   - nested struct skipped;
@@ -74,7 +74,7 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
 
 ## 3. Hourly tier, policies and columnstore
 
-- [ ] 3.1 Add these as custom statements, through `MIX_ENV=test mix ash.codegen --dev` on the test database:
+- [x] 3.1 Add these as custom statements, through `MIX_ENV=test mix ash.codegen --dev` on the test database:
   - the four `_1h` views on top of their `_1m` sources (rollup of design decision 5, with `sum(count)::bigint`);
   - the refresh policies of design decision 7: `start_offset => NULL`, an explicit `refresh_newest_first => false`, and `max_batches_per_execution` left unlimited;
   - the columnstore settings and policies on the four `_1m` views (design decision 8).
@@ -83,8 +83,8 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
   - 1-hour buckets equal the same hour rolled up from `_1m`;
   - `timescaledb_information.jobs` lists one refresh job per view and one columnstore job per `_1m` view, 12 in all, and every refresh job has `config->>'refresh_newest_first' = 'false'`;
   - staggered refreshes: refresh `_1m` for half an hour, then `_1h`, then `_1m` for the rest of the hour. The hour is stale until the next `_1h` refresh, and correct after it.
-- [ ] 3.2 Pick `buckets_per_batch` on the bench database, using copies of the view SQL created by hand under a `tmp_` prefix and dropped afterwards. Do not use migrations or the bench script. Add each policy and pause it (`alter_job(…, scheduled => false)`) in one transaction, so the scheduler doesn't race the manual run. Then time one policy run (`CALL run_job(<id>)`) on a sparse and on a dense fixture. Record the value, and each run's duration and batch count, in a comment next to the policy statement.
-- [ ] 3.3 Write tests for the spec scenarios "Parameter deleted" (all tiers) and "Late reading" (both tiers). Verify they pass. On the same `tmp_` copies on the bench database:
+- [x] 3.2 Pick `buckets_per_batch` on the bench database, using copies of the view SQL created by hand under a `tmp_` prefix and dropped afterwards. Do not use migrations or the bench script. Add each policy and pause it (`alter_job(…, scheduled => false)`) in one transaction, so the scheduler doesn't race the manual run. Then time one policy run (`CALL run_job(<id>)`) on a sparse and on a dense fixture. Record the value, and each run's duration and batch count, in a comment next to the policy statement.
+- [x] 3.3 Write tests for the spec scenarios "Parameter deleted" (all tiers) and "Late reading" (both tiers). Verify they pass. On the same `tmp_` copies on the bench database:
   - on disposable copies of the source data, time the refresh that follows deleting one SEC node's readings, as the purge does, until the purged buckets are correct again;
   - separately, time how long a newly eligible bucket takes to appear after that delete;
   - record both in the design's purge risk and report them to the user;
@@ -92,12 +92,12 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
 
 ## 4. Migration
 
-- [ ] 4.1 Check that `priv/repo/migrations` holds no `_dev` migrations other than this change's. Then fold them into one with `MIX_ENV=test mix ash.codegen add_reading_aggregates`, which rolls back the dev migrations on the test database and deletes them. Migrate the test database again and check the generated migration:
+- [x] 4.1 Check that `priv/repo/migrations` holds no `_dev` migrations other than this change's. Then fold them into one with `MIX_ENV=test mix ash.codegen add_reading_aggregates`, which rolls back the dev migrations on the test database and deletes them. Migrate the test database again and check the generated migration:
   - each view is created `WITH NO DATA`, and `_1h` after `_1m`;
   - `down` drops the `_1h` views, then the `_1m` views, then the function.
 
   Verify with `MIX_ENV=test mix ash.codegen --check`, and with `MIX_ENV=test mix ecto.rollback --step 1 && MIX_ENV=test mix ecto.migrate`. Do not run it against the dev database: the user applies it there.
-- [ ] 4.2 Document the aggregates in the `Reading` moduledoc:
+- [x] 4.2 Document the aggregates in the `Reading` moduledoc:
   - which views exist, what they store, and the tiers;
   - that `materialized_until` is a high-water mark only;
   - that the keys support timestamps up to 2106-02-07;
@@ -108,7 +108,7 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
 
 ## 5. Read API
 
-- [ ] 5.1 Add `SecantService.PlotDB.Aggregates` with `numbers/4` and `states/4` (design decision 9). It covers:
+- [x] 5.1 Add `SecantService.PlotDB.Aggregates` with `numbers/4` and `states/4` (design decision 9). It covers:
   - tier choice;
   - `{:error, :unsupported_width}` and `{:error, :not_aggregated}`;
   - the normalized window, floored in SQL with `time_bucket`, with only fully contained buckets returned;
@@ -126,11 +126,11 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
   - "Kind of aggregate the parameter does not have".
 
   Add the watermark test from the design's Risks: readings newer than any other test's, a refresh, and `materialized_until` checked against the end of their newest bucket. Verify the tests pass.
-- [ ] 5.2 Assert in a test that one `numbers/4` call issues exactly one query (Repo telemetry, as in `history_test.exs`). Verify it passes.
+- [x] 5.2 Assert in a test that one `numbers/4` call issues exactly one query (Repo telemetry, as in `history_test.exs`). Verify it passes.
 
 ## 6. Bench baseline
 
-- [ ] 6.1 Only after 4.1, add an aggregate read case to `bench/history_plots.exs`:
+- [x] 6.1 Only after 4.1, add an aggregate read case to `bench/history_plots.exs`:
   - refresh the bench's aggregates once;
   - time `Aggregates.numbers/4` at 15-minute buckets over 72 h for the double, array and struct parameters, both uncompressed and after compressing the `_1m` views;
   - add a 1000-element array parameter, and report the size of each view before and after compression.
@@ -139,4 +139,4 @@ Every `ash.codegen` command in this change runs under `MIX_ENV=test`, including 
 
 ## 7. Wrap-up
 
-- [ ] 7.1 Run `mix precommit` and fix everything it reports, until it passes.
+- [x] 7.1 Run `mix precommit` and fix everything it reports, until it passes.
