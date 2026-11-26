@@ -264,16 +264,17 @@ defmodule HistoryBench.Setup do
      "ARRAY(SELECT sin(i / 600.0 + k / 5.0) * 10 + random() FROM generate_series(1, #{len}) AS k)"}
   end
 
+  # wrapped in "value", as the app stores a struct (see Reading.Storage)
   defp value_sql("struct", _len) do
     {"value_json",
      """
-     jsonb_build_object(
+     jsonb_build_object('value', jsonb_build_object(
        'temperature', sin(i / 600.0) * 10 + 290 + random(),
        'pressure', 1000 + cos(i / 900.0) * 50 + random(),
        'flow', random() * 5,
        'mode', (i / 1800) % 4,
        'count', i % 1000
-     )
+     ))
      """}
   end
 
