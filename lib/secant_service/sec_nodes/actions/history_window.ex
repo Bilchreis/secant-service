@@ -21,8 +21,12 @@ defmodule SecantService.SecNodes.Actions.HistoryWindow do
       to_ms = Map.get(args, :to_ms)
 
       case input.action.name do
-        :history_window -> {:ok, History.window(parameter, from_ms, to_ms, opts)}
-        :history_resolution -> {:ok, History.resolution(parameter, from_ms, to_ms, opts)}
+        :history_window ->
+          opts = if Map.get(args, :envelope) == true, do: [{:envelope, true} | opts], else: opts
+          {:ok, History.window(parameter, from_ms, to_ms, opts)}
+
+        :history_resolution ->
+          {:ok, History.resolution(parameter, from_ms, to_ms, opts)}
       end
     end
   end

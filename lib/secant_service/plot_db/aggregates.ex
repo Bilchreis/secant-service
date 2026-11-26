@@ -21,7 +21,8 @@ defmodule SecantService.PlotDB.Aggregates do
   current; a late reading or a delete appears after the next refresh. It is
   `nil` while a view has never been refreshed.
 
-  Nothing reads these yet; the plots switch over in a later change.
+  The historical plots read them for envelope windows (see "Envelope" in
+  `SecantService.PlotDB.History`).
   """
 
   alias SecantService.PlotDB.Aggregates.Queries

@@ -306,15 +306,19 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   # A zoomed historical chart asks for the readings of the window it shows.
-  # Long windows come back thinned out, short ones with every reading.
+  # Long windows come back thinned out, short ones with every reading, and
+  # with `envelope: true` as min/mean/max envelopes where the aggregates
+  # cover them (see SecantService.PlotDB.History).
   def handle_event(
         "fetch-chart-window",
-        %{"from" => from_ms, "to" => to_ms, "req" => req},
+        %{"from" => from_ms, "to" => to_ms, "req" => req} = params,
         %{assigns: %{plot: %AsyncResult{ok?: true, result: %{option: %{_windowFetch: _}} = plot}}} =
           socket
       )
       when is_number(from_ms) and is_number(to_ms) and from_ms <= to_ms do
     secop_obj = socket.assigns.secop_obj
+    envelope = envelope_flag(params)
+    gen = gen(params)
     # the window comes from the browser: keep it to dates the history
     # actions accept (year 0 up to a day from now), so a forged one can't
     # crash the fetch
@@ -329,27 +333,63 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       |> start_async(:fetch_chart_window, fn ->
         windows =
           for param <- PlotDB.history_params(secop_obj) do
-            {param, SecNodes.history_window!(param.id, trunc(from_ms), trunc(to_ms))}
+            args = if envelope?(secop_obj, param, envelope), do: %{envelope: true}, else: %{}
+            window = SecNodes.history_window!(param.id, trunc(from_ms), trunc(to_ms), args)
+            {values, timestamps} = held_window(param, from_ms, window)
+            {param, values, timestamps, Map.take(window, [:aggregated, :bucket_ms, :envelope])}
           end
 
-        updates =
-          Enum.map(windows, fn {param, window} ->
-            {values, timestamps} = held_window(param, from_ms, window)
-            datapoints = Enum.zip(values, timestamps)
-            PlotDB.get_trace_updates_batch(plot, datapoints, param.name)
-          end)
-
         windows
-        |> Enum.map(&elem(&1, 1))
-        |> History.coarsest()
-        |> Map.merge(merge_trace_updates(updates))
-        |> Map.merge(%{from: from_ms, to: to_ms, req: req})
+        |> window_reply(plot)
+        |> Map.merge(%{from: from_ms, to: to_ms, req: req, gen: gen, envelope: envelope})
       end)
 
     {:noreply, socket}
   end
 
   def handle_event("fetch-chart-window", _params, socket), do: {:noreply, socket}
+
+  # The envelope was switched on or off: the whole recording again, as on
+  # the first load, in the chosen mode. Runs on its own task, so a window
+  # fetch sent meanwhile neither cancels it nor is cancelled by it.
+  def handle_event(
+        "fetch-chart-overview",
+        params,
+        %{assigns: %{plot: %AsyncResult{ok?: true, result: %{option: %{_windowFetch: _}} = plot}}} =
+          socket
+      ) do
+    secop_obj = socket.assigns.secop_obj
+    envelope = envelope_flag(params)
+    gen = gen(params)
+
+    socket =
+      socket
+      |> assign(:overview_gen, gen)
+      |> cancel_async(:fetch_chart_overview)
+      |> start_async(:fetch_chart_overview, fn ->
+        windows =
+          for param <- PlotDB.history_params(secop_obj) do
+            {values, timestamps, resolution} =
+              Builders.fetch_param_window(param, :historical,
+                envelope: envelope?(secop_obj, param, envelope)
+              )
+
+            {param, values, timestamps, resolution}
+          end
+
+        # longer readings than the heatmap carries: the latest-reading plot
+        case Enum.find(windows, fn {param, values, timestamps, _} ->
+               PlotDB.outgrown(plot, secop_obj, Enum.zip(values, timestamps), param.name)
+             end) do
+          {param, _, _, _} -> {:rebuild, param}
+          nil -> windows |> window_reply(plot) |> Map.merge(%{gen: gen, envelope: envelope})
+        end
+      end)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("fetch-chart-overview", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_event("request-chart-data", %{"id" => chart_id}, %{assigns: assigns} = socket) do
@@ -536,6 +576,28 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     {:noreply, socket}
   end
 
+  def handle_async(:fetch_chart_overview, {:ok, {:rebuild, param}}, socket) do
+    {:noreply, rebuild_as_latest(socket, param, fn -> ArrayLatest.fetch_latest(param) end)}
+  end
+
+  def handle_async(:fetch_chart_overview, {:ok, overview}, socket) do
+    {:noreply, push_event(socket, "overview-chart-data-#{socket.assigns.id}", overview)}
+  end
+
+  # replaced by a newer reload, or by rebuild_as_latest/3
+  def handle_async(:fetch_chart_overview, {:exit, {:shutdown, :cancel}}, socket),
+    do: {:noreply, socket}
+
+  # the hook goes back to the mode it has loaded
+  def handle_async(:fetch_chart_overview, {:exit, reason}, socket) do
+    Logger.error("Chart overview reload failed: #{inspect(reason)}")
+
+    {:noreply,
+     push_event(socket, "overview-chart-error-#{socket.assigns.id}", %{
+       gen: socket.assigns[:overview_gen]
+     })}
+  end
+
   def handle_async(:reload_calibration_plot, {:ok, calib}, socket) do
     socket =
       assign(socket, :calibration_plot, AsyncResult.ok(socket.assigns.calibration_plot, calib))
@@ -565,7 +627,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class={["flex min-w-0 flex-1 flex-col", assigns[:class]]}>
+    <div id={"history-#{@id}"} class={["flex min-w-0 flex-1 flex-col", assigns[:class]]}>
       <div :if={@display_mode != :empty} class="mb-1.5 flex flex-wrap items-center gap-1">
         <button
           :if={@plottable}
@@ -598,6 +660,14 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           role="group"
           aria-label="Array plot style"
           class="ml-2 flex rounded border border-line p-0.5 empty:hidden"
+        >
+        </div>
+        <%!-- min/mean/max envelope on or off, filled by the chart hook for historical line plots --%>
+        <div
+          :if={@display_mode == :graph}
+          id={"envelope-toggle-#{@id}"}
+          phx-update="ignore"
+          class="flex empty:hidden"
         >
         </div>
         <span class="flex-1"></span>
@@ -748,6 +818,55 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   # a window from the start holds that reading again. A setpoint holds until
   # the next one, so every window starts with the setpoint in force.
   defp latest_window_ms, do: System.os_time(:millisecond) + :timer.hours(24)
+
+  # Only a literal `true` switches the envelope on: the event comes from the
+  # browser.
+  defp envelope_flag(%{"envelope" => true}), do: true
+  defp envelope_flag(_params), do: false
+
+  defp gen(%{"gen" => gen}) when is_integer(gen), do: gen
+  defp gen(_params), do: nil
+
+  # the envelope is asked for, and this parameter's line may carry one
+  defp envelope?(_secop_obj, _param, false), do: false
+
+  defp envelope?(secop_obj, param, true),
+    do: Enum.any?(PlotDB.envelope_params(secop_obj), fn {p, _kind} -> p.id == param.id end)
+
+  # One reply for a plot's windows: their series updates, envelope payloads,
+  # resolution and array width. `windows` are `{param, values, timestamps,
+  # resolution}`, the resolution carrying the window's `envelope`.
+  defp window_reply(windows, plot) do
+    {updates, envelopes} =
+      windows
+      |> Enum.map(fn {param, values, timestamps, resolution} ->
+        envelope = resolution[:envelope]
+        update = PlotDB.get_trace_updates_batch(plot, Enum.zip(values, timestamps), param.name)
+        # a bucket's mean array has nil for an element without a row
+        update = if envelope, do: PlotDB.drop_nil_points(update), else: update
+        update = Map.update(update, :arrayLen, nil, &max(&1 || 0, rows_len(envelope)))
+        {update, PlotDB.envelope_updates(plot, param.name, envelope)}
+      end)
+      |> Enum.unzip()
+
+    envelopes = Enum.reject(envelopes, &is_nil/1)
+
+    resolutions = Enum.map(windows, &elem(&1, 3))
+
+    resolutions
+    |> History.coarsest()
+    |> Map.merge(merge_trace_updates(updates))
+    |> Map.merge(%{
+      envelopes: envelopes,
+      envelope_bucket_ms: envelopes |> Enum.map(& &1.bucket_ms) |> Enum.max(fn -> nil end)
+    })
+  end
+
+  # elements an array envelope's rows reach (rows are [t, i, min, mean, max])
+  defp rows_len(%{rows: [[_t, _i, _min, _mean, _max] | _] = rows}),
+    do: rows |> Enum.map(&(Enum.at(&1, 1) + 1)) |> Enum.max()
+
+  defp rows_len(_envelope), do: 0
 
   defp held_window(param, from_ms, window) do
     if param.name == "target" or from_ms <= Builders.plot_start_ms(param) do
