@@ -153,7 +153,7 @@ defmodule SecantService.MixProject do
       {:pythonx, "~> 0.4.4"},
       {:flame_on, git: "https://github.com/DockYard/flame_on.git", only: :dev},
       {:meck, "~> 1.0", override: true},
-      {:benchee, "~> 1.5", only: :dev},
+      {:benchee, "~> 1.5", only: [:dev, :test]},
       # test too: `mix precommit` (test env) runs usage_rules.sync
       {:igniter, "~> 0.6", only: [:dev, :test]},
       {:usage_rules, "~> 1.3", only: [:dev, :test]}

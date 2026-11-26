@@ -15,10 +15,13 @@ defmodule SecantService.PlotDB.Calibratable do
     value_param = find_param(module, "value")
 
     if value_param && value_param.datainfo["type"] in @scalar_types do
-      {v_val, v_ts} = fetch_param_data(value_param, mode)
-      {t_val, t_ts} = fetch_optional(find_param(module, "target"), mode, :held)
-      {vu_val, vu_ts} = fetch_optional(find_param(module, "_value_uncalibrated"), mode)
-      {tc_val, tc_ts} = fetch_optional(find_param(module, "_target_calibrated"), mode)
+      {v_val, v_ts, v_res} = fetch_param_window(value_param, mode)
+      {t_val, t_ts, t_res} = fetch_optional(find_param(module, "target"), mode, :held)
+
+      {vu_val, vu_ts, vu_res} =
+        fetch_optional(find_param(module, "_value_uncalibrated"), mode)
+
+      {tc_val, tc_ts, tc_res} = fetch_optional(find_param(module, "_target_calibrated"), mode)
 
       unit = get_in(value_param.datainfo, ["unit"])
 
@@ -47,6 +50,7 @@ defmodule SecantService.PlotDB.Calibratable do
          _plot_spec_module: __MODULE__,
          _param_dtype_modules: param_dtype_modules
        }}
+      |> with_resolution([v_res, t_res, vu_res, tc_res])
     else
       :not_plottable
     end
@@ -55,9 +59,9 @@ defmodule SecantService.PlotDB.Calibratable do
   # Only "value" is required; the module may lack the other parameters (they
   # were renamed between interface class versions). Missing ones plot empty.
   defp fetch_optional(param, mode, kind \\ :plain)
-  defp fetch_optional(nil, _mode, _kind), do: {[], []}
-  defp fetch_optional(param, mode, :held), do: fetch_held_param_data(param, mode)
-  defp fetch_optional(param, mode, :plain), do: fetch_param_data(param, mode)
+  defp fetch_optional(nil, _mode, _kind), do: {[], [], %{aggregated: false, bucket_ms: nil}}
+  defp fetch_optional(param, mode, :held), do: fetch_held_param_window(param, mode)
+  defp fetch_optional(param, mode, :plain), do: fetch_param_window(param, mode)
 
   @impl true
   def trace_updates(

@@ -18,7 +18,7 @@ defmodule SecantService.PlotDB.Readable do
     value_param = find_param(module, "value")
 
     if value_param do
-      {val, ts} = fetch_param_data(value_param, mode)
+      {val, ts, resolution} = fetch_param_window(value_param, mode)
       unit = get_in(value_param.datainfo, ["unit"])
       dtype_mod = DTypePlot.for_datainfo(value_param.datainfo)
 
@@ -78,6 +78,7 @@ defmodule SecantService.PlotDB.Readable do
              _param_dtype_modules: %{"value" => dtype_mod}
            }}
       end
+      |> with_resolution([resolution])
     else
       :not_plottable
     end

@@ -43,7 +43,6 @@ defmodule SecantService.PlotDB do
           %Parameter{} = param -> parameter_plot(param, mode)
           %Module{} = mod -> module_plot(mod, mode)
         end
-        |> put_history_resolution(secop_obj)
     end
   end
 
@@ -60,20 +59,6 @@ defmodule SecantService.PlotDB do
 
   defp resolve_param(%Parameter{} = param, _name), do: param
   defp resolve_param(%Module{} = module, name), do: Builders.find_param(module, name)
-
-  # Historical plots that load more detail on zoom start with thinned-out
-  # readings when the recording is long: tell the chart, so it can say so.
-  defp put_history_resolution(%{option: %{_windowFetch: _}} = plot, secop_obj) do
-    resolution =
-      secop_obj
-      |> history_params()
-      |> Enum.map(&SecNodes.history_resolution!(&1.id, Builders.plot_start_ms(&1), nil))
-      |> History.coarsest()
-
-    put_in(plot, [:option, :_windowFetch], resolution)
-  end
-
-  defp put_history_resolution(plot, _secop_obj), do: plot
 
   # Arrays longer than the heatmap can carry are plotted as their latest
   # reading only. Checked before any history is loaded: a few minutes of a
@@ -157,7 +142,7 @@ defmodule SecantService.PlotDB do
 
   def parameter_plot(parameter, mode \\ :live) do
     if plottable?(parameter) do
-      {val, ts} = Builders.fetch_param_data(parameter, mode)
+      {val, ts, resolution} = Builders.fetch_param_window(parameter, mode)
       unit = get_in(parameter.datainfo, ["unit"])
 
       case parameter.datainfo["type"] do
@@ -217,6 +202,7 @@ defmodule SecantService.PlotDB do
             option: option
           }
       end
+      |> Builders.put_resolution([resolution])
     else
       not_plottable()
     end

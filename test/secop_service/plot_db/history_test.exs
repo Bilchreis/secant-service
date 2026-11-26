@@ -460,6 +460,14 @@ defmodule SecantService.PlotDB.HistoryTest do
     end
   end
 
+  defp count_messages(message, count \\ 0) do
+    receive do
+      ^message -> count_messages(message, count + 1)
+    after
+      0 -> count
+    end
+  end
+
   # the session of `parameter` started at `at`
   defp start_session_at(parameter, at) do
     %{module: %{sec_node: node}} = SecNodes.get_parameter!(parameter.id)
@@ -515,6 +523,46 @@ defmodule SecantService.PlotDB.HistoryTest do
         plot = PlotDB.init(parameter, :historical)
         assert %{aggregated: true} = plot.option._windowFetch, datainfo["type"]
       end
+    end
+
+    # The plot takes its resolution from the readings it loaded, instead of
+    # asking the database again for each parameter.
+    test "a drivable plot reports its resolution without a second pass" do
+      module = generate(sec_module(interface_classes: ["Drivable"]))
+      value = generate(parameter(module_id: module.id, name: "value"))
+      target = generate(parameter(module_id: module.id, name: "target"))
+      start_session_at(value, @start)
+      insert_readings(value, 4000, &(rem(&1, 10) * 1.0))
+      insert_readings(target, 3, &(&1 * 1.0))
+      module = Ash.load!(module, :parameters)
+
+      ref = make_ref()
+      test_pid = self()
+
+      :telemetry.attach(
+        "#{inspect(ref)}",
+        [:secant_service, :repo, :query],
+        fn _event, _measurements, _meta, _ -> send(test_pid, {ref, :query}) end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach("#{inspect(ref)}") end)
+
+      plot = PlotDB.init(module, :historical)
+      :telemetry.detach("#{inspect(ref)}")
+
+      assert plot.option._windowFetch ==
+               History.coarsest([
+                 SecNodes.history_resolution!(value.id, ms(0), nil),
+                 SecNodes.history_resolution!(target.id, ms(0), nil)
+               ])
+
+      assert %{aggregated: true} = plot.option._windowFetch
+
+      # per parameter: its session start, its second reading, the window
+      # (parameter, bounds, count, readings) and the held reading before it;
+      # loading the resolution again doubled this
+      assert count_messages({ref, :query}) <= 14
     end
 
     test "a zoomed enum window comes back as state points" do

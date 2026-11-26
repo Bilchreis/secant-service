@@ -7,6 +7,8 @@ defmodule SecantService.PlotDB.Builders do
   alias SecantService.SecNodes.Reading.Storage
   alias SecantService.NodeValues
 
+  @unthinned %{aggregated: false, bucket_ms: nil}
+
   # ---------------------------------------------------------------------------
   # Parameter helpers
   # ---------------------------------------------------------------------------
@@ -19,33 +21,67 @@ defmodule SecantService.PlotDB.Builders do
   # Data fetching
   # ---------------------------------------------------------------------------
 
-  # The whole recording: from the session start on, thinned out in the
-  # database (see `History`) for every type the plots draw. The chart asks for more
-  # detail when it is zoomed in.
-  #
-  # Readings carry the node's timestamp, which for a parameter that has not
-  # changed in a while (a setpoint, a configuration value) is the time of its
-  # last change, often days before the recording began. Such a reading would
-  # stretch the time axis back to then and squeeze the recording against its
-  # right edge, so it is pinned to where the plot starts instead (see
-  # `plot_start_ms/1`).
-  def fetch_param_data(param, :historical) do
-    from_ms = plot_start_ms(param)
-
-    {values, timestamps} =
-      if History.thinnable?(param) do
-        %{values: values, timestamps: timestamps} =
-          SecNodes.history_window!(param.id, from_ms, nil)
-
-        {values, timestamps}
-      else
-        fetch_param_data_in_range(param, from_ms, nil)
-      end
-
-    hold_from(param, from_ms, values, timestamps)
+  @doc """
+  Like `fetch_param_window/2`, without the resolution.
+  """
+  def fetch_param_data(param, mode) do
+    {values, timestamps, _resolution} = fetch_param_window(param, mode)
+    {values, timestamps}
   end
 
-  def fetch_param_data(param, :live) do
+  @doc """
+  The readings a plot of `param` starts with, as `{values, timestamps,
+  resolution}`. The resolution says whether they were thinned out (see
+  `History.resolution/4`); a plot passes it on with `put_resolution/2`, so
+  the chart need not ask the database again.
+
+  Historical: the whole recording from the session start on, thinned out in
+  the database (see `History`) for every type the plots draw. The chart asks
+  for more detail when it is zoomed in.
+
+  Readings carry the node's timestamp, which for a parameter that has not
+  changed in a while (a setpoint, a configuration value) is the time of its
+  last change, often days before the recording began. Such a reading would
+  stretch the time axis back to then and squeeze the recording against its
+  right edge, so it is pinned to where the plot starts instead (see
+  `plot_start_ms/1`).
+  """
+  def fetch_param_window(param, :historical) do
+    from_ms = plot_start_ms(param)
+
+    {values, timestamps, resolution} =
+      if History.thinnable?(param) do
+        window = SecNodes.history_window!(param.id, from_ms, nil)
+        {window.values, window.timestamps, Map.take(window, [:aggregated, :bucket_ms])}
+      else
+        {values, timestamps} = fetch_param_data_in_range(param, from_ms, nil)
+        {values, timestamps, @unthinned}
+      end
+
+    {values, timestamps} = hold_from(param, from_ms, values, timestamps)
+    {values, timestamps, resolution}
+  end
+
+  def fetch_param_window(param, :live) do
+    {values, timestamps} = fetch_live_data(param)
+    {values, timestamps, @unthinned}
+  end
+
+  @doc """
+  Puts the resolution of the readings a historical plot was built from on
+  its chart (`_windowFetch`, see `history_zoom/2`): thinned out if any of
+  them is, with the widest bucket. Other plots are returned as they are.
+  """
+  def put_resolution(%{option: %{_windowFetch: _}} = plot, resolutions),
+    do: put_in(plot, [:option, :_windowFetch], History.coarsest(resolutions))
+
+  def put_resolution(plot, _resolutions), do: plot
+
+  @doc "`put_resolution/2` on a `PlotSpec.plot/2` result."
+  def with_resolution({:ok, plot}, resolutions), do: {:ok, put_resolution(plot, resolutions)}
+  def with_resolution(result, _resolutions), do: result
+
+  defp fetch_live_data(param) do
     {from_ms, to_ms, _buttons, _active} = default_live_range_ms()
     windowed = fetch_param_data_in_range(param, from_ms, to_ms)
 
@@ -59,18 +95,19 @@ defmodule SecantService.PlotDB.Builders do
   end
 
   @doc """
-  Like `fetch_param_data/2`, for a setpoint (`target`). A setpoint is only
+  Like `fetch_param_window/2`, for a setpoint (`target`). A setpoint is only
   recorded when it changes, so a live window often holds no reading of it at
   all. The last reading before the window is added, pinned to the window
   start, so the plot shows the setpoint in force since then.
   """
-  def fetch_held_param_data(param, :live) do
+  def fetch_held_param_window(param, :live) do
     {from_ms, _to_ms, _buttons, _active} = default_live_range_ms()
-    {values, timestamps} = fetch_param_data(param, :live)
-    hold_from(param, from_ms, values, timestamps)
+    {values, timestamps} = fetch_live_data(param)
+    {values, timestamps} = hold_from(param, from_ms, values, timestamps)
+    {values, timestamps, @unthinned}
   end
 
-  def fetch_held_param_data(param, mode), do: fetch_param_data(param, mode)
+  def fetch_held_param_window(param, mode), do: fetch_param_window(param, mode)
 
   @doc """
   Puts the last reading before `from_ms` in front of `values`/`timestamps`,
@@ -143,7 +180,7 @@ defmodule SecantService.PlotDB.Builders do
   and the plot begins at that reading instead, so no recorded data is hidden.
   """
   def plot_start_ms(param) do
-    %{module: %{sec_node: %{inserted_at: started}}} = SecNodes.get_parameter!(param.id)
+    %{session_started_at: started} = Ash.load!(param, :session_started_at)
     started_ms = DateTime.to_unix(started, :millisecond)
 
     case second_reading_ms(param) do
@@ -198,8 +235,8 @@ defmodule SecantService.PlotDB.Builders do
   @doc """
   Zoom for a historical plot: mouse-wheel / drag zoom on its time axes, a
   box-zoom tool and a reset. `_windowFetch` makes the chart ask for the
-  readings of the window it is zoomed to (see `History`); `PlotDB.init/2`
-  replaces it with the resolution of the first load.
+  readings of the window it is zoomed to (see `History`); the plot replaces
+  it with the resolution of its first load (`put_resolution/2`).
 
   Options: `x_axes:` the number of time axes zoomed together (the grids of a
   struct plot), `toolbox_right:` where the tools sit, in pixels from the

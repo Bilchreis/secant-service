@@ -182,6 +182,10 @@ defmodule SecantService.SecNodes.Parameter do
     calculate :calculated_disk_size_bytes,
               :integer,
               SecantService.SecNodes.Calculations.ParameterDiskSize
+
+    # when the node's session began, where its historical plots start; one
+    # joined query instead of loading the module and the node
+    calculate :session_started_at, :utc_datetime_usec, expr(module.sec_node.inserted_at)
   end
 
   aggregates do
