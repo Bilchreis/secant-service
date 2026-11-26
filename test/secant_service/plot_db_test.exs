@@ -146,8 +146,14 @@ defmodule SecantService.PlotDBTest do
       # a NaN element (nil) still makes a gap in the live and plain paths
       assert [%{data: [[1_000, 0, 1.0], [1_000, 1, nil], [1_000, 2, 3.0]]}] = update.seriesUpdates
 
+      # dropped only at an envelope's mean-point times
+      envelope = envelope([[1_000, 0, 1.0, 1.0, 1.0]])
+
       assert [%{data: [[1_000, 0, 1.0], [1_000, 2, 3.0]]}] =
-               PlotDB.drop_nil_points(update).seriesUpdates
+               PlotDB.drop_nil_points(update, envelope).seriesUpdates
+
+      assert PlotDB.drop_nil_points(update, envelope([[2_000, 0, 1.0, 1.0, 1.0]])) == update
+      assert PlotDB.drop_nil_points(update, nil) == update
     end
   end
 end

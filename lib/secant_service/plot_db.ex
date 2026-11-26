@@ -129,15 +129,20 @@ defmodule SecantService.PlotDB do
     do: Enum.find_index(series, &(Map.get(&1, :name) == name)) || 0
 
   @doc """
-  An array update without its `nil` points. A bucket's mean array has `nil`
-  for an element with no aggregate row in that bucket; it must not make a
-  gap in that element's line. Only envelope windows use it: elsewhere a
-  `nil` element (a NaN reading) still makes a gap, as it always has.
+  An array update without the `nil` points of an envelope's bucket means. A
+  bucket's mean array has `nil` for an element with no aggregate row in
+  that bucket; it must not make a gap in that element's line. A `nil` in a
+  stored reading (a NaN, in the head or tail of the window) still makes a
+  gap, as it always has.
   """
-  def drop_nil_points(%{seriesUpdates: updates} = update) do
+  def drop_nil_points(update, nil), do: update
+
+  def drop_nil_points(%{seriesUpdates: updates} = update, %{rows: rows}) do
+    mean_times = MapSet.new(rows, &hd/1)
+
     updates =
       Enum.map(updates, fn %{data: data} = u ->
-        %{u | data: Enum.reject(data, &match?([_t, _i, nil], &1))}
+        %{u | data: Enum.reject(data, &(match?([_t, _i, nil], &1) and hd(&1) in mean_times))}
       end)
 
     %{update | seriesUpdates: updates}

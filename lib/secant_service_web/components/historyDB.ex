@@ -339,9 +339,16 @@ defmodule SecantServiceWeb.Components.HistoryDB do
             {param, values, timestamps, Map.take(window, [:aggregated, :bucket_ms, :envelope])}
           end
 
-        windows
-        |> window_reply(plot)
-        |> Map.merge(%{from: from_ms, to: to_ms, req: req, gen: gen, envelope: envelope})
+        # longer readings than the heatmap carries: the latest-reading plot
+        case outgrown_param(windows, plot, secop_obj) do
+          nil ->
+            windows
+            |> window_reply(plot)
+            |> Map.merge(%{from: from_ms, to: to_ms, req: req, gen: gen, envelope: envelope})
+
+          param ->
+            {:rebuild, param}
+        end
       end)
 
     {:noreply, socket}
@@ -378,11 +385,9 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           end
 
         # longer readings than the heatmap carries: the latest-reading plot
-        case Enum.find(windows, fn {param, values, timestamps, _} ->
-               PlotDB.outgrown(plot, secop_obj, Enum.zip(values, timestamps), param.name)
-             end) do
-          {param, _, _, _} -> {:rebuild, param}
+        case outgrown_param(windows, plot, secop_obj) do
           nil -> windows |> window_reply(plot) |> Map.merge(%{gen: gen, envelope: envelope})
+          param -> {:rebuild, param}
         end
       end)
 
@@ -565,6 +570,10 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   def handle_async(:fetch_chart_range, {:exit, reason}, socket) do
     Logger.error("Chart range fetch failed: #{inspect(reason)}")
     {:noreply, socket}
+  end
+
+  def handle_async(:fetch_chart_window, {:ok, {:rebuild, param}}, socket) do
+    {:noreply, rebuild_as_latest(socket, param, fn -> ArrayLatest.fetch_latest(param) end)}
   end
 
   def handle_async(:fetch_chart_window, {:ok, window}, socket) do
@@ -843,7 +852,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         envelope = resolution[:envelope]
         update = PlotDB.get_trace_updates_batch(plot, Enum.zip(values, timestamps), param.name)
         # a bucket's mean array has nil for an element without a row
-        update = if envelope, do: PlotDB.drop_nil_points(update), else: update
+        update = PlotDB.drop_nil_points(update, envelope)
         update = Map.update(update, :arrayLen, nil, &max(&1 || 0, rows_len(envelope)))
         {update, PlotDB.envelope_updates(plot, param.name, envelope)}
       end)
@@ -860,6 +869,14 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       envelopes: envelopes,
       envelope_bucket_ms: envelopes |> Enum.map(& &1.bucket_ms) |> Enum.max(fn -> nil end)
     })
+  end
+
+  # the first parameter whose window holds an array longer than the heatmap
+  # carries
+  defp outgrown_param(windows, plot, secop_obj) do
+    Enum.find_value(windows, fn {param, values, timestamps, _} ->
+      PlotDB.outgrown(plot, secop_obj, Enum.zip(values, timestamps), param.name) && param
+    end)
   end
 
   # elements an array envelope's rows reach (rows are [t, i, min, mean, max])

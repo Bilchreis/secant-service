@@ -550,9 +550,11 @@ Hooks.EChartsChart = {
       series,
       envelopes: this._envelopesBySeries(envelopes),
     };
-    // element rows can show a wider array than the thinned readings did
-    if (this._growsArray(arrayLen)) return this._recompose();
+    // element rows can show a wider array than the thinned readings did:
+    // merge the window first, then rebuild with the new element's line
+    const grew = this._growsArray(arrayLen);
     this._drawWindowData();
+    if (grew) this._recompose();
   },
 
   // A reloaded overview in the other envelope mode (after the toggle, a
@@ -593,6 +595,12 @@ Hooks.EChartsChart = {
     if (gen !== this._envGen) return;
     this._reloadPending = false;
     if (this._envMeta) writeEnvelopePref(this._envMeta.kind, this._overviewEnvelope);
+    // the loaded overview holds bucket means: only Lines mode draws them
+    if (this._envMeta && this._envMeta.kind === "array" && this._overviewEnvelope && this._arrayMode !== "lines") {
+      this._arrayMode = "lines";
+      try { localStorage.setItem(ARRAY_MODE_KEY, "lines"); } catch (_e) {}
+      this._recompose();
+    }
     this._renderEnvelopeToggle();
     this._fetchWindow();
   },
@@ -819,13 +827,24 @@ Hooks.EChartsChart = {
     this._heatCache = {};
     const shown = this._windowFetch ? this._visibleWindow() : null;
     const full = this._overviewExtent();
-    const legend = (this._chart.getOption().legend || [])[0];
+    const current = this._chart.getOption();
+    const legend = (current.legend || [])[0];
     const selected = legend && legend.selected;
+    // an open time range slider stays open
+    const zooms = (current.dataZoom || []).filter(Boolean);
+    const slider = zooms.some((dz) => dz.type === "slider");
     let option = this._themed(this._composeOption(this._lastOption));
     if (selected && option.legend && !Array.isArray(option.legend)) {
       option = { ...option, legend: { ...option.legend, selected } };
     }
     this._chart.setOption(option, { notMerge: true });
+    if (slider) {
+      const update = {
+        dataZoom: zooms.map((dz) => ({ type: dz.type, xAxisIndex: dz.xAxisIndex, filterMode: dz.filterMode, ...(dz.type === "slider" ? { bottom: 8 } : {}) })),
+      };
+      if (this._xAxisCount === 1) update.grid = { bottom: 80 };
+      this._chart.setOption(update, { replaceMerge: ["dataZoom"] });
+    }
     if (shown && full && (shown[0] > full[0] || shown[1] < full[1])) {
       this._chart.dispatchAction({ type: "dataZoom", startValue: shown[0], endValue: shown[1] });
     }
