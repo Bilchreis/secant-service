@@ -1,0 +1,18 @@
+schema: spec-driven
+
+context: |
+  secant-service is a Phoenix/Ash app that connects to SECoP nodes (lab instruments),
+  records their parameter values into TimescaleDB hypertables, and plots live and historical data.
+  Recordings can run for days or weeks; designs must hold up on long recordings and many nodes.
+  Node connections are long-running supervised processes; changes to them must keep live sessions
+  and recordings intact.
+  The dev server and dev database are user-managed; never plan steps that boot the app against the dev DB.
+
+rules:
+  proposal:
+    - State what is out of scope
+  design:
+    - Call out database migrations and their effect on existing hypertable data
+    - For plot or query changes, state the expected query count and payload size on a long recording
+  tasks:
+    - End with running `mix precommit`
