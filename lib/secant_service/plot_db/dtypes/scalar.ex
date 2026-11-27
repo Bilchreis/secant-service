@@ -9,7 +9,11 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
   def supported_type?(%{"type" => t}) when t in ["double", "int", "scaled"], do: true
   def supported_type?(_), do: false
 
-  def scalar_line_series(name, ts_list, val_list) do
+  @doc """
+  A line of `[ts, value]` points. With `setpoint: true` it is drawn as a
+  setpoint (see `target_style/2`).
+  """
+  def scalar_line_series(name, ts_list, val_list, opts \\ []) do
     %{
       name: name,
       type: "line",
@@ -23,13 +27,13 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
       # thin out long recordings to what the chart can show
       sampling: "lttb"
     }
-    |> target_style(name)
+    |> target_style(Keyword.get(opts, :setpoint, false))
   end
 
   # The setpoint looks like on the dashboard cards: a dashed step line
   # (each target holds until the next one), no markers. The hook gives
-  # `_target` series the page's muted colour.
-  defp target_style(series, "target") do
+  # `_target` series the page's muted colour and holds their last reading.
+  defp target_style(series, true) do
     Map.merge(series, %{
       step: "end",
       showSymbol: false,
@@ -38,7 +42,7 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
     })
   end
 
-  defp target_style(series, _name), do: series
+  defp target_style(series, false), do: series
 
   def timeseries_option(series, unit, mode, legend_selected \\ %{}) do
     base = %{
@@ -83,12 +87,6 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
   @impl true
   def build_series(name, ts, vals, _datainfo) do
     [scalar_line_series(name, ts, vals)]
-  end
-
-  @impl true
-  def build_option(series, _datainfo, unit, mode, opts \\ []) do
-    legend_selected = Keyword.get(opts, :legend_selected, %{})
-    timeseries_option(series, unit, mode, legend_selected)
   end
 
   @impl true

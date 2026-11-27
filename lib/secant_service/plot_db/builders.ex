@@ -22,14 +22,6 @@ defmodule SecantService.PlotDB.Builders do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Like `fetch_param_window/2`, without the resolution.
-  """
-  def fetch_param_data(param, mode) do
-    {values, timestamps, _resolution} = fetch_param_window(param, mode)
-    {values, timestamps}
-  end
-
-  @doc """
   The readings a plot of `param` starts with, as `{values, timestamps,
   resolution}`. The resolution says whether they were thinned out (see
   `History.resolution/4`); a plot passes it on with `put_resolution/2`, so
@@ -90,16 +82,6 @@ defmodule SecantService.PlotDB.Builders do
 
   defp envelope_bucket_ms(%{envelope: %{bucket_ms: bucket_ms}}), do: bucket_ms
   defp envelope_bucket_ms(_resolution), do: nil
-
-  @doc "`put_resolution/2` on a `PlotSpec.plot/2` result."
-  def with_resolution({:ok, plot}, resolutions), do: {:ok, put_resolution(plot, resolutions)}
-  def with_resolution(result, _resolutions), do: result
-
-  @doc "`SecantService.PlotDB.put_envelopes/4` on a `PlotSpec.plot/2` result."
-  def with_envelopes({:ok, plot}, secop_obj, mode, envelopes),
-    do: {:ok, SecantService.PlotDB.put_envelopes(plot, secop_obj, mode, envelopes)}
-
-  def with_envelopes(result, _secop_obj, _mode, _envelopes), do: result
 
   defp fetch_live_data(param) do
     {from_ms, to_ms, _buttons, _active} = default_live_range_ms()
@@ -168,13 +150,6 @@ defmodule SecantService.PlotDB.Builders do
       {:error, _} -> true
     end
   end
-
-  @doc """
-  Whether a plot has enough data to render. For :live plots, data just outside
-  the visible window still counts — only truly parameter-less plots are excluded.
-  """
-  def plot_available?(vals, _param, :historical), do: length(vals) > 1
-  def plot_available?(vals, param, :live), do: length(vals) > 1 or any_data?(param)
 
   def fetch_param_data_in_range(param, from_ms, to_ms) do
     args =

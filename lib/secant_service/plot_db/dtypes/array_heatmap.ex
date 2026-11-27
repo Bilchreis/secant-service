@@ -34,10 +34,7 @@ defmodule SecantService.PlotDB.DTypes.ArrayHeatmap do
   element.
   """
   def heatmap_series(ts_list, val_list) do
-    data =
-      Enum.flat_map(Enum.zip(ts_list, val_list), fn {ts, arr} ->
-        arr |> Enum.with_index() |> Enum.map(fn {v, i} -> [ts, i, v] end)
-      end)
+    data = ts_list |> Enum.zip(val_list) |> Enum.flat_map(fn {ts, arr} -> cells(arr, ts) end)
 
     %{
       type: "custom",
@@ -135,20 +132,16 @@ defmodule SecantService.PlotDB.DTypes.ArrayHeatmap do
   end
 
   @impl true
-  def build_option(series, _datainfo, unit, mode, opts \\ []) do
-    array_len = Keyword.get(opts, :array_len, 0)
-    heatmap_option(series, array_len, unit, mode, opts)
-  end
-
-  @impl true
   def series_updates(_option, datapoints, _series_name) do
-    data =
-      Enum.flat_map(datapoints, fn {arr, ts} ->
-        arr |> Enum.with_index() |> Enum.map(fn {v, i} -> [ts, i, v] end)
-      end)
-
-    [%{seriesIndex: 0, data: data}]
+    [%{seriesIndex: 0, data: Enum.flat_map(datapoints, fn {arr, ts} -> cells(arr, ts) end)}]
   end
+
+  # `[ts, index, value]` per element; nothing for a reading that is no list
+  # (a struct field missing from a reading, a value of another type)
+  defp cells(arr, ts) when is_list(arr),
+    do: arr |> Enum.with_index() |> Enum.map(fn {v, i} -> [ts, i, v] end)
+
+  defp cells(_not_a_list, _ts), do: []
 
   # longest reading in the batch: lengths can differ between readings
   def array_len_from_datapoints(datapoints),

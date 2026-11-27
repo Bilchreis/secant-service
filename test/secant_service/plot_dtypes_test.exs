@@ -81,7 +81,7 @@ defmodule SecantService.PlotDB.DTypesTest do
     test "live updates name known states and fall back to the number" do
       option = %{
         series: [%{name: "status"}],
-        _enumMembers: EnumDType.enum_int_to_info(@enum["members"])
+        _enumMembers: %{"status" => EnumDType.enum_int_to_info(@enum["members"])}
       }
 
       assert [
@@ -91,6 +91,14 @@ defmodule SecantService.PlotDB.DTypesTest do
                }
              ] =
                EnumDType.series_updates(option, [{1, 10}, {7, 11}], "status")
+    end
+
+    test "a value that is no state is no point" do
+      [series] = EnumDType.build_series("status", [1, 2, 3], [1, nil, 0.5], @enum)
+      assert [%{name: "on (1)"}] = series.data
+
+      option = EnumDType.enum_timeseries_option([series], @enum["members"], :live)
+      assert [%{data: []}] = EnumDType.series_updates(option, [{nil, 10}], "status")
     end
   end
 
@@ -156,6 +164,41 @@ defmodule SecantService.PlotDB.DTypesTest do
       t_index = Enum.find_index(plot.series, &(&1.name == "p.t"))
       assert %{data: [[10, 1.0], [11, 2.0]]} = Enum.find(updates, &(&1.seriesIndex == t_index))
     end
+
+    test "an enum member keeps its state names in live updates" do
+      plot = Struct.build_struct_option("p", [], [], @struct, :live)
+      updates = Struct.series_updates(plot, [{%{"t" => 1.0, "mode" => 1}, 10}], "p")
+
+      mode_index = Enum.find_index(plot.series, &(&1.name == "p.mode"))
+
+      assert %{data: [%{name: "on (1)"}]} =
+               Enum.find(updates, &(&1.seriesIndex == mode_index))
+    end
+
+    test "a reading missing a member, or with a member of another type, still plots" do
+      struct = put_in(@struct, ["members", "a"], %{"type" => "array", "members" => @double})
+      readings = [%{"t" => 1.0}, %{"t" => 2.0, "mode" => "x", "a" => 3}]
+      plot = Struct.build_struct_option("p", [1, 2], readings, struct, :historical)
+
+      assert Enum.all?(Struct.series_updates(plot, Enum.zip(readings, [3, 4]), "p"), &is_map/1)
+    end
+
+    test "a nested struct is not drawn" do
+      nested =
+        put_in(@struct, ["members", "inner"], %{
+          "type" => "struct",
+          "members" => %{"x" => @double}
+        })
+
+      plot = Struct.build_struct_option("p", [], [], nested, :live)
+      refute Enum.any?(plot.series, &String.starts_with?(&1.name, "p.inner"))
+
+      assert [_ | _] =
+               Struct.series_updates(plot, [{%{"t" => 1.0, "inner" => %{"x" => 1.0}}, 10}], "p")
+
+      only_nested = %{"type" => "struct", "members" => %{"inner" => nested}}
+      refute DTypePlot.for_datainfo(only_nested)
+    end
   end
 
   describe "Struct with array fields" do
@@ -220,7 +263,7 @@ defmodule SecantService.PlotDB.DTypesTest do
     defp historical_options do
       %{
         scalar: Scalar.timeseries_option([], "K", :historical),
-        enum: EnumDType.enum_timeseries_option([], @enum["members"], "value", :historical),
+        enum: EnumDType.enum_timeseries_option([], @enum["members"], :historical),
         array: ArrayHeatmap.heatmap_option([], 2, nil, :historical),
         struct:
           Struct.build_struct_option(
@@ -262,7 +305,7 @@ defmodule SecantService.PlotDB.DTypesTest do
       refute Map.has_key?(ArrayHeatmap.heatmap_option([], 2, nil, :live), :_windowFetch)
 
       refute Map.has_key?(
-               EnumDType.enum_timeseries_option([], @enum["members"], "v", :live),
+               EnumDType.enum_timeseries_option([], @enum["members"], :live),
                :dataZoom
              )
     end

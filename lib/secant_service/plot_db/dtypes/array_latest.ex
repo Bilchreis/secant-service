@@ -101,7 +101,6 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
 
     %{
       plottable: true,
-      plot_available: true,
       plot_type: :array_latest,
       option: option,
       _array_param: param.name

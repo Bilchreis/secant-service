@@ -8,9 +8,9 @@ defmodule SecantService.PlotDB.DTypes.Struct do
   alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
 
   @impl true
-  def supported_type?(%{"type" => "struct", "members" => members}) when is_map(members) do
-    Enum.any?(members, fn {_name, sub} -> DTypePlot.for_datainfo(sub) != nil end)
-  end
+  def supported_type?(%{"type" => "struct", "members" => members} = datainfo)
+      when is_map(members),
+      do: plottable_fields(datainfo) != []
 
   def supported_type?(_), do: false
 
@@ -22,13 +22,6 @@ defmodule SecantService.PlotDB.DTypes.Struct do
       field_vals = Enum.map(vals, fn v -> if is_map(v), do: Map.get(v, field), else: nil end)
       dtype_mod.build_series("#{name}.#{field}", ts, field_vals, sub_datainfo)
     end)
-  end
-
-  # build_option is not meaningful here since struct needs its own multi-grid builder.
-  # Call build_struct_option/5 directly instead.
-  @impl true
-  def build_option(_series, _datainfo, _unit, _mode, _opts \\ []) do
-    raise "Struct plots must be built with build_struct_option/5"
   end
 
   @impl true
@@ -72,18 +65,18 @@ defmodule SecantService.PlotDB.DTypes.Struct do
     end)
   end
 
-  # Standard ECharts palette — used to assign explicit colors to scalar series so
-  # that heatmap series (which use visualMap) don't steal palette slots.
-  @echarts_palette [
-    "#5470c6",
-    "#91cc75",
-    "#fac858",
-    "#ee6666",
-    "#73c0de",
-    "#3ba272",
-    "#fc8452",
-    "#9a60b4",
-    "#ea7ccc"
+  # The chart palette of the other plots (CHART_PALETTE in app.js), given to
+  # scalar series explicitly so that heatmap series (which use visualMap)
+  # don't take palette slots.
+  @palette [
+    "#009ee0",
+    "#8b5cf6",
+    "#f59e0b",
+    "#10b981",
+    "#f43f5e",
+    "#a3a3a8",
+    "#ec4899",
+    "#84cc16"
   ]
 
   @doc """
@@ -254,11 +247,21 @@ defmodule SecantService.PlotDB.DTypes.Struct do
                 axisLine: %{show: false}
               }
 
+              info = EnumDType.enum_int_to_info(members)
+
               {[v_s, t_s], y_opts, %{val_series_name => "value", "target.#{field}" => "target"},
-               EnumDType.enum_int_to_info(members)}
+               %{val_series_name => info, "target.#{field}" => info}}
 
             _ ->
               raw = dtype_mod.build_series(val_series_name, ts, field_vals, sub_datainfo)
+
+              # an enum field's own members, for its later readings
+              em =
+                if is_enum,
+                  do: %{
+                    val_series_name => EnumDType.enum_int_to_info(sub_datainfo["members"] || %{})
+                  },
+                  else: %{}
 
               extra =
                 case target do
@@ -292,7 +295,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
                   do: array_series(raw, extra, val_series_name, "target.#{field}", array_len),
                   else: raw ++ extra
 
-              {series, y_opts, %{}, %{}}
+              {series, y_opts, %{}, em}
           end
 
         indexed_series =
@@ -349,7 +352,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
                 |> Enum.with_index(sci)
                 |> Enum.map(fn {s, ci} ->
                   Map.put(s, :itemStyle, %{
-                    color: Enum.at(@echarts_palette, rem(ci, length(@echarts_palette)))
+                    color: Enum.at(@palette, rem(ci, length(@palette)))
                   })
                 end)
 
@@ -370,8 +373,7 @@ defmodule SecantService.PlotDB.DTypes.Struct do
               top: top,
               height: "#{Float.round(grid_height, 1)}%",
               containLabel: false,
-              borderWidth: 0,
-              backgroundColor: "rgba(255,255,255,0.04)"
+              borderWidth: 0
             }
             | gs
           ],
@@ -489,11 +491,15 @@ defmodule SecantService.PlotDB.DTypes.Struct do
     end
   end
 
+  # The fields drawn, by name: numbers, enums and numeric arrays. A nested
+  # struct is not drawn (its fields would need rows of their own).
   defp plottable_fields(datainfo) do
     members = datainfo["members"] || %{}
 
     members
-    |> Enum.filter(fn {_name, sub} -> DTypePlot.for_datainfo(sub) != nil end)
+    |> Enum.filter(fn {_name, sub} ->
+      sub["type"] != "struct" and DTypePlot.for_datainfo(sub) != nil
+    end)
     |> Enum.sort_by(fn {name, _} -> name end)
   end
 end

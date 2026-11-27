@@ -1,372 +1,145 @@
 defmodule SecantService.PlotDB do
+  @moduledoc """
+  Plots of parameters and modules: what a plot draws (its lines), building
+  it (`SecantService.PlotDB.TimePlot`, or `ArrayLatest` for long arrays) and
+  turning later readings into updates of its series.
+  """
+
   alias SecantService.SecNodes
   alias SecantService.Util
   alias SecantService.PlotDB.Builders
-  alias SecantService.PlotDB.DTypePlot
+  alias SecantService.PlotDB.TimePlot
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
   alias SecantService.PlotDB.DTypes.ArrayLatest
-  alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
   alias SecantService.PlotDB.DTypes.Scalar
   alias SecantService.PlotDB.DTypes.Struct, as: StructDType
-  alias SecantService.PlotDB.History
 
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.Module
   alias SecantClient.NodeTable
 
-  @max_array_len 100
-
   # ---------------------------------------------------------------------------
-  # Interface-class registry — atom → plot module
+  # Lines of a plot, by interface class
   # ---------------------------------------------------------------------------
 
-  @class_registry %{
-    readable: SecantService.PlotDB.Readable,
-    drivable: SecantService.PlotDB.Drivable,
-    calibratable: SecantService.PlotDB.Calibratable,
-    acquisition: SecantService.PlotDB.Acquisition,
-    acquisition_channel: SecantService.PlotDB.Acquisition,
-    acquisition_controller: SecantService.PlotDB.Acquisition
+  @value %{name: "value", setpoint?: false, hidden?: false}
+  @target %{name: "target", setpoint?: true, hidden?: false}
+
+  @readable [@value]
+
+  @class_lines %{
+    readable: @readable,
+    acquisition: @readable,
+    acquisition_channel: @readable,
+    acquisition_controller: @readable,
+    drivable: [@value, @target],
+    # the extra lines start hidden in the legend
+    calibratable: [
+      @value,
+      @target,
+      %{name: "_value_uncalibrated", setpoint?: false, hidden?: true},
+      %{name: "_target_calibrated", setpoint?: true, hidden?: true}
+    ]
   }
 
+  @setpoints ~w(target _target_calibrated)
+
+  @doc """
+  The lines a plot of `secop_obj` draws, value first, as
+  `%{param:, series:, setpoint?:, hidden?:}`. A parameter plotted on its own
+  is the plot's `value` series; a module's lines are its parameters named by
+  its interface class, as far as it has them. Empty when nothing is plotted.
+
+  A setpoint (`target`, `_target_calibrated`) is only recorded when it
+  changes, so its readings are held from before a window.
+  """
+  def lines(%Parameter{} = param) do
+    [%{param: param, series: "value", setpoint?: param.name in @setpoints, hidden?: false}]
+  end
+
+  def lines(%Module{} = module) do
+    iface_class = Util.get_highest_if_class(module.interface_classes)
+
+    lines =
+      for spec <- Map.get(@class_lines, iface_class, []),
+          %Parameter{} = param <- [Builders.find_param(module, spec.name)],
+          do: Map.merge(spec, %{param: param, series: spec.name}) |> Map.delete(:name)
+
+    case {iface_class, lines} do
+      # its calibration lines are numbers; anything else isn't plotted
+      {:calibratable, [%{param: value} | _]} ->
+        if Scalar.supported_type?(value.datainfo), do: lines, else: []
+
+      {_class, [%{series: "value"} | _]} ->
+        lines
+
+      _no_value ->
+        []
+    end
+  end
+
+  @doc "The names of the parameters whose readings go into `secop_obj`'s plot."
+  def param_list(secop_obj), do: secop_obj |> lines() |> Enum.map(& &1.param.name)
+
   # ---------------------------------------------------------------------------
-  # Public API
+  # Building
   # ---------------------------------------------------------------------------
 
   def init(secop_obj, mode \\ :live) do
-    case long_array(secop_obj) do
-      {param, latest} ->
-        ArrayLatest.plot(param, latest)
+    lines = lines(secop_obj)
 
-      nil ->
-        case secop_obj do
-          %Parameter{} = param -> parameter_plot(param, mode)
-          %Module{} = mod -> module_plot(mod, mode)
-        end
+    case long_array(lines) do
+      {param, latest} -> ArrayLatest.plot(param, latest)
+      nil -> build(lines, mode)
     end
   end
 
-  @doc """
-  The parameters of a plot whose readings are thinned out in the database for
-  the historical view (see `History`).
-  """
-  def history_params(secop_obj) do
-    secop_obj
-    |> param_list()
-    |> Enum.map(&resolve_param(secop_obj, &1))
-    |> Enum.filter(&History.thinnable?/1)
+  def module_plot(%Module{} = module, mode \\ :live), do: module |> lines() |> build(mode)
+
+  def parameter_plot(%Parameter{} = parameter, mode \\ :live) do
+    if plottable?(parameter), do: parameter |> lines() |> build(mode), else: not_plottable()
   end
 
-  @envelope_number_types ~w(double int scaled)
-  # the lines of a module's plot that may carry an envelope, by plot module
-  # (Acquisition draws through Readable)
-  @envelope_lines %{
-    SecantService.PlotDB.Readable => ["value"],
-    SecantService.PlotDB.Acquisition => ["value"],
-    SecantService.PlotDB.Drivable => ["value"],
-    SecantService.PlotDB.Calibratable => ["value", "_value_uncalibrated"]
-  }
-
-  @doc """
-  The parameters of a historical plot whose line may be drawn as an
-  envelope (per bucket min, mean and max from the aggregates), as
-  `[{param, kind}]` with `kind` `"line"` (a number) or `"array"` (a numeric
-  array of at most 100 elements by its `maxlen`, drawn as lines). A parameter plotted on its own, the `value` of a
-  Readable, Acquisition or Drivable module, or the `value` and `_value_uncalibrated` of
-  a Calibratable module (number lines only). A setpoint (`target`,
-  `_target_calibrated`) never is, also when it is plotted on its own.
-  """
-  def envelope_params(%Parameter{name: name}) when name in ~w(target _target_calibrated),
-    do: []
-
-  def envelope_params(%Parameter{} = param) do
-    case envelope_kind(param.datainfo) do
-      nil -> []
-      kind -> [{param, kind}]
+  defp build(lines, mode) do
+    case TimePlot.build(lines, mode) do
+      :not_plottable -> not_plottable()
+      plot -> plot
     end
   end
-
-  def envelope_params(%Module{} = module) do
-    plot_module = plot_module_for(module)
-
-    for name <- Map.get(@envelope_lines, plot_module, []),
-        %Parameter{} = param <- [Builders.find_param(module, name)],
-        {_param, kind} = pair <- envelope_params(param),
-        plot_module != SecantService.PlotDB.Calibratable or kind == "line",
-        do: pair
-  end
-
-  defp envelope_kind(%{"type" => type}) when type in @envelope_number_types, do: "line"
-
-  # Only arrays that can never outgrow the heatmap: an array that may hold
-  # more elements is plotted as its latest reading once a reading that long
-  # turns up, and an envelope read would load every element's rows first.
-  defp envelope_kind(%{"type" => "array", "maxlen" => maxlen, "members" => %{"type" => type}})
-       when type in @envelope_number_types and is_integer(maxlen) and maxlen <= @max_array_len,
-       do: "array"
-
-  defp envelope_kind(_datainfo), do: nil
-
-  @doc """
-  Whether the first load of `param` in `secop_obj`'s plot is read as an
-  envelope: only historical number lines. Arrays start without one (the
-  browser asks for it when the user switches it on).
-  """
-  def envelope_on_load?(secop_obj, %Parameter{id: id}, :historical) do
-    Enum.any?(envelope_params(secop_obj), fn {p, kind} -> p.id == id and kind == "line" end)
-  end
-
-  def envelope_on_load?(_secop_obj, _param, _mode), do: false
-
-  @doc """
-  The payload the chart hook draws a parameter's envelope from: the series
-  it belongs to, its bucket width, the span it covers and its band rows.
-  """
-  def envelope_updates(_plot, _series_name, nil), do: nil
-
-  def envelope_updates(plot, series_name, envelope) do
-    # no series of that name: no band, rather than a band on another line
-    with index when index != nil <- envelope_series_index(plot, series_name) do
-      %{
-        seriesIndex: index,
-        bucket_ms: envelope.bucket_ms,
-        from: envelope.from_ms,
-        until: envelope.until_ms,
-        rows: envelope.rows
-      }
-    end
-  end
-
-  @doc """
-  The name of the series `param`'s line has in `secop_obj`'s plot: `value`
-  for a parameter plotted on its own, its own name in a module's plot.
-  """
-  def envelope_series_name(%Parameter{}, _param), do: "value"
-  def envelope_series_name(%Module{}, %Parameter{name: name}), do: name
-
-  defp envelope_series_index(%{plot_type: :array_heatmap}, _name), do: 0
-
-  defp envelope_series_index(%{option: %{series: series}}, name),
-    do: Enum.find_index(series, &(Map.get(&1, :name) == name))
-
-  @doc """
-  An array update without the `nil` points of an envelope's bucket means. A
-  bucket's mean array has `nil` for an element with no aggregate row in
-  that bucket; it must not make a gap in that element's line. A `nil` in a
-  stored reading (a NaN, in the head or tail of the window) still makes a
-  gap, as it always has.
-  """
-  def drop_nil_points(update, nil), do: update
-
-  def drop_nil_points(%{seriesUpdates: updates} = update, %{rows: rows}) do
-    mean_times = MapSet.new(rows, &hd/1)
-
-    updates =
-      Enum.map(updates, fn %{data: data} = u ->
-        %{u | data: Enum.reject(data, &(match?([_t, _i, nil], &1) and hd(&1) in mean_times))}
-      end)
-
-    %{update | seriesUpdates: updates}
-  end
-
-  @doc """
-  Marks a historical plot that has envelope-capable lines for the chart
-  hook: `_envelope` (its kind, and whether the first load was read as an
-  envelope) and `_envelopes` (the first load's band payloads, one per
-  `{series name, envelope}`). Other plots are returned as they are.
-  """
-  def put_envelopes(plot, secop_obj, mode, envelopes)
-
-  def put_envelopes(%{plot_type: :array_latest} = plot, _secop_obj, _mode, _envelopes), do: plot
-
-  def put_envelopes(%{option: option} = plot, secop_obj, :historical, envelopes) do
-    case envelope_params(secop_obj) do
-      [] ->
-        plot
-
-      [{_param, kind} | _] ->
-        payloads =
-          for {name, envelope} <- envelopes,
-              payload = envelope_updates(plot, name, envelope),
-              payload != nil,
-              do: payload
-
-        option =
-          option
-          |> Map.put(:_envelope, %{
-            kind: kind,
-            on: kind == "line",
-            # the series whose lines may carry a band
-            series: envelope_series(plot, secop_obj)
-          })
-          |> Map.put(:_envelopes, payloads)
-
-        %{plot | option: option}
-    end
-  end
-
-  def put_envelopes(plot, _secop_obj, _mode, _envelopes), do: plot
-
-  # the indexes of the series whose lines may carry a band
-  defp envelope_series(plot, secop_obj) do
-    for {param, _kind} <- envelope_params(secop_obj),
-        index = envelope_series_index(plot, envelope_series_name(secop_obj, param)),
-        index != nil,
-        do: index
-  end
-
-  defp resolve_param(%Parameter{} = param, _name), do: param
-  defp resolve_param(%Module{} = module, name), do: Builders.find_param(module, name)
 
   # Arrays longer than the heatmap can carry are plotted as their latest
   # reading only. Checked before any history is loaded: a few minutes of a
   # 350 000-element spectrum would be far too much to fetch.
-  defp long_array(%Module{} = module) do
-    case Builders.find_param(module, "value") do
-      nil -> nil
-      param -> long_array(param)
-    end
-  end
-
-  defp long_array(%Parameter{} = param) do
+  defp long_array([%{param: param} | _]) do
     with true <- ArrayLatest.numeric_array?(param),
          {arr, _ts} = latest <- ArrayLatest.fetch_latest(param),
-         true <- length(arr) > @max_array_len do
+         true <- length(arr) > TimePlot.max_array_len() do
       {param, latest}
     else
       _ -> nil
     end
   end
 
+  defp long_array([]), do: nil
+
   @doc """
-  When a live reading makes the plotted array longer than the heatmap can
-  carry (e.g. a spectrum that was 3 points at startup and 10 000 after an
-  acquisition), returns `{param, {array, ms}}` to rebuild the plot as the
-  latest-reading plot. Otherwise nil.
+  When a reading of the parameter `name` makes a heatmap's array longer than
+  it can carry (e.g. a spectrum that was 3 points at startup and 10 000
+  after an acquisition), the batch's final array reading `{array, ms}`, to
+  rebuild the plot as the latest-reading plot from. Otherwise nil.
   """
-  def outgrown(%{plot_type: :array_latest}, _secop_obj, _datapoints, _parameter), do: nil
-
-  def outgrown(_plot_map, secop_obj, datapoints, parameter) do
-    param =
-      case secop_obj do
-        %Module{} = module -> parameter == "value" && Builders.find_param(module, "value")
-        %Parameter{name: ^parameter} = param -> param
-        _ -> nil
-      end
-
+  def outgrown(%{plot_type: :array_heatmap, lines: lines}, name, datapoints) do
     # any long reading in the batch counts, not only the last one: it must
     # not go into the heatmap. The new plot starts from the batch's final
     # reading, long or not (the latest-reading plot shows short ones too).
-    long? = fn {arr, _ts} -> is_list(arr) and length(arr) > @max_array_len end
+    long? = fn {arr, _ts} -> is_list(arr) and length(arr) > TimePlot.max_array_len() end
 
-    with %Parameter{} <- param,
-         true <- ArrayLatest.numeric_array?(param),
-         true <- Enum.any?(datapoints, long?) do
-      {param, datapoints |> Enum.filter(&is_list(elem(&1, 0))) |> List.last()}
-    else
-      _ -> nil
+    if Map.has_key?(lines, name) and Enum.any?(datapoints, long?) do
+      datapoints |> Enum.filter(&is_list(elem(&1, 0))) |> List.last()
     end
   end
 
-  def module_plot(module, mode \\ :live) do
-    case plot_module_for(module) do
-      nil ->
-        not_plottable()
-
-      mod ->
-        case mod.plot(module, mode) do
-          {:ok, plot} -> plot
-          :not_plottable -> not_plottable()
-        end
-    end
-  end
-
-  # Schema-specific plot modules aren't implemented yet. When the first one is
-  # added, look up `get_in(module.custom_properties || %{}, ["schema"])` in a
-  # schema registry first and fall back to the interface-class registry.
-  defp plot_module_for(module) do
-    iface_class = Util.get_highest_if_class(module.interface_classes)
-    Map.get(@class_registry, iface_class)
-  end
-
-  def param_list(%Parameter{} = parameter), do: [parameter.name]
-
-  def param_list(%Module{} = module) do
-    case plot_module_for(module) do
-      nil -> []
-      mod -> mod.param_names()
-    end
-  end
-
-  def parameter_plot(parameter, mode \\ :live) do
-    if plottable?(parameter) do
-      envelope? = envelope_on_load?(parameter, parameter, mode)
-      {val, ts, resolution} = Builders.fetch_param_window(parameter, mode, envelope: envelope?)
-      unit = get_in(parameter.datainfo, ["unit"])
-
-      case parameter.datainfo["type"] do
-        "array" ->
-          array_len = ArrayHeatmap.max_len(val)
-
-          # a long reading inside the window: plot the latest reading instead
-          if array_len > @max_array_len do
-            ArrayLatest.plot(parameter, ArrayLatest.fetch_latest(parameter))
-          else
-            option =
-              ArrayHeatmap.heatmap_option(
-                [ArrayHeatmap.heatmap_series(ts, val)],
-                array_len,
-                ArrayHeatmap.unit(parameter.datainfo),
-                mode,
-                name: parameter.name
-              )
-
-            %{
-              plottable: true,
-              plot_available: Builders.plot_available?(val, parameter, mode),
-              plot_type: :array_heatmap,
-              option: option
-            }
-          end
-
-        "enum" ->
-          members = parameter.datainfo["members"]
-          series = [EnumDType.enum_series("value", ts, val, members)]
-          option = EnumDType.enum_timeseries_option(series, members, "value", mode)
-
-          %{
-            plottable: true,
-            plot_available: Builders.plot_available?(val, parameter, mode),
-            option: option
-          }
-
-        "struct" ->
-          option = StructDType.build_struct_option("value", ts, val, parameter.datainfo, mode)
-          dtype_mod = DTypePlot.for_datainfo(parameter.datainfo)
-
-          %{
-            plottable: true,
-            plot_available: Builders.plot_available?(val, parameter, mode),
-            option: option,
-            _param_dtype_modules: %{"value" => dtype_mod}
-          }
-
-        _ ->
-          series = [Scalar.scalar_line_series("value", ts, val)]
-          option = Scalar.timeseries_option(series, unit, mode)
-
-          %{
-            plottable: true,
-            plot_available: Builders.plot_available?(val, parameter, mode),
-            option: option
-          }
-      end
-      |> Builders.put_resolution([resolution])
-      |> put_envelopes(parameter, mode, [{"value", resolution[:envelope]}])
-    else
-      not_plottable()
-    end
-  end
+  def outgrown(_plot, _name, _datapoints), do: nil
 
   # ---------------------------------------------------------------------------
   # Plottability check
@@ -378,9 +151,8 @@ defmodule SecantService.PlotDB do
         true
 
       # short arrays as a time × index heatmap, long ones as their latest reading
-      %{"type" => "array", "members" => %{"type" => member_type}}
-      when member_type in ["double", "int", "scaled"] ->
-        true
+      %{"type" => "array"} = datainfo ->
+        ArrayHeatmap.supported_type?(datainfo)
 
       %{"type" => "struct"} = datainfo ->
         StructDType.supported_type?(datainfo)
@@ -391,83 +163,41 @@ defmodule SecantService.PlotDB do
   end
 
   def plottable?(%Module{} = module) do
-    value_param = Enum.find(module.parameters, fn p -> p.name == "value" end)
-
-    case value_param do
+    case Builders.find_param(module, "value") do
       nil -> false
       param -> plottable?(param)
     end
   end
 
   # ---------------------------------------------------------------------------
-  # Live update formatting
+  # Updates
   # ---------------------------------------------------------------------------
 
-  def get_trace_updates_batch(%{plot_type: :array_latest} = plot_map, datapoints, parameter) do
-    ArrayLatest.trace_updates(plot_map, datapoints, parameter)
-  end
+  @doc """
+  The chart update for readings of the parameter `name`: `%{seriesUpdates:
+  [%{seriesIndex:, data:}]}`, with `arrayLen` for a heatmap. Empty for a
+  parameter the plot doesn't draw.
+  """
+  def trace_updates(%{plot_type: :array_latest} = plot, datapoints, name),
+    do: ArrayLatest.trace_updates(plot, datapoints, name)
 
-  # Module plots (from PlotSpec implementations) carry _plot_spec_module for clean dispatch.
-  def get_trace_updates_batch(%{_plot_spec_module: mod} = plot_map, datapoints, parameter) do
-    mod.trace_updates(plot_map, datapoints, parameter)
-  end
+  def trace_updates(%{lines: lines, option: option}, datapoints, name) do
+    case Map.get(lines, name) do
+      nil ->
+        %{seriesUpdates: []}
 
-  # Parameter plots and any legacy plot_maps fall back to the original inline dispatch.
-  def get_trace_updates_batch(%{plot_type: :array_heatmap} = _plot_map, datapoints, _parameter) do
-    data =
-      Enum.flat_map(datapoints, fn {arr, ts} ->
-        arr |> Enum.with_index() |> Enum.map(fn {v, i} -> [ts, i, v] end)
-      end)
+      %{series: series, dtype: ArrayHeatmap} ->
+        %{
+          seriesUpdates: ArrayHeatmap.series_updates(option, datapoints, series),
+          arrayLen: ArrayHeatmap.array_len_from_datapoints(datapoints)
+        }
 
-    array_len = ArrayHeatmap.array_len_from_datapoints(datapoints)
-
-    %{seriesUpdates: [%{seriesIndex: 0, data: data}], arrayLen: array_len}
-  end
-
-  def get_trace_updates_batch(
-        %{_param_dtype_modules: mods, option: opt} = _plot_map,
-        datapoints,
-        parameter
-      ) do
-    dtype_mod = Map.get(mods, parameter)
-    series_upds = dtype_mod.series_updates(opt, datapoints, parameter)
-    result = %{seriesUpdates: series_upds}
-
-    if dtype_mod == ArrayHeatmap do
-      Map.put(result, :arrayLen, ArrayHeatmap.array_len_from_datapoints(datapoints))
-    else
-      result
+      %{series: series, dtype: dtype} ->
+        %{seriesUpdates: dtype.series_updates(option, datapoints, series)}
     end
   end
 
-  def get_trace_updates_batch(plot_map, datapoints, parameter) do
-    series_index =
-      Enum.find_index(plot_map.option.series, fn s -> s.name == parameter end) || 0
-
-    {values, timestamps} = Enum.unzip(datapoints)
-
-    data =
-      case Map.get(plot_map.option, :_enumMembers) do
-        nil ->
-          Enum.zip(timestamps, values) |> Enum.map(&Tuple.to_list/1)
-
-        int_to_info ->
-          y_val =
-            case Map.get(plot_map.option, :_enumSeriesY) do
-              nil -> 0
-              series_y -> Map.get(series_y, parameter, 0)
-            end
-
-          Enum.zip_with(timestamps, values, fn ts, v ->
-            %{name: name, color: color} =
-              Map.get(int_to_info, to_string(v), %{name: to_string(v), color: "#888888"})
-
-            %{value: [ts, y_val], name: "#{name} (#{v})", itemStyle: %{color: color}}
-          end)
-      end
-
-    %{seriesUpdates: [%{seriesIndex: series_index, data: data}]}
-  end
+  def trace_updates(_plot, _datapoints, _name), do: %{seriesUpdates: []}
 
   # ---------------------------------------------------------------------------
   # Calibration plot (standalone — uses NodeTable directly, not DB values)
@@ -698,9 +428,7 @@ defmodule SecantService.PlotDB do
   # Sentinel values
   # ---------------------------------------------------------------------------
 
-  def no_plot_available, do: %{plottable: true, plot_available: false}
-
-  def not_plottable, do: %{plottable: false, plot_available: false, topics: []}
+  def not_plottable, do: %{plottable: false}
 
   # ---------------------------------------------------------------------------
   # Calibration helpers (private)

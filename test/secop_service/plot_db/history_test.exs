@@ -30,6 +30,11 @@ defmodule SecantService.PlotDB.HistoryTest do
 
   defp points(window), do: Enum.zip(window.timestamps, window.values)
 
+  defp fetch_historical(parameter) do
+    {values, timestamps, _resolution} = Builders.fetch_param_window(parameter, :historical)
+    {values, timestamps}
+  end
+
   describe "thinnable?/1 and limits/1" do
     test "everything the plots draw is thinned out" do
       for datainfo <- [
@@ -371,8 +376,26 @@ defmodule SecantService.PlotDB.HistoryTest do
       # each bucket's last reading stays, so the band ends in the right state
       for bucket <- 0..59, do: assert({ms(bucket * 60 + 59), 1} in points(window))
 
-      # first + last + one per state, never one per change
-      assert length(window.values) <= 60 * (2 + 3)
+      # per state its first and last run start, plus the last reading;
+      # never one per change
+      assert length(window.values) <= 60 * (1 + 2 * 3)
+    end
+
+    test "a short state in a bucket ends where it really ended" do
+      parameter =
+        generate(parameter(datainfo: %{"type" => "enum", "members" => %{"a" => 0, "b" => 1}}))
+
+      # a for a minute, except b at 10 s .. 11 s of every minute
+      insert_readings(parameter, 600, &if(rem(&1, 60) in [10, 11], do: 1, else: 0))
+
+      window = History.window(parameter, nil, nil, max_raw: 100, max_buckets: 10)
+
+      assert window.aggregated
+      # b starts at 10 s and a takes over again at 12 s, not at the bucket end
+      for bucket <- 0..9 do
+        assert {ms(bucket * 60 + 10), 1} in points(window)
+        assert {ms(bucket * 60 + 12), 0} in points(window)
+      end
     end
 
     test "a struct keeps the extremes and states of each field, values as stored" do
@@ -500,7 +523,7 @@ defmodule SecantService.PlotDB.HistoryTest do
       start_session_at(parameter, @start)
       insert_readings(parameter, 4000, &(rem(&1, 10) * 1.0))
 
-      {values, timestamps} = Builders.fetch_param_data(parameter, :historical)
+      {values, timestamps} = fetch_historical(parameter)
 
       assert length(values) == length(timestamps)
       assert length(values) < 4000
@@ -525,12 +548,12 @@ defmodule SecantService.PlotDB.HistoryTest do
         start_session_at(parameter, @start)
         insert_readings(parameter, 4000, value_fun)
 
-        {values, timestamps} = Builders.fetch_param_data(parameter, :historical)
+        {values, timestamps} = fetch_historical(parameter)
         assert length(values) < 4000, datainfo["type"]
         assert hd(timestamps) == ms(0)
         assert List.last(timestamps) == ms(3999)
 
-        assert [%{id: id}] = PlotDB.history_params(parameter)
+        assert [%{param: %{id: id}}] = PlotDB.lines(parameter)
         assert id == parameter.id
 
         plot = PlotDB.init(parameter, :historical)
@@ -588,7 +611,7 @@ defmodule SecantService.PlotDB.HistoryTest do
       window = History.window(parameter, ms(5), ms(6))
 
       assert %{seriesUpdates: [%{data: [%{value: [_, 0], name: "on (1)"}, %{name: "off (0)"}]}]} =
-               PlotDB.get_trace_updates_batch(
+               PlotDB.trace_updates(
                  plot,
                  Enum.zip(window.values, window.timestamps),
                  "value"
@@ -611,7 +634,7 @@ defmodule SecantService.PlotDB.HistoryTest do
 
         start_session_at(parameter, DateTime.add(@start, 10, :second))
 
-        {values, timestamps} = Builders.fetch_param_data(parameter, :historical)
+        {values, timestamps} = fetch_historical(parameter)
 
         # the stale reading pinned to the start, then 10..19
         assert timestamps == [ms(10) | Enum.map(10..19, &ms/1)]
@@ -627,7 +650,7 @@ defmodule SecantService.PlotDB.HistoryTest do
       insert_readings(parameter, 1, fn _ -> 2.5 end)
       start_session_at(parameter, DateTime.add(@start, 3600, :second))
 
-      assert Builders.fetch_param_data(parameter, :historical) == {[2.5], [ms(3600)]}
+      assert fetch_historical(parameter) == {[2.5], [ms(3600)]}
     end
 
     test "a node clock behind the server's hides no readings" do
@@ -637,7 +660,7 @@ defmodule SecantService.PlotDB.HistoryTest do
       start_session_at(parameter, DateTime.add(@start, 60, :second))
 
       assert Builders.plot_start_ms(parameter) == ms(1)
-      {values, timestamps} = Builders.fetch_param_data(parameter, :historical)
+      {values, timestamps} = fetch_historical(parameter)
 
       # only the first reading is pinned, to the second one
       assert timestamps == [ms(1) | Enum.map(1..19, &ms/1)]

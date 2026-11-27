@@ -4,6 +4,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   require Logger
   alias SecantService.SecNodes
   alias SecantService.PlotDB
+  alias SecantService.PlotDB.Bands
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.History
   alias SecantService.PlotDB.DTypes.ArrayLatest
@@ -164,68 +165,14 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   def update(%{value_update: value_update_list, parameter: parameter} = _assigns, socket) do
-    param_list = PlotDB.param_list(socket.assigns.secop_obj)
-
+    # a historical plot draws what is stored; it takes no live readings
     socket =
-      if socket.assigns.plottable and parameter in param_list and socket.assigns.plot.ok? do
-        validated_datapoints =
-          Enum.reduce(value_update_list, [], fn [value, qualifiers], acc ->
-            case qualifiers do
-              %{t: timestamp} ->
-                # Convert to milliseconds if needed
-                timestamp = trunc(timestamp * 1000)
-                [{value, timestamp} | acc]
+      if socket.assigns.plottable and socket.assigns.plot_mode == :live and
+           socket.assigns.plot.ok? and parameter in PlotDB.param_list(socket.assigns.secop_obj) do
+        datapoints =
+          for [value, %{t: timestamp}] <- value_update_list, do: {value, trunc(timestamp * 1000)}
 
-              _ ->
-                acc
-            end
-          end)
-          |> Enum.reverse()
-
-        outgrown =
-          validated_datapoints != [] &&
-            PlotDB.outgrown(
-              socket.assigns.plot.result,
-              socket.assigns.secop_obj,
-              validated_datapoints,
-              parameter
-            )
-
-        cond do
-          # the array got too long for the heatmap: rebuild as latest-reading
-          # plot. The old chart stays up meanwhile; a newer long reading
-          # restarts the rebuild (only the last start_async result is used).
-          outgrown ->
-            {param, latest} = outgrown
-            rebuild_as_latest(socket, param, fn -> latest end)
-
-          # while rebuilding, a newer reading of the rebuilt parameter
-          # restarts the rebuild from it; nothing goes into the old heatmap
-          socket.assigns[:rebuilding_plot] ->
-            case socket.assigns[:rebuild_param] do
-              %{name: ^parameter} = param ->
-                case Enum.filter(validated_datapoints, &is_list(elem(&1, 0))) do
-                  [] -> socket
-                  readings -> rebuild_as_latest(socket, param, fn -> List.last(readings) end)
-                end
-
-              _ ->
-                socket
-            end
-
-          validated_datapoints != [] ->
-            update_data =
-              PlotDB.get_trace_updates_batch(
-                socket.assigns.plot.result,
-                validated_datapoints,
-                parameter
-              )
-
-            push_event(socket, "extend-chart-#{socket.assigns.id}", update_data)
-
-          true ->
-            socket
-        end
+        live_update(socket, parameter, datapoints)
       else
         socket
       end
@@ -248,6 +195,36 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       end
 
     {:ok, socket}
+  end
+
+  defp live_update(socket, _parameter, []), do: socket
+
+  defp live_update(socket, parameter, datapoints) do
+    plot = socket.assigns.plot.result
+
+    cond do
+      # the array got too long for the heatmap: rebuild as latest-reading
+      # plot. The old chart stays up meanwhile; a newer long reading
+      # restarts the rebuild (only the last start_async result is used).
+      latest = PlotDB.outgrown(plot, parameter, datapoints) ->
+        param = resolve_param(socket.assigns.secop_obj, parameter)
+        rebuild_as_latest(socket, param, fn -> latest end)
+
+      # while rebuilding, a newer reading of the rebuilt parameter
+      # restarts the rebuild from it; nothing goes into the old heatmap
+      socket.assigns[:rebuilding_plot] ->
+        case {socket.assigns[:rebuild_param], Enum.filter(datapoints, &is_list(elem(&1, 0)))} do
+          {%{name: ^parameter} = param, [_ | _] = readings} ->
+            rebuild_as_latest(socket, param, fn -> List.last(readings) end)
+
+          _ ->
+            socket
+        end
+
+      true ->
+        update = PlotDB.trace_updates(plot, datapoints, parameter)
+        push_event(socket, "extend-chart-#{socket.assigns.id}", update)
+    end
   end
 
   @impl true
@@ -274,36 +251,52 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   def handle_event("fetch-chart-range", _params, %{assigns: %{rebuilding_plot: true}} = socket),
     do: {:noreply, socket}
 
-  def handle_event("fetch-chart-range", %{"from" => from_ms, "to" => to_ms}, socket) do
+  # A live chart's range got wider: the readings from `from` (nil: the first
+  # one) up to `to`, where its buffer starts, thinned out like the history
+  # view's (see SecantService.PlotDB.History), so a wide range stays light.
+  def handle_event(
+        "fetch-chart-range",
+        %{"from" => from_ms, "to" => to_ms},
+        %{assigns: %{plot: %AsyncResult{ok?: true, result: plot}}} = socket
+      )
+      when (is_number(from_ms) or is_nil(from_ms)) and is_number(to_ms) do
     secop_obj = socket.assigns.secop_obj
-    plot = socket.assigns.plot.result
-    param_names = PlotDB.param_list(secop_obj)
+    latest = latest_window_ms()
+    from_ms = from_ms && from_ms |> max(@earliest_window_ms) |> min(latest) |> trunc()
+    to_ms = to_ms |> max(from_ms || @earliest_window_ms) |> min(latest) |> trunc()
 
     socket =
       start_async(socket, :fetch_chart_range, fn ->
-        param_names
-        |> Enum.map(&resolve_param(secop_obj, &1))
-        |> Enum.reject(&is_nil/1)
-        |> Enum.reduce_while([], fn param, acc ->
-          {values, timestamps} = Builders.fetch_param_data_in_range(param, from_ms, to_ms)
-          datapoints = Enum.zip(values, timestamps)
+        secop_obj
+        |> PlotDB.lines()
+        |> Enum.reduce_while([], fn %{param: param}, acc ->
+          window = SecNodes.history_window!(param.id, from_ms, to_ms)
+          datapoints = Enum.zip(window.values, window.timestamps)
 
           # older readings longer than the heatmap carries: switch to the
           # latest-reading plot instead of backfilling them
-          if PlotDB.outgrown(plot, secop_obj, datapoints, param.name) do
+          if PlotDB.outgrown(plot, param.name, datapoints) do
             {:halt, {:rebuild, param}}
           else
-            {:cont, [PlotDB.get_trace_updates_batch(plot, datapoints, param.name) | acc]}
+            {:cont, [PlotDB.trace_updates(plot, datapoints, param.name) | acc]}
           end
         end)
         |> case do
-          {:rebuild, param} -> {:rebuild, param}
-          updates -> updates |> Enum.reverse() |> merge_trace_updates()
+          {:rebuild, param} ->
+            {:rebuild, param}
+
+          updates ->
+            updates
+            |> Enum.reverse()
+            |> merge_trace_updates()
+            |> Map.merge(%{from: from_ms, to: to_ms})
         end
       end)
 
     {:noreply, socket}
   end
+
+  def handle_event("fetch-chart-range", _params, socket), do: {:noreply, socket}
 
   # A zoomed historical chart asks for the readings of the window it shows.
   # Long windows come back thinned out, short ones with every reading, and
@@ -332,18 +325,18 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       |> cancel_async(:fetch_chart_window)
       |> start_async(:fetch_chart_window, fn ->
         windows =
-          for param <- PlotDB.history_params(secop_obj) do
-            args = if envelope?(secop_obj, param, envelope), do: %{envelope: true}, else: %{}
-            window = SecNodes.history_window!(param.id, trunc(from_ms), trunc(to_ms), args)
-            {values, timestamps} = held_window(param, from_ms, window)
-            {param, values, timestamps, Map.take(window, [:aggregated, :bucket_ms, :envelope])}
+          for line <- PlotDB.lines(secop_obj) do
+            args = if envelope and Bands.eligible?(line), do: %{envelope: true}, else: %{}
+            window = SecNodes.history_window!(line.param.id, trunc(from_ms), trunc(to_ms), args)
+            {values, timestamps} = held_window(line, from_ms, window)
+            {line, values, timestamps, Map.take(window, [:aggregated, :bucket_ms, :envelope])}
           end
 
         # longer readings than the heatmap carries: the latest-reading plot
-        case outgrown_param(windows, plot, secop_obj) do
+        case outgrown_param(windows, plot) do
           nil ->
             windows
-            |> window_reply(plot, secop_obj)
+            |> window_reply(plot)
             |> Map.merge(%{from: from_ms, to: to_ms, req: req, gen: gen, envelope: envelope})
 
           param ->
@@ -375,19 +368,23 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       |> cancel_async(:fetch_chart_overview)
       |> start_async(:fetch_chart_overview, fn ->
         windows =
-          for param <- PlotDB.history_params(secop_obj) do
+          for line <- PlotDB.lines(secop_obj) do
             {values, timestamps, resolution} =
-              Builders.fetch_param_window(param, :historical,
-                envelope: envelope?(secop_obj, param, envelope)
-              )
+              if line.setpoint? do
+                Builders.fetch_held_param_window(line.param, :historical)
+              else
+                Builders.fetch_param_window(line.param, :historical,
+                  envelope: envelope and Bands.eligible?(line)
+                )
+              end
 
-            {param, values, timestamps, resolution}
+            {line, values, timestamps, resolution}
           end
 
         # longer readings than the heatmap carries: the latest-reading plot
-        case outgrown_param(windows, plot, secop_obj) do
+        case outgrown_param(windows, plot) do
           nil ->
-            windows |> window_reply(plot, secop_obj) |> Map.merge(%{gen: gen, envelope: envelope})
+            windows |> window_reply(plot) |> Map.merge(%{gen: gen, envelope: envelope})
 
           param ->
             {:rebuild, param}
@@ -402,7 +399,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   @impl true
   def handle_event("request-chart-data", %{"id" => chart_id}, %{assigns: assigns} = socket) do
     # Only push when a chart option actually exists — a plot result may be a
-    # not_plottable/no_plot_available map without an :option key.
+    # not_plottable map without an :option key.
     {event, plot_result} =
       if String.ends_with?(chart_id, "-calib") do
         {"echarts-data-#{chart_id}", async_result_value(assigns[:calibration_plot])}
@@ -460,33 +457,31 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   @impl true
-  def handle_event("set-display-mode", %{"mode" => mode}, socket) do
+  def handle_event("set-display-mode", %{"mode" => mode}, socket)
+      when mode in ["graph", "table", "calibration"] do
     display_mode = String.to_existing_atom(mode)
     secop_obj = socket.assigns.secop_obj
 
     socket =
       case display_mode do
+        # A live plot is loaded again: the readings it got while the table
+        # was shown went into a chart that is gone.
+        :graph when socket.assigns.plot == nil or socket.assigns.plot_mode == :live ->
+          plot_mode = socket.assigns.plot_mode
+
+          socket
+          |> assign(:plot, AsyncResult.loading())
+          |> cancel_async(:fetch_chart_range)
+          |> start_async(:load_plot, fn -> PlotDB.init(secop_obj, plot_mode) end)
+
+        # Eagerly push already-loaded plot data so it is batched with the DOM
+        # diff. LiveView guarantees push_events fire only after the diff is
+        # applied (hook mounted, handleEvent registered), avoiding the round-
+        # trip race between pushEventTo → request-chart-data → push_event.
         :graph ->
-          socket =
-            if socket.assigns.plot == nil do
-              plot_mode = socket.assigns[:plot_mode] || :live
-
-              socket
-              |> assign(:plot, AsyncResult.loading())
-              |> start_async(:load_plot, fn -> PlotDB.init(secop_obj, plot_mode) end)
-            else
-              socket
-            end
-
-          # Eagerly push already-loaded plot data so it is batched with the DOM
-          # diff. LiveView guarantees push_events fire only after the diff is
-          # applied (hook mounted, handleEvent registered), avoiding the round-
-          # trip race between pushEventTo → request-plotly-data → push_event.
-          case socket.assigns[:plot] do
-            %{ok?: true, result: %{option: _} = plot} ->
-              push_event(socket, "echarts-data-#{socket.assigns.id}", %{
-                option: plot.option
-              })
+          case socket.assigns.plot do
+            %{ok?: true, result: %{option: option}} ->
+              push_event(socket, "echarts-data-#{socket.assigns.id}", %{option: option})
 
             _ ->
               socket
@@ -510,13 +505,12 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           else
             socket
           end
-
-        _ ->
-          socket
       end
 
     {:noreply, assign(socket, :display_mode, display_mode)}
   end
+
+  def handle_event("set-display-mode", _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_async(:load_plot, {:ok, plot}, socket) do
@@ -583,9 +577,13 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     {:noreply, push_event(socket, "window-chart-data-#{socket.assigns.id}", window)}
   end
 
+  # replaced by a newer window, or by rebuild_as_latest/3
+  def handle_async(:fetch_chart_window, {:exit, {:shutdown, :cancel}}, socket),
+    do: {:noreply, socket}
+
   def handle_async(:fetch_chart_window, {:exit, reason}, socket) do
     Logger.error("Chart window fetch failed: #{inspect(reason)}")
-    {:noreply, socket}
+    {:noreply, push_event(socket, "window-chart-error-#{socket.assigns.id}", %{})}
   end
 
   def handle_async(:fetch_chart_overview, {:ok, {:rebuild, param}}, socket) do
@@ -633,6 +631,18 @@ defmodule SecantServiceWeb.Components.HistoryDB do
      )}
   end
 
+  defp latest_reading_plot?(%AsyncResult{ok?: true, result: %{plot_type: :array_latest}}),
+    do: true
+
+  defp latest_reading_plot?(_plot), do: false
+
+  defp utc_ms(%DateTime{} = ts), do: DateTime.to_unix(ts, :millisecond)
+
+  defp utc_ms(%NaiveDateTime{} = ts),
+    do: ts |> DateTime.from_naive!("Etc/UTC") |> DateTime.to_unix(:millisecond)
+
+  defp micros(%{microsecond: {us, _precision}}), do: us
+
   defp tab_class(true), do: "bg-base-300 text-base-content font-semibold"
   defp tab_class(false), do: "text-muted hover:text-base-content hover:bg-base-200"
 
@@ -641,29 +651,26 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     ~H"""
     <div id={"history-#{@id}"} class={["flex min-w-0 flex-1 flex-col", assigns[:class]]}>
       <div :if={@display_mode != :empty} class="mb-1.5 flex flex-wrap items-center gap-1">
-        <button
-          :if={@plottable}
-          class={["rounded px-2 py-1 text-xs transition-colors", tab_class(@display_mode == :graph)]}
-          phx-click={JS.push("set-display-mode", value: %{mode: "graph"}, target: @myself)}
-        >
-          Graph
-        </button>
-        <button
-          class={["rounded px-2 py-1 text-xs transition-colors", tab_class(@display_mode == :table)]}
-          phx-click={JS.push("set-display-mode", value: %{mode: "table"}, target: @myself)}
-        >
-          Table
-        </button>
-        <button
-          :if={@interface_class == "calibratable"}
-          class={[
-            "rounded px-2 py-1 text-xs transition-colors",
-            tab_class(@display_mode == :calibration)
-          ]}
-          phx-click={JS.push("set-display-mode", value: %{mode: "calibration"}, target: @myself)}
-        >
-          Calibration
-        </button>
+        <div role="tablist" aria-label="View" class="flex gap-1">
+          <button
+            :for={
+              {mode, label, shown} <- [
+                {:graph, "Graph", @plottable},
+                {:table, "Table", true},
+                {:calibration, "Calibration", @interface_class == "calibratable"}
+              ]
+            }
+            :if={shown}
+            id={"#{@id}-tab-#{mode}"}
+            type="button"
+            role="tab"
+            aria-selected={to_string(@display_mode == mode)}
+            class={["rounded px-2 py-1 text-xs transition-colors", tab_class(@display_mode == mode)]}
+            phx-click={JS.push("set-display-mode", value: %{mode: mode}, target: @myself)}
+          >
+            {label}
+          </button>
+        </div>
         <%!-- Heatmap / Lines switch, filled by the chart hook for array plots --%>
         <div
           :if={@display_mode == :graph}
@@ -707,14 +714,20 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         >
           <.icon name="hero-arrow-down-tray-micro" class="size-3.5" /> CSV
         </a>
+        <%!-- a long array's latest reading is drawn over its index, not time --%>
         <button
-          :if={@display_mode == :graph}
+          :if={@display_mode == :graph and not latest_reading_plot?(@plot)}
           id={"rangeslider-btn-#{@id}"}
-          class="rounded border border-line px-1.5 py-0.5 text-[11px] text-muted hover:bg-base-200"
+          type="button"
+          class="rounded border border-line px-1.5 py-0.5 text-[11px] text-muted transition-colors hover:bg-base-200 aria-pressed:bg-base-300 aria-pressed:text-base-content"
           data-chart-id={@id}
           title="Show or hide the time range slider"
-          aria-label="Toggle time range slider"
-          phx-click={JS.toggle_class("text-ink") |> JS.dispatch("toggle-rangeslider")}
+          aria-label="Time range slider"
+          aria-pressed="false"
+          phx-click={
+            JS.toggle_attribute({"aria-pressed", "true", "false"})
+            |> JS.dispatch("toggle-rangeslider")
+          }
         >
           <.icon name="hero-arrows-right-left-micro" class="size-3.5" />
         </button>
@@ -729,7 +742,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
                   class="flex animate-pulse items-center justify-center rounded-box bg-base-200 text-muted"
                   style={"height: #{@chart_height}px"}
                 >
-                  Waiting for valid Plot Data...
+                  Loading plot…
                 </div>
               </:loading>
               <:failed>
@@ -767,7 +780,11 @@ defmodule SecantServiceWeb.Components.HistoryDB do
                 Could not load the values.
               </div>
             </:failed>
-            <div class="overflow-x-auto rounded-box border border-line text-xs">
+            <div
+              id={"#{@id}-table-wrap"}
+              phx-hook=".LocalTimes"
+              class="overflow-x-auto rounded-box border border-line text-xs"
+            >
               <AshPagify.Components.table
                 items={table_data.parameter_values}
                 meta={table_data.meta}
@@ -776,11 +793,13 @@ defmodule SecantServiceWeb.Components.HistoryDB do
                 id={"#{@id}-table"}
               >
                 <:col :let={parameter_value} label="Time" field={:timestamp}>
-                  <span class="font-mono">
-                    {parameter_value.timestamp
-                    |> DateTime.from_naive!("Etc/UTC")
-                    |> DateTime.shift_zone!("Europe/Berlin")
-                    |> Calendar.strftime("%d.%m.%Y %H:%M:%S.%f")}
+                  <%!-- UTC until the hook shows it in the browser's time zone, like the charts --%>
+                  <span
+                    class="font-mono"
+                    data-utc-ms={utc_ms(parameter_value.timestamp)}
+                    data-us={micros(parameter_value.timestamp)}
+                  >
+                    {Calendar.strftime(parameter_value.timestamp, "%d.%m.%Y %H:%M:%S.%f")} UTC
                   </span>
                 </:col>
                 <:col :let={parameter_value} label="Value" field={Storage.column(@parameter)}>
@@ -795,6 +814,24 @@ defmodule SecantServiceWeb.Components.HistoryDB do
                 on_paginate={JS.push("paginate", target: @myself)}
                 opts={history_pagination_opts()}
               />
+              <script :type={Phoenix.LiveView.ColocatedHook} name=".LocalTimes">
+                // Reading times in the browser's time zone, as the charts show
+                // them: dd.mm.yyyy hh:mm:ss.ffffff.
+                const pad = (n, w = 2) => String(n).padStart(w, "0");
+                const show = (root) => {
+                  root.querySelectorAll("[data-utc-ms]").forEach((el) => {
+                    const d = new Date(Number(el.dataset.utcMs));
+                    if (isNaN(d)) return;
+                    el.textContent =
+                      `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()} ` +
+                      `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(el.dataset.us, 6)}`;
+                  });
+                };
+                export default {
+                  mounted() { show(this.el); },
+                  updated() { show(this.el); },
+                };
+              </script>
             </div>
           </.async_result>
         <% :calibration -> %>
@@ -839,34 +876,22 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   defp gen(%{"gen" => gen}) when is_integer(gen), do: gen
   defp gen(_params), do: nil
 
-  # the envelope is asked for, and this parameter's line may carry one
-  defp envelope?(_secop_obj, _param, false), do: false
-
-  defp envelope?(secop_obj, param, true),
-    do: Enum.any?(PlotDB.envelope_params(secop_obj), fn {p, _kind} -> p.id == param.id end)
-
-  # One reply for a plot's windows: their series updates, envelope payloads,
-  # resolution and array width. `windows` are `{param, values, timestamps,
+  # One reply for a plot's windows: their series updates, band payloads,
+  # resolution and array width. `windows` are `{line, values, timestamps,
   # resolution}`, the resolution carrying the window's `envelope`.
-  defp window_reply(windows, plot, secop_obj) do
+  defp window_reply(windows, plot) do
     {updates, envelopes} =
       windows
-      |> Enum.map(fn {param, values, timestamps, resolution} ->
-        envelope = resolution[:envelope]
-        update = PlotDB.get_trace_updates_batch(plot, Enum.zip(values, timestamps), param.name)
-        # a bucket's mean array has nil for an element without a row
-        update = PlotDB.drop_nil_points(update, envelope)
-        update = Map.update(update, :arrayLen, nil, &max(&1 || 0, rows_len(envelope)))
-        series = PlotDB.envelope_series_name(secop_obj, param)
-        {update, PlotDB.envelope_updates(plot, series, envelope)}
+      |> Enum.map(fn {line, values, timestamps, resolution} ->
+        update = PlotDB.trace_updates(plot, Enum.zip(values, timestamps), line.param.name)
+        {update, Bands.payload(plot.option, line.series, resolution[:envelope])}
       end)
       |> Enum.unzip()
 
     envelopes = Enum.reject(envelopes, &is_nil/1)
 
-    resolutions = Enum.map(windows, &elem(&1, 3))
-
-    resolutions
+    windows
+    |> Enum.map(&elem(&1, 3))
     |> History.coarsest()
     |> Map.merge(merge_trace_updates(updates))
     |> Map.merge(%{
@@ -877,20 +902,14 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   # the first parameter whose window holds an array longer than the heatmap
   # carries
-  defp outgrown_param(windows, plot, secop_obj) do
-    Enum.find_value(windows, fn {param, values, timestamps, _} ->
-      PlotDB.outgrown(plot, secop_obj, Enum.zip(values, timestamps), param.name) && param
+  defp outgrown_param(windows, plot) do
+    Enum.find_value(windows, fn {%{param: param}, values, timestamps, _} ->
+      PlotDB.outgrown(plot, param.name, Enum.zip(values, timestamps)) && param
     end)
   end
 
-  # elements an array envelope's rows reach (rows are [t, i, min, mean, max])
-  defp rows_len(%{rows: [[_t, _i, _min, _mean, _max] | _] = rows}),
-    do: rows |> Enum.map(&(Enum.at(&1, 1) + 1)) |> Enum.max()
-
-  defp rows_len(_envelope), do: 0
-
-  defp held_window(param, from_ms, window) do
-    if param.name == "target" or from_ms <= Builders.plot_start_ms(param) do
+  defp held_window(%{param: param} = line, from_ms, window) do
+    if line.setpoint? or from_ms <= Builders.plot_start_ms(param) do
       Builders.hold_from(param, from_ms, window.values, window.timestamps)
     else
       {window.values, window.timestamps}

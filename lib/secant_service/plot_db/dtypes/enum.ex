@@ -32,28 +32,15 @@ defmodule SecantService.PlotDB.DTypes.Enum do
   def supported_type?(%{"type" => "enum"}), do: true
   def supported_type?(_), do: false
 
+  @doc "int (as a string) → `%{name:, color:}` of an enum's members."
   def enum_int_to_info(members) do
-    n = length(@enum_colors)
-
-    Map.new(members, fn {k, v} ->
-      {to_string(v), %{name: k, color: Enum.at(@enum_colors, rem(v, n))}}
-    end)
+    Map.new(members, fn {k, v} -> {to_string(v), %{name: k, color: color(v)}} end)
   end
 
+  defp color(v), do: Enum.at(@enum_colors, rem(v, length(@enum_colors)))
+
   def enum_series(name, ts_list, val_list, members, y_val \\ 0) do
-    int_to_name = Map.new(members, fn {k, v} -> {v, k} end)
-    n = length(@enum_colors)
-
-    data =
-      Enum.zip_with(ts_list, val_list, fn ts, v ->
-        mn = Map.get(int_to_name, v, to_string(v))
-
-        %{
-          value: [ts, y_val],
-          name: "#{mn} (#{v})",
-          itemStyle: %{color: Enum.at(@enum_colors, rem(v, n))}
-        }
-      end)
+    info = enum_int_to_info(members)
 
     # drawn by the chart hook as one band per state, from each reading to the
     # next (see _enumBand in app.js)
@@ -62,19 +49,32 @@ defmodule SecantService.PlotDB.DTypes.Enum do
       type: "custom",
       _enumBand: true,
       encode: %{x: 0, y: 1},
-      data: data
+      data: points(Enum.zip(val_list, ts_list), info, y_val)
     }
   end
 
-  def enum_timeseries_option(series, members, _param_name, mode, y_categories \\ nil) do
-    n = length(@enum_colors)
+  # A state is an integer; anything else (a struct field missing from a
+  # reading) is no point. A number that is no member is grey.
+  defp points(datapoints, info, y_val) do
+    for {v, ts} <- datapoints, is_integer(v) do
+      %{name: name, color: color} =
+        Map.get(info, to_string(v), %{name: to_string(v), color: "#888888"})
 
+      %{value: [ts, y_val], name: "#{name} (#{v})", itemStyle: %{color: color}}
+    end
+  end
+
+  @doc """
+  Option for enum state bands. `y_categories` puts value and target on rows
+  of their own (a Drivable).
+  """
+  def enum_timeseries_option(series, members, mode, y_categories \\ nil) do
     sorted_members = Enum.sort_by(members, fn {_name, val} -> val end)
 
     # One ghost line series per enum member — empty data, exists only for the legend.
     legend_series =
       Enum.map(sorted_members, fn {name, val} ->
-        color = Enum.at(@enum_colors, rem(val, n))
+        color = color(val)
 
         %{
           name: "#{name} (#{val})",
@@ -88,12 +88,6 @@ defmodule SecantService.PlotDB.DTypes.Enum do
 
     # Only show enum-member ghost series in the legend (not "value"/"target" series names).
     legend_names = Enum.map(sorted_members, fn {name, val} -> "#{name} (#{val})" end)
-
-    # int → {name, color} for live-update conversion
-    int_to_info =
-      Map.new(members, fn {k, v} ->
-        {to_string(v), %{name: k, color: Enum.at(@enum_colors, rem(v, n))}}
-      end)
 
     y_axis =
       case y_categories do
@@ -133,7 +127,8 @@ defmodule SecantService.PlotDB.DTypes.Enum do
       end
 
     # needed to turn later readings (live, or a zoomed window) into points
-    base = Map.put(base, :_enumMembers, int_to_info)
+    info = enum_int_to_info(members)
+    base = Map.put(base, :_enumMembers, Map.new(series, &{&1.name, info}))
 
     if mode == :historical do
       # tools left of the legend, plot below them
@@ -156,18 +151,15 @@ defmodule SecantService.PlotDB.DTypes.Enum do
     [enum_series(name, ts, vals, members)]
   end
 
-  @impl true
-  def build_option(series, datainfo, _unit, mode, opts \\ []) do
-    members = datainfo["members"] || %{}
-    y_categories = Keyword.get(opts, :y_categories)
-    enum_timeseries_option(series, members, hd(Enum.map(series, & &1.name)), mode, y_categories)
-  end
-
+  @doc """
+  Updates of the series `series_name`. Its members are in the option's
+  `_enumMembers`, by series name: the fields of a struct each have their
+  own.
+  """
   @impl true
   def series_updates(option, datapoints, series_name) do
     idx = Enum.find_index(option.series, fn s -> Map.get(s, :name) == series_name end) || 0
-
-    int_to_info = Map.get(option, :_enumMembers, %{})
+    info = get_in(option, [:_enumMembers, series_name]) || %{}
 
     y_val =
       case Map.get(option, :_enumSeriesY) do
@@ -175,14 +167,6 @@ defmodule SecantService.PlotDB.DTypes.Enum do
         series_y -> Map.get(series_y, series_name, 0)
       end
 
-    data =
-      Enum.map(datapoints, fn {v, ts} ->
-        %{name: name, color: color} =
-          Map.get(int_to_info, to_string(v), %{name: to_string(v), color: "#888888"})
-
-        %{value: [ts, y_val], name: "#{name} (#{v})", itemStyle: %{color: color}}
-      end)
-
-    [%{seriesIndex: idx, data: data}]
+    [%{seriesIndex: idx, data: points(datapoints, info, y_val)}]
   end
 end
