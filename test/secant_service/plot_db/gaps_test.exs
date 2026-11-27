@@ -62,13 +62,6 @@ defmodule SecantService.PlotDB.GapsTest do
     end
   end
 
-  test "drop_short/2 keeps what the bucket width can show, and open gaps" do
-    gaps = [[0, 1_000], [0, 30_000], [0, 900_000], [5, nil]]
-
-    assert Gaps.drop_short(gaps, nil) == [[0, 30_000], [0, 900_000], [5, nil]]
-    assert Gaps.drop_short(gaps, 60_000) == [[0, 900_000], [5, nil]]
-  end
-
   describe "for_param/3" do
     test "the gaps of the parameter's session" do
       {node, param} = node_with_parameter()

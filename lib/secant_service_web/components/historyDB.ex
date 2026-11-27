@@ -178,7 +178,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
     socket =
       cond do
-        socket.assigns[:plot_mode] != :live ->
+        socket.assigns[:plot_mode] != :live or not socket.assigns[:plottable] ->
           socket
 
         not socket.assigns.plot.ok? or socket.assigns[:rebuilding_plot] ->
@@ -337,7 +337,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
               bucket_ms: bucket_ms,
               req: req
             })
-            |> Map.merge(Gaps.reply(plot, lines, {from_ms, to_ms}, bucket_ms: bucket_ms))
+            |> Map.merge(Gaps.reply(plot, lines, {from_ms, to_ms}))
         end
       end)
 
@@ -394,9 +394,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
             reply
             |> Map.merge(%{from: from_ms, to: to_ms, req: req, gen: gen, envelope: envelope})
-            |> Map.merge(
-              Gaps.reply(plot, lines, {trunc(from_ms), trunc(to_ms)}, bucket_ms: reply.bucket_ms)
-            )
+            |> Map.merge(Gaps.reply(plot, lines, {trunc(from_ms), trunc(to_ms)}))
 
           param ->
             {:rebuild, param}
@@ -449,9 +447,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
             reply
             |> Map.merge(%{gen: gen, envelope: envelope})
-            |> Map.merge(
-              Gaps.reply(plot, lines, {nil, nil}, bucket_ms: reply.bucket_ms, fallback?: true)
-            )
+            |> Map.merge(Gaps.reply(plot, lines, {nil, nil}, fallback?: true))
 
           param ->
             {:rebuild, param}

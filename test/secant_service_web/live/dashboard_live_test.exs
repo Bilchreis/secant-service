@@ -219,5 +219,20 @@ defmodule SecantServiceWeb.DashboardLiveTest do
     assert_push_event(view, "gap-chart-" <> ^id, %{kind: "close", ms: 1_700_000_009_000})
   end
 
+  test "a recording event leaves a plot without a graph (status, a table) alone",
+       %{conn: conn, node_id: node_id, path: path} do
+    connect_and_wait(node_id, @desc_a)
+    view = open_dashboard(conn, path <> "&module=temp")
+    render_hook(view, "plot_parameter", %{"param" => "status"})
+    render_async(view)
+
+    SecantService.PlotCache.recording(node_id, :stopped, 1_700_000_003_000)
+    # the cache has published; the view handles it, then the component update
+    SecantService.PlotCache.flush(node_id)
+    rerender(view)
+
+    assert render(view) =~ "temp"
+  end
+
   defp escape(id), do: String.replace(id, ~r/([.:])/, "\\\\\\1")
 end

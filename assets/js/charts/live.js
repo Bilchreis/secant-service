@@ -19,7 +19,12 @@ export const Live = {
       this._addGaps({ gaps });
       if (req !== this._rangeReq) return;
       // a thinned range: its gaps are judged at its bucket width (./gaps.mjs)
-      if (this._liveRanges && aggregated && bucket_ms) this._liveRanges.push({ from: from == null ? -Infinity : from, to, bucket_ms });
+      // a range replaces the readings (and widths) of the ranges it covers
+      if (this._liveRanges) {
+        const lo = from == null ? -Infinity : from;
+        this._liveRanges = this._liveRanges.filter((r) => r.to < lo || r.from > to);
+        if (aggregated && bucket_ms) this._liveRanges.push({ from: lo, to, bucket_ms });
+      }
       // the thinned readings this reply replaces (kept until it came)
       if (this._rangeTrim != null) this._trimBuffers(this._rangeTrim);
       this._rangeTrim = null;

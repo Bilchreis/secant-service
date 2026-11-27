@@ -250,7 +250,9 @@ export const Gaps = {
     const widthAt = (a, b) => this._gapWidth(a, b);
     let gaps = this._gapList();
     const poll = this._gapFallback[idx];
-    if (poll && !this._rangeButtons) gaps = mergeGaps([gaps, spacingGaps(d, poll, widthAt)]);
+    // inferred gaps stay apart: each spacing breaks its own pair
+    if (poll && !this._rangeButtons)
+      gaps = [...gaps, ...spacingGaps(d, poll, widthAt)].sort((a, b) => a[0] - b[0]);
     if (gaps.length === 0) return { data: d, breaks: [] };
     if (this._isHeldSeries(idx)) return { data: breakHeld(d, gaps, { widthAt }), breaks: [] };
     return breakLine(d, gaps, { widthAt });

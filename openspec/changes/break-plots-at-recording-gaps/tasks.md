@@ -59,13 +59,13 @@
 
 ## 3. Gap intervals on the server
 
-- [x] 3.1 Add `SecantService.PlotDB.Gaps.for_session/3` (design.md Decision 4): one query with the neighbouring spans, `nil` bounds, no gap before the first span, the 45 s staleness rule, `g1 = nil` after the last span; and a `Gaps.drop_short(gaps, bucket_ms)` the callers apply with their load's bucket width (`max(2 s, bucket_ms)`). Add the `pollinterval_ms` lookup for span-less sessions in one query. Test in `test/secant_service/plot_db/gaps_test.exs`:
+- [x] 3.1 Add `SecantService.PlotDB.Gaps.for_param/3` (the parameter's session) (design.md Decision 4): one query with the neighbouring spans, `nil` bounds, no gap before the first span, the 45 s staleness rule, `g1 = nil` after the last span; every gap is sent, the hook judges which it can draw. Add the `pollinterval_ms` lookup for span-less sessions in one query. Test in `test/secant_service/plot_db/gaps_test.exs`:
   - two spans with a gap between them;
   - a stale and an alive open span;
   - `:no_spans`;
   - a window entirely inside a gap, which still knows its `g1` (or `nil`);
   - a window before the first span, which has no gaps;
-  - `nil` bounds and a short gap left out at a coarse bucket;
+  - `nil` bounds;
   - a module with and without `pollinterval` (its last reading of the session).
 
   Verify the file passes.

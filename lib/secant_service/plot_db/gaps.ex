@@ -15,9 +15,9 @@ defmodule SecantService.PlotDB.Gaps do
       `:no_spans`; their plots break `value` lines by the spacing of the
       readings instead, using the module's poll interval (`pollinterval_ms/1`).
 
-  The plots send gaps with every load (`put/3`, `reply/4`). Gaps shorter
-  than a load's bucket width (or 2 s) are left out: the hook would never
-  draw them, and a finer load brings them back.
+  The plots send gaps with every load (`put/3`, `reply/4`), all of them:
+  the hook decides which it can draw at the current zoom, and a short gap
+  that closes an open one it knew must reach it.
   """
 
   import Ecto.Query
@@ -25,7 +25,6 @@ defmodule SecantService.PlotDB.Gaps do
   alias SecantService.Repo
 
   @stale_ms 45_000
-  @min_gap_ms 2_000
 
   @type gap :: [integer | nil]
 
@@ -80,15 +79,6 @@ defmodule SecantService.PlotDB.Gaps do
     do: (is_nil(to_ms) or g0 <= to_ms) and (is_nil(from_ms) or is_nil(g1) or g1 >= from_ms)
 
   @doc """
-  `gaps` without those shorter than `bucket_ms` (and 2 s): a load at that
-  width can't show them. A gap with no end is kept.
-  """
-  def drop_short(gaps, bucket_ms) do
-    min = max(@min_gap_ms, bucket_ms || 0)
-    Enum.filter(gaps, fn [g0, g1] -> is_nil(g1) or g1 - g0 >= min end)
-  end
-
-  @doc """
   The poll interval (ms) of the module of parameter `param_id`: the last
   reading of the session of its parameter named `pollinterval`, which SECoP
   gives in seconds. nil without one.
@@ -117,17 +107,15 @@ defmodule SecantService.PlotDB.Gaps do
   Puts the gaps of a number-line plot's first load on its option, as
   `_gaps: %{gaps: [[g0, g1]], fallback: %{series index => pollinterval_ms}}`.
   `fallback` lists the `value` lines of a historical plot of a session
-  without spans. `window` is the loaded `{from_ms, to_ms}`; the plot's
-  coarsest bucket drops the gaps it can't show.
+  without spans. `window` is `{mode, from_ms, to_ms}` of the load.
   """
   def put(%{option: option, lines: _} = plot, plot_lines, {mode, from_ms, to_ms}) do
     [%{param: first} | _] = plot_lines
-    bucket_ms = get_in(option, [:_windowFetch, :bucket_ms])
 
     payload =
       case for_param(first.id, from_ms, to_ms) do
         {:spans, gaps} ->
-          %{gaps: drop_short(gaps, bucket_ms), fallback: %{}}
+          %{gaps: gaps, fallback: %{}}
 
         :no_spans ->
           %{
@@ -150,11 +138,10 @@ defmodule SecantService.PlotDB.Gaps do
 
   def reply(%{option: %{_gaps: _} = option}, plot_lines, {from_ms, to_ms}, opts) do
     [%{param: first} | _] = plot_lines
-    bucket_ms = Keyword.get(opts, :bucket_ms)
 
     case for_param(first.id, from_ms, to_ms) do
       {:spans, gaps} ->
-        %{gaps: drop_short(gaps, bucket_ms)}
+        %{gaps: gaps}
 
       :no_spans ->
         if Keyword.get(opts, :fallback?, false),

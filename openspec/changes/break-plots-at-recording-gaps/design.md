@@ -120,7 +120,7 @@ Breaks placed by the server per loaded window fail at the seams. A detail window
 
 **Server side: `SecantService.PlotDB.Gaps`.**
 
-`for_session(session_uuid, from_ms | nil, to_ms | nil)` returns `{:spans, [[g0, g1 | nil]]}` or `:no_spans`, in **one query** per load. The query reads:
+`for_param(param_id, from_ms | nil, to_ms | nil)` (the parameter's session) returns `{:spans, [[g0, g1 | nil]]}` or `:no_spans`, in **one query** per load. The query reads:
 - the session's spans overlapping the window;
 - the last span ending before the window and the first starting after it, so a window inside a gap knows both of its ends;
 - whether any span exists.
@@ -129,7 +129,7 @@ The rules:
 - `nil` bounds mean the session's first span to now. Time before the first span is no gap (spec).
 - An open span with a stale `alive_until` (over 45 s) ends there; an alive open span ends now.
 - After the last span, the gap has `g1 = nil` (no later span).
-- The caller drops gaps shorter than `max(2 s, the load's bucket_ms)` (`Gaps.drop_short/2`), since `for_session/3` doesn't know the bucket. The hook could never break them, and the finer replies of a zoom bring them back. This bounds the payload for a node that flaps.
+- Every gap is sent, short ones too: the hook judges what it can draw at the current zoom, and a short gap can be what tells it that an open gap it knew has ended (council and sol-loop review).
 
 `Builders.hold_from/4` stays as it is. A setpoint pinned at a window start inside a gap is a point inside the gap: the hook doesn't draw it, and uses its value for the resume at `g1` (see below). That also gives a live plot opened during an outage the value it needs when recording resumes.
 
@@ -219,7 +219,7 @@ The example is a 30-day session of 1 Hz readings with one suspend a day (about 3
 - **First historical load:** today's queries plus **1 spans query per plot** (an indexed scan of about 30 rows). A span-less session adds the `pollinterval` query for its value line, **+2** in all.
 - **Zoom, overview reload, range widening:** +1 each (+2 for the overview of a span-less session).
 - **Live updates:** no extra query; one message per transition.
-- **Payload:** a gap is a pair of numbers, sent once per reply. 30 gaps are about 1 kB of JSON, and gaps finer than a load's bucket are left out. The hook adds at most 3 points per gap per line.
+- **Payload:** a gap is a pair of numbers, sent once per reply. 30 gaps are about 1 kB of JSON. The hook adds at most 3 points per gap per line.
 - **Writes:** 1 span upsert per node every 10 s.
 
 ## Risks / Trade-offs

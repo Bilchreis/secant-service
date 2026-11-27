@@ -131,3 +131,10 @@ test("band rows break where their line broke", () => {
   assert.deepEqual(breakRows(rows, [7300]), [{ t: 0 }, { t: 3600 }, { t: 7200 }, null, { t: 30000 }, { t: 33600 }]);
   assert.equal(breakRows(rows, []), rows);
 });
+
+test("fallback gaps next to each other break each of their pairs", () => {
+  const data = [[0, 1], [s(60), 2], [s(120), 3]];
+  const gaps = spacingGaps(data, 2000);
+  assert.deepEqual(gaps, [[0, s(60)], [s(60), s(120)]]);
+  assert.equal(nulls(breakLine(data, gaps).data).length, 2);
+});
