@@ -15,6 +15,8 @@ const MIN_GAP_MS = 2000;
 // wide, and at least this long, is a gap
 const FALLBACK_FACTOR = 5;
 const FALLBACK_MIN_MS = 60_000;
+// the size of a line's markers (Scalar's @markersize)
+const GAP_MARKER_SIZE = 5;
 
 const end = (g) => (g[1] == null ? Infinity : g[1]);
 
@@ -181,6 +183,18 @@ export function breakRows(rows, breaks) {
 
 export const hasNull = (data) => data.some((p) => Array.isArray(p) && p[1] == null);
 
+// Indexes of readings a break left on their own (nulls, or the ends of the
+// data, on both sides): without a marker they would not show at all
+export function isolatedPoints(data) {
+  const out = new Set();
+  if (!hasNull(data)) return out;
+  const gone = (k) => k < 0 || k >= data.length || data[k][1] == null;
+  data.forEach((p, k) => {
+    if (p[1] != null && gone(k - 1) && gone(k + 1)) out.add(k);
+  });
+  return out;
+}
+
 export const Gaps = {
   // Server events of gaps: recording stopped or resumed while a live plot
   // is open.
@@ -267,6 +281,22 @@ export const Gaps = {
   // the times a band's line broke at
   _lineBreaks(src) {
     return this._gapsOn ? this._broken(src).breaks : [];
+  },
+
+  // A number line's data patch: a reading a break left on its own gets a
+  // marker, the others none (they show on hover, as without gaps).
+  _gapDataPatch(data, symbol) {
+    const alone = isolatedPoints(data);
+    if (alone.size === 0 || this._lone(data)) {
+      const patch = this._dataPatchOf(data, symbol);
+      return patch.showSymbol ? patch : { ...patch, symbolSize: GAP_MARKER_SIZE };
+    }
+    return {
+      data,
+      showSymbol: true,
+      symbol: symbol || "circle",
+      symbolSize: (_value, params) => (alone.has(params.dataIndex) ? GAP_MARKER_SIZE : 0),
+    };
   },
 
   // sampling of a drawn line: LTTB keeps one null per frame, so a line with

@@ -209,7 +209,7 @@ export const EChartsChart = {
     const symbol = this._symbols ? this._symbols[j] : undefined;
     // a line with breaks is not sampled (see ./gaps.mjs)
     if (this._gapsOn && !(this._seriesMap && this._seriesMap[j] && this._seriesMap[j].band)) {
-      return { ...this._dataPatchOf(data, symbol), sampling: this._sampling(data, false) };
+      return { ...this._gapDataPatch(data, symbol), sampling: this._sampling(data, false) };
     }
     return this._dataPatchOf(data, symbol);
   },

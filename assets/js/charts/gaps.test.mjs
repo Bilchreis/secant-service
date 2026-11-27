@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { breakHeld, breakLine, breakRows, mergeGaps, spacingGaps } from "./gaps.mjs";
+import { Gaps, breakHeld, breakLine, breakRows, isolatedPoints, mergeGaps, spacingGaps } from "./gaps.mjs";
 
 const s = (n) => n * 1000;
 // a reading every second from `from` to `to` (seconds), value = its second
@@ -137,4 +137,25 @@ test("fallback gaps next to each other break each of their pairs", () => {
   const gaps = spacingGaps(data, 2000);
   assert.deepEqual(gaps, [[0, s(60)], [s(60), s(120)]]);
   assert.equal(nulls(breakLine(data, gaps).data).length, 2);
+
+  // as the hook draws it: through _broken, with the session's (no) gaps
+  const hook = {
+    ...Gaps,
+    _seriesData: { 0: data },
+    _gapsOn: true,
+    _gapSets: [[]],
+    _gapLive: [],
+    _gapFallback: { 0: 2000 },
+    _rangeButtons: null,
+    _resolution: null,
+    _detail: null,
+  };
+  assert.equal(nulls(hook._broken(0).data).length, 2);
+});
+
+test("a reading a break left on its own is marked", () => {
+  const data = [...every(0, 10), [s(15), 5], [s(15), null], [s(700), 7]];
+  // the reading after the break, with nothing after it yet
+  assert.deepEqual([...isolatedPoints(data)], [13]);
+  assert.equal(isolatedPoints(every(0, 10)).size, 0);
 });
