@@ -106,6 +106,10 @@ defmodule SecantService.PlotDB.Builders do
   @doc """
   Puts the last reading before `from_ms` in front of `values`/`timestamps`,
   at `from_ms`. Unchanged when there is no window start or earlier reading.
+
+  A window start inside a recording gap is pinned too, on purpose: the chart
+  hook draws nothing of a setpoint inside a gap and uses the pinned value
+  where the line resumes, at the gap's end (`assets/js/charts/gaps.mjs`).
   """
   def hold_from(_param, nil, values, timestamps), do: {values, timestamps}
 

@@ -8,6 +8,11 @@ defmodule SecantService.PlotCache do
   keeps the readings of all parameters of the description in one buffer.
   The batch is broadcast as `{:plot_data, [{module, parameter, reports}]}` on
   `SecantService.Topics.plot_data/1`, reports oldest first.
+
+  When recording of the node stops or resumes (`SecantService.RecordingTracker`
+  calls `recording/3`), the buffered batch is published first and then
+  `{:recording, :stopped | :resumed, ms}` on the same topic, so a plot gets
+  the readings from before a stop before the stop itself.
   """
   use GenServer
 
@@ -28,6 +33,25 @@ defmodule SecantService.PlotCache do
 
   @doc "Publish the buffered readings now instead of at the next interval."
   def flush(node_id), do: call(node_id, :flush)
+
+  @doc """
+  Recording of the node stopped or resumed at `ms` (Unix milliseconds).
+  Published after the readings buffered so far. Without a running cache (it
+  is the process that crashed), published at once: its buffer is gone anyway.
+  """
+  def recording(node_id, kind, ms) when kind in [:stopped, :resumed] do
+    case Registry.lookup(Registry.PlotCache, node_id) do
+      [{pid, _}] ->
+        GenServer.cast(pid, {:recording, kind, ms})
+
+      [] ->
+        Phoenix.PubSub.broadcast(
+          @service_pubsub,
+          Topics.plot_data(node_id),
+          {:recording, kind, ms}
+        )
+    end
+  end
 
   defp call(node_id, msg) do
     case Registry.lookup(Registry.PlotCache, node_id) do
@@ -68,6 +92,13 @@ defmodule SecantService.PlotCache do
 
   # Only value updates are expected on the topic; ignore anything else.
   def handle_info(_msg, state), do: {:noreply, state}
+
+  @impl true
+  def handle_cast({:recording, kind, ms}, state) do
+    state = publish(state)
+    Phoenix.PubSub.broadcast(@service_pubsub, state.topic, {:recording, kind, ms})
+    {:noreply, state}
+  end
 
   @impl true
   def handle_call(:parameters, _from, state), do: {:reply, state.known, state}

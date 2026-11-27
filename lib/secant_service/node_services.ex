@@ -82,6 +82,9 @@ defmodule SecantService.NodeServices do
   - DBWriter: Process responsible for writing node values to the database
   - PlotCache: collects live values and sends them to the dashboard plots in
     one batch every few seconds
+  - RecordingTracker: records when the node was being recorded (recording
+    spans), so the plots can break their lines where it wasn't. Last, so it
+    stops first: its final close still reaches the PlotCache.
 
   """
 
@@ -104,7 +107,10 @@ defmodule SecantService.NodeServices do
       {SecantService.PlotCache, node_db},
 
       # DB Writer process for this specific node
-      {SecantService.NodeDBWriter, node_db}
+      {SecantService.NodeDBWriter, node_db},
+
+      # When the node was being recorded
+      {SecantService.RecordingTracker, node_db}
     ]
 
     Supervisor.init(children, strategy: :rest_for_one)

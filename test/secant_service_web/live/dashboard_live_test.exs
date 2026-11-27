@@ -202,5 +202,37 @@ defmodule SecantServiceWeb.DashboardLiveTest do
   end
 
   # "127.0.0.1:1234" -> CSS-safe id selector part
+  test "a stop and a resume of recording reach the open plot as gaps",
+       %{conn: conn, node_id: node_id, path: path} do
+    connect_and_wait(node_id, @desc_a)
+    view = open_dashboard(conn, path <> "&module=temp")
+    [node] = SecantService.SecNodes.active_sec_nodes!()
+    id = SecantServiceWeb.DashboardLive.Index.plot_id(node, "temp", nil)
+
+    send_value_update(node_id, "temp", "value", [3.75, %{t: 1_700_000_002.0}])
+    SecantService.PlotCache.recording(node_id, :stopped, 1_700_000_003_000)
+    SecantService.PlotCache.recording(node_id, :resumed, 1_700_000_009_000)
+    rerender(view)
+
+    assert_push_event(view, "extend-chart-" <> ^id, %{seriesUpdates: [_ | _]})
+    assert_push_event(view, "gap-chart-" <> ^id, %{kind: "open", ms: 1_700_000_003_000})
+    assert_push_event(view, "gap-chart-" <> ^id, %{kind: "close", ms: 1_700_000_009_000})
+  end
+
+  test "a recording event leaves a plot without a graph (status, a table) alone",
+       %{conn: conn, node_id: node_id, path: path} do
+    connect_and_wait(node_id, @desc_a)
+    view = open_dashboard(conn, path <> "&module=temp")
+    render_hook(view, "plot_parameter", %{"param" => "status"})
+    render_async(view)
+
+    SecantService.PlotCache.recording(node_id, :stopped, 1_700_000_003_000)
+    # the cache has published; the view handles it, then the component update
+    SecantService.PlotCache.flush(node_id)
+    rerender(view)
+
+    assert render(view) =~ "temp"
+  end
+
   defp escape(id), do: String.replace(id, ~r/([.:])/, "\\\\\\1")
 end

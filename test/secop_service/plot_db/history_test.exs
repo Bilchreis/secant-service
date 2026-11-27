@@ -597,8 +597,9 @@ defmodule SecantService.PlotDB.HistoryTest do
 
       # per parameter: its session start, its second reading, the window
       # (parameter, bounds, count, readings) and the held reading before it;
-      # loading the resolution again doubled this
-      assert count_messages({ref, :query}) <= 14
+      # loading the resolution again doubled this. Per plot: its gaps, and
+      # (a session without spans) the value's poll interval.
+      assert count_messages({ref, :query}) <= 16
     end
 
     test "a zoomed enum window comes back as state points" do

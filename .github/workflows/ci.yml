@@ -86,3 +86,8 @@ jobs:
 
       - name: Test
         run: mix test
+
+      # The pure parts of the chart hook (where lines break at recording
+      # gaps); no npm packages needed.
+      - name: Test chart hook
+        run: node --test assets/js/charts/gaps.test.mjs

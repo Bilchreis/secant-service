@@ -11,11 +11,15 @@ defmodule SecantService.PlotDB.TimePlot do
   The plot map carries `lines`, `%{parameter name => %{series:, dtype:}}`,
   so live readings and zoomed windows of a parameter find the series they
   belong to (see `SecantService.PlotDB.trace_updates/3`).
+
+  Number-line plots also carry the gaps of their session (`_gaps` on the
+  option, see `SecantService.PlotDB.Gaps`), where the chart breaks its lines.
   """
 
   alias SecantService.PlotDB.Bands
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.DTypePlot
+  alias SecantService.PlotDB.Gaps
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
   alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
@@ -118,6 +122,16 @@ defmodule SecantService.PlotDB.TimePlot do
     |> Scalar.timeseries_option(value.param.datainfo["unit"], mode, legend_selected)
     |> plot(lines, Scalar, Enum.map(fetched, fn {_line, {_v, _t, res}} -> res end))
     |> Bands.put(fetched, mode)
+    |> Gaps.put(lines, gap_window(mode))
+  end
+
+  # what the first load covers, for its gaps (`SecantService.PlotDB.Gaps`):
+  # a historical plot all of its session, a live one its range
+  defp gap_window(:historical), do: {:historical, nil, nil}
+
+  defp gap_window(mode) do
+    {from_ms, _to_ms, _buttons, _active} = Builders.default_live_range_ms()
+    {mode, from_ms, nil}
   end
 
   defp plot(option, lines, dtype, resolutions) do
