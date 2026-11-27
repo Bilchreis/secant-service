@@ -44,18 +44,10 @@ defmodule SecantService.PlotDB.Builders do
     from_ms = plot_start_ms(param)
     args = if Keyword.get(opts, :envelope, false), do: %{envelope: true}, else: %{}
 
-    {values, timestamps, resolution} =
-      if History.thinnable?(param) do
-        window = SecNodes.history_window!(param.id, from_ms, nil, args)
-
-        {window.values, window.timestamps, Map.take(window, [:aggregated, :bucket_ms, :envelope])}
-      else
-        {values, timestamps} = fetch_param_data_in_range(param, from_ms, nil)
-        {values, timestamps, @unthinned}
-      end
-
-    {values, timestamps} = hold_from(param, from_ms, values, timestamps)
-    {values, timestamps, resolution}
+    # only thinnable parameters are plotted (see `SecantService.PlotDB.lines/1`)
+    window = SecNodes.history_window!(param.id, from_ms, nil, args)
+    {values, timestamps} = hold_from(param, from_ms, window.values, window.timestamps)
+    {values, timestamps, Map.take(window, [:aggregated, :bucket_ms, :envelope])}
   end
 
   def fetch_param_window(param, :live, _opts) do

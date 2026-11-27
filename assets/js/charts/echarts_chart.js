@@ -132,6 +132,9 @@ export const EChartsChart = {
     // Only the answer to the last range click: the range may have changed.
     this.handleEvent(`prepend-chart-data-${this.el.id}`, ({ req, seriesUpdates, arrayLen, from, to, aggregated }) => {
       if (req !== this._rangeReq) return;
+      // the thinned readings this reply replaces (kept until it came)
+      if (this._rangeTrim != null) this._trimBuffers(this._rangeTrim);
+      this._rangeTrim = null;
       (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
         const buffer = this._seriesData[seriesIndex] || [];
         const first = buffer.length ? this._pointTs(buffer[0]) : null;
@@ -419,11 +422,11 @@ export const EChartsChart = {
         : overview;
     });
     // the heatmap's colour scale covers the detail's values too
-    const heat = this._isArrayPlot() && this._arrayMode !== "lines";
-    if (heat && d && d.series[0]) this._trackHeatRange(d.series[0]);
+    // (in Lines mode too: a switch to Heatmap draws them)
+    if (this._isArrayPlot() && d && d.series[0]) this._trackHeatRange(d.series[0]);
     if (!draw) return;
     const patch = { series: this._seriesPatch() };
-    if (heat) Object.assign(patch, this._heatPatch());
+    if (this._isArrayPlot() && this._arrayMode !== "lines") Object.assign(patch, this._heatPatch());
     this._chart.setOption(patch);
     this._renderResolution();
     this._renderEmpty();
@@ -830,9 +833,10 @@ export const EChartsChart = {
     const series = (option.series || []).map((s, i) => {
       if (s && s._enumBand) return this._enumBand(s, live);
       if (s && s._arrayHeat) return this._arrayHeat(s, live, i);
-      if (s && s._target) {
+      // a held line (a setpoint) runs to the end; a target is also muted
+      if (s && (s._held || s._target)) {
         this._targetIdx.add(String(s._src != null ? s._src : i));
-        const color = muted ? { lineStyle: { ...(s.lineStyle || {}), color: muted }, itemStyle: { ...(s.itemStyle || {}), color: muted } } : {};
+        const color = s._target && muted ? { lineStyle: { ...(s.lineStyle || {}), color: muted }, itemStyle: { ...(s.itemStyle || {}), color: muted } } : {};
         return { ...s, ...color, data: this._heldTarget(s.data || [], option.series) };
       }
       return s;
@@ -1235,7 +1239,7 @@ export const EChartsChart = {
         type: "line",
         data,
         showSymbol: false,
-        symbol: "circle", // shown on a lone reading (see _dataPatch)
+        symbol: "none",
         step: false,
         sampling: "lttb",
         lineStyle: { width: n > 20 ? 1 : 1.5 },
@@ -1267,7 +1271,7 @@ export const EChartsChart = {
             xAxisIndex: s.xAxisIndex,
             yAxisIndex: s.yAxisIndex,
             showSymbol: false,
-            symbol: "circle", // shown on a lone reading (see _dataPatch)
+            symbol: "none",
             sampling: "lttb",
             color: arrayLineColor(k, n),
             lineStyle: { width: n > 20 ? 1 : 1.5, type: s._targetArray ? [6, 4] : "solid" },
@@ -1451,6 +1455,8 @@ export const EChartsChart = {
       el.setAttribute("aria-pressed", String(index === this._activeButton));
       this._styleRangeButton(el, index === this._activeButton);
       el.addEventListener("click", () => {
+        // the range shown already (a thinned one would be fetched again)
+        if (index === this._activeButton) return;
         this._activeButton = index;
         buttonsEl.querySelectorAll("button").forEach((b, i) => {
           this._styleRangeButton(b, i === index);
@@ -1462,15 +1468,20 @@ export const EChartsChart = {
 
         // a reply to an earlier click is for another range
         this._rangeReq = (this._rangeReq || 0) + 1;
+        this._rangeTrim = null;
         // wider than the buffers hold every reading of: ask for the readings
         // before it (all of them may come back thinned out: so be it)
         if (newXMin === null ? this._coveredFrom > -Infinity : newXMin < this._rawFrom) {
-          // thinned readings inside the new range are fetched again
-          if (newXMin !== null && this._rawFrom > this._coveredFrom) this._trimBuffers(this._rawFrom);
-          const to = Number.isFinite(this._coveredFrom) ? this._coveredFrom : now;
+          // thinned readings inside the new range are fetched again, and
+          // dropped when the reply comes (so a failed fetch leaves them)
+          if (newXMin !== null && this._rawFrom > this._coveredFrom) this._rangeTrim = this._rawFrom;
+          const start = this._rangeTrim ?? this._coveredFrom;
+          const to = Number.isFinite(start) ? start : now;
           this.pushEventTo(this.el, "fetch-chart-range", { from: newXMin, to: Math.ceil(to), req: this._rangeReq });
         } else if (newXMin !== null) {
-          // narrower: drop the readings that left it
+          // narrower: drop the readings that left it; a fetch for a wider
+          // range still running is of no use
+          this.pushEventTo(this.el, "cancel-chart-range", {});
           this._trimBuffers(newXMin);
         }
 

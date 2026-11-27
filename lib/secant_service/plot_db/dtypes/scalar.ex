@@ -10,8 +10,10 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
   def supported_type?(_), do: false
 
   @doc """
-  A line of `[ts, value]` points. With `setpoint: true` it is drawn as a
-  setpoint (see `target_style/2`).
+  A line of `[ts, value]` points. With `held: true` each reading holds until
+  the next one (a setpoint, only recorded when it changes); with
+  `setpoint: true` it is also drawn as a module's target (see
+  `target_style/2`).
   """
   def scalar_line_series(name, ts_list, val_list, opts \\ []) do
     %{
@@ -27,15 +29,19 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
       # thin out long recordings to what the chart can show
       sampling: "lttb"
     }
+    |> held_style(Keyword.get(opts, :held, false) or Keyword.get(opts, :setpoint, false))
     |> target_style(Keyword.get(opts, :setpoint, false))
   end
 
-  # The setpoint looks like on the dashboard cards: a dashed step line
-  # (each target holds until the next one), no markers. The hook gives
-  # `_target` series the page's muted colour and holds their last reading.
+  # A step line; the hook holds `_held` series' last reading to the end of
+  # the chart (to now on a live one).
+  defp held_style(series, true), do: Map.merge(series, %{step: "end", _held: true})
+  defp held_style(series, false), do: series
+
+  # The target looks like on the dashboard cards: a dashed held line, no
+  # markers. The hook gives `_target` series the page's muted colour.
   defp target_style(series, true) do
     Map.merge(series, %{
-      step: "end",
       showSymbol: false,
       lineStyle: %{width: 2, type: [6, 4]},
       _target: true

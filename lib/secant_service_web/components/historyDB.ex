@@ -268,7 +268,10 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     to_ms = to_ms |> max(from_ms || @earliest_window_ms) |> min(latest) |> trunc()
 
     socket =
-      start_async(socket, :fetch_chart_range, fn ->
+      socket
+      # an answer for the range clicked before is of no use
+      |> cancel_async(:fetch_chart_range)
+      |> start_async(:fetch_chart_range, fn ->
         secop_obj
         |> PlotDB.lines()
         |> Enum.reduce_while({[], false}, fn %{param: param}, {acc, aggregated} ->
@@ -303,6 +306,10 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   def handle_event("fetch-chart-range", _params, socket), do: {:noreply, socket}
+
+  # The range got narrower: a wider one still being fetched is of no use.
+  def handle_event("cancel-chart-range", _params, socket),
+    do: {:noreply, cancel_async(socket, :fetch_chart_range)}
 
   # A zoomed historical chart asks for the readings of the window it shows.
   # Long windows come back thinned out, short ones with every reading, and

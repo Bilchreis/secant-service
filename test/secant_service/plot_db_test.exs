@@ -90,7 +90,7 @@ defmodule SecantService.PlotDBTest do
       assert PlotDB.lines(create_module(["Readable"], [{"value", string}])) == []
     end
 
-    test "only a module's target is drawn as a setpoint" do
+    test "every setpoint is held; only a module's target is drawn as one" do
       calibratable =
         create_module(["_Calibratable", "Drivable"], [
           {"value", @double},
@@ -100,7 +100,10 @@ defmodule SecantService.PlotDBTest do
 
       series = PlotDB.init(calibratable, :live).option.series
       assert %{_target: true} = Enum.find(series, &(&1.name == "target"))
-      refute Map.has_key?(Enum.find(series, &(&1.name == "_target_calibrated")), :_target)
+      calibrated = Enum.find(series, &(&1.name == "_target_calibrated"))
+      refute Map.has_key?(calibrated, :_target)
+      # still a setpoint: each reading holds until the next one
+      assert %{_held: true, step: "end"} = calibrated
     end
   end
 

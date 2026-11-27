@@ -104,10 +104,12 @@ defmodule SecantService.PlotDB.TimePlot do
 
     series =
       for {line, {vals, ts, _res}} <- fetched do
-        # a module's target is drawn as a setpoint (dashed, held); a
-        # setpoint plotted on its own is that plot's value, and the hidden
-        # `_target_calibrated` an ordinary line (it is still held, see fetch/2)
-        Scalar.scalar_line_series(line.series, ts, vals, setpoint: line.series == "target")
+        # every setpoint holds its readings (see fetch/2); a module's
+        # target is also drawn dashed and muted
+        Scalar.scalar_line_series(line.series, ts, vals,
+          held: line.setpoint?,
+          setpoint: line.series == "target"
+        )
       end
 
     legend_selected = for line <- lines, line.hidden?, into: %{}, do: {line.series, false}

@@ -619,7 +619,7 @@ defmodule SecantService.PlotDB.HistoryTest do
     end
 
     test "readings from before the session are pinned to its start" do
-      for {type, value_fun} <- [{"double", &(&1 * 1.0)}, {"bool", &(rem(&1, 2) == 1)}] do
+      for {type, value_fun} <- [{"double", &(&1 * 1.0)}, {"int", & &1}] do
         parameter = generate(parameter(datainfo: %{"type" => type}))
         insert_readings(parameter, 20, value_fun)
         # a stale first reading (index 0), the session from index 10 on
