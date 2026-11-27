@@ -59,6 +59,11 @@ defmodule SecantService.PlotDB.DTypesTest do
       assert series.data == [[1, 0.5], [2, 1.5]]
     end
 
+    test "a line draws no markers until a reading is hovered" do
+      [series] = Scalar.build_series("value", [1, 2], [0.5, 1.5], @double)
+      assert series.showSymbol == false
+    end
+
     test "live updates go to the series of that parameter" do
       option = %{series: [%{name: "value"}, %{name: "target"}]}
 

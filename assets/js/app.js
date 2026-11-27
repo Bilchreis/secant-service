@@ -992,6 +992,8 @@ Hooks.EChartsChart = {
       ...(yAxis ? { yAxis } : {}),
       ...(legend ? { legend } : {}),
       series,
+      // no tweening: on every update the points would slide into place
+      animation: false,
       backgroundColor: "transparent",
       textStyle: { fontFamily: "JetBrains Mono, ui-monospace, monospace", color: muted, ...(option.textStyle || {}) },
     };
