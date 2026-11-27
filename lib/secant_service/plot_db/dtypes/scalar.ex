@@ -14,8 +14,10 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
       name: name,
       type: "line",
       data: Enum.zip_with(ts_list, val_list, &[&1, &2]),
+      # a plain line; the marker only shows on the hovered reading
       symbol: "circle",
       symbolSize: @markersize,
+      showSymbol: false,
       large: true,
       largeThreshold: 2000,
       # thin out long recordings to what the chart can show

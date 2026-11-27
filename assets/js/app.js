@@ -649,11 +649,7 @@ Hooks.EChartsChart = {
     return data.map((d, j) => {
       const m = map[j];
       if (!m || m.band || !this._bandParent(m)) return { data: d };
-      const band = this._hasBand(m.src, m.elem);
-      // array element lines never show markers
-      return m.elem == null
-        ? { data: d, sampling: band ? "none" : "lttb", showSymbol: !band }
-        : { data: d, sampling: band ? "none" : "lttb" };
+      return { data: d, sampling: this._hasBand(m.src, m.elem) ? "none" : "lttb" };
     });
   },
 
@@ -992,6 +988,8 @@ Hooks.EChartsChart = {
       ...(yAxis ? { yAxis } : {}),
       ...(legend ? { legend } : {}),
       series,
+      // no tweening: on every update the points would slide into place
+      animation: false,
       backgroundColor: "transparent",
       textStyle: { fontFamily: "JetBrains Mono, ui-monospace, monospace", color: muted, ...(option.textStyle || {}) },
     };
