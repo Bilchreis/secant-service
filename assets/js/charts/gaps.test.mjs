@@ -254,7 +254,9 @@ test("element lines break, with a circle on a lone reading", () => {
   const line = hook._elementLine([[0, 1], [s(5), 2], [s(500), 3]]);
   assert.deepEqual(nulls(line), [s(10)]);
   const patch = hook._gapPatch(line, 0);
-  assert.equal(patch.symbol, "circle");
+  const lone = line.findIndex((p) => p[0] === s(500));
+  assert.equal(patch.symbol(null, { dataIndex: lone }), "circle");
+  assert.equal(patch.symbol(null, { dataIndex: 0 }), "none");
   assert.equal(patch.sampling, "none");
 });
 

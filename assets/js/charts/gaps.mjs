@@ -348,14 +348,18 @@ export const Gaps = {
   _gapDataPatch(data, symbol) {
     const alone = isolatedPoints(data);
     if (alone.size === 0 || this._lone(data)) {
-      // a fixed size again, replacing a size callback set before
-      return { ...this._dataPatchOf(data, symbol), symbolSize: GAP_MARKER_SIZE };
+      // a fixed symbol and size again, replacing the callback set before
+      const patch = this._dataPatchOf(data, symbol);
+      return { ...patch, symbol: patch.symbol || "emptyCircle", symbolSize: GAP_MARKER_SIZE };
     }
+    const marker = symbol && symbol !== "none" ? symbol : "circle";
+    // the symbol, not the size, picks the marked readings: ECharts creates no
+    // element for "none", but one per point for a zero size
     return {
       data,
       showSymbol: true,
-      symbol: symbol && symbol !== "none" ? symbol : "circle",
-      symbolSize: (_value, params) => (alone.has(params.dataIndex) ? GAP_MARKER_SIZE : 0),
+      symbol: (_value, params) => (alone.has(params.dataIndex) ? marker : "none"),
+      symbolSize: GAP_MARKER_SIZE,
     };
   },
 
