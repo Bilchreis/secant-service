@@ -1076,7 +1076,7 @@ export const EChartsChart = {
     }
     if (!this._chart || !this._lastOption) return;
     this._chart.setOption({
-      series: [{ data }],
+      series: [this._dataPatch(data, 0)],
       xAxis: { max: Math.max(info.n - 1, 1) },
       title: this._latestTitle(),
     });
