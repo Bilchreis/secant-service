@@ -54,10 +54,12 @@ defmodule SecantService.RecordingTrackerTest do
     start_supervised!({FakeNodeStatem, {ctx.node_id, node_state(ctx, overrides), []}})
   end
 
-  defp start_tracker(ctx) do
+  # `id`: a tracker started after one was killed takes another id, since
+  # the test supervisor may not have removed the dead one yet
+  defp start_tracker(ctx, id \\ :tracker) do
     pid =
       start_supervised!(
-        Supervisor.child_spec({RecordingTracker, ctx.node_db}, id: :tracker, restart: :temporary)
+        Supervisor.child_spec({RecordingTracker, ctx.node_db}, id: id, restart: :temporary)
       )
 
     sync(pid)
@@ -248,7 +250,7 @@ defmodule SecantService.RecordingTrackerTest do
 
     Process.exit(pid, :kill)
     pass(ctx.clock, 5_000)
-    pid = start_tracker(ctx)
+    pid = start_tracker(ctx, :restarted)
     beat(pid)
 
     assert [%{id: ^id, ended_at: nil} = span] = spans(ctx, pid)
@@ -264,7 +266,7 @@ defmodule SecantService.RecordingTrackerTest do
 
     Process.exit(pid, :kill)
     pass(ctx.clock, 120_000)
-    pid = start_tracker(ctx)
+    pid = start_tracker(ctx, :restarted)
 
     assert [%{end_reason: :interrupted} = old, %{ended_at: nil} = new] = spans(ctx, pid)
     assert ms(old.ended_at) == @t0 + 10_000
