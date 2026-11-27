@@ -150,6 +150,12 @@ export const EChartsChart = {
       this._dataDirty = true;
     });
 
+    // the readings of a wider range could not be fetched: a click on its
+    // button asks again
+    this.handleEvent(`range-chart-error-${this.el.id}`, ({ req }) => {
+      if (req === this._rangeReq) this._rangeFailed = true;
+    });
+
     this.handleEvent(`window-chart-data-${this.el.id}`, (reply) => this._applyWindow(reply));
     this.handleEvent(`window-chart-error-${this.el.id}`, ({ req }) => {
       if (req !== this._windowReq || this._detailState !== "loading") return;
@@ -458,7 +464,8 @@ export const EChartsChart = {
   // A series' new data. Lines show no marker on their readings, so a lone
   // reading gets one, or it would not show at all.
   _dataPatch(data) {
-    return { data, showSymbol: data.length === 1 };
+    // (array lines draw no symbol otherwise, not even on hover)
+    return data.length === 1 ? { data, showSymbol: true, symbol: "circle" } : { data, showSymbol: false };
   },
 
   // --- Band (min/mean/max per bucket) ---------------------------------------
@@ -1455,8 +1462,10 @@ export const EChartsChart = {
       el.setAttribute("aria-pressed", String(index === this._activeButton));
       this._styleRangeButton(el, index === this._activeButton);
       el.addEventListener("click", () => {
-        // the range shown already (a thinned one would be fetched again)
-        if (index === this._activeButton) return;
+        // the range shown already (a thinned one would be fetched again),
+        // unless fetching its readings failed: then this is the retry
+        if (index === this._activeButton && !this._rangeFailed) return;
+        this._rangeFailed = false;
         this._activeButton = index;
         buttonsEl.querySelectorAll("button").forEach((b, i) => {
           this._styleRangeButton(b, i === index);

@@ -271,6 +271,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       socket
       # an answer for the range clicked before is of no use
       |> cancel_async(:fetch_chart_range)
+      |> assign(:range_req, req)
       |> start_async(:fetch_chart_range, fn ->
         secop_obj
         |> PlotDB.lines()
@@ -587,7 +588,11 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   def handle_async(:fetch_chart_range, {:exit, reason}, socket) do
     Logger.error("Chart range fetch failed: #{inspect(reason)}")
-    {:noreply, socket}
+
+    {:noreply,
+     push_event(socket, "range-chart-error-#{socket.assigns.id}", %{
+       req: socket.assigns[:range_req]
+     })}
   end
 
   def handle_async(:fetch_chart_window, {:ok, {:rebuild, param}}, socket) do
