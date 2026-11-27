@@ -8,6 +8,7 @@ A thinned historical line plot of a long recording is hard to read. It keeps eac
 
 - Historical line plots get an **envelope mode**: per bucket, a shaded band from min to max and a line through the mean, read from the aggregates. It applies to:
   - number parameters (`double`, `int`, `scaled`), on their own or as a module's `value` (Readable, Drivable);
+  - a Calibratable module's `value` and `_value_uncalibrated`;
   - numeric array plots in "Lines" mode, one band per element.
 - The plot toolbar gets an **envelope toggle**. It is on by default, except for array plots, where it is off because one band per element can bury the lines. The choice is remembered per browser, separately for array plots and for other plots, as the Heatmap/Lines choice is.
 - **Fallback when zoomed in:** the envelope is drawn only while the window is split into buckets of 1 minute or more, the finest aggregate tier. When the window is narrow enough for finer buckets or for every reading, the plot draws exactly what it draws today, without a band.
@@ -17,7 +18,7 @@ A thinned historical line plot of a long recording is hard to read. It keeps eac
 
 **Out of scope:**
 - Live plots (`:live` mode). Their window is short and drawn from every reading.
-- Enum plots, heatmaps, setpoints (a Drivable's `target`), Calibratable and Acquisition plots. They keep today's drawing.
+- Enum plots, heatmaps, setpoints (`target`, and a Calibratable's `_target_calibrated`) and Acquisition plots. They keep today's drawing.
 - Struct plots, including their number members. They have member aggregates, but they would need the thinning pass anyway for their other members, and their series mapping is the most involved. They can follow in a separate change.
 - Switching today's thinned line (envelope off) to read from the aggregates. That would speed up array and struct plots on its own and can follow as a separate change.
 - Real-time aggregation of the tail, and any change to the aggregate views, their refresh policies or the `readings` hypertable.

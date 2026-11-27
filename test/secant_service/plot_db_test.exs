@@ -61,7 +61,7 @@ defmodule SecantService.PlotDBTest do
       end
     end
 
-    test "envelope_params: never a setpoint, an enum, a struct, Calibratable or Acquisition" do
+    test "envelope_params: never a setpoint, an enum, a struct or Acquisition" do
       drivable = create_module(["Drivable"], [{"value", @double}, {"target", @double}])
       target = Enum.find(drivable.parameters, &(&1.name == "target"))
       assert PlotDB.envelope_params(target) == []
@@ -76,11 +76,9 @@ defmodule SecantService.PlotDBTest do
 
       assert PlotDB.envelope_params(struct) == []
 
-      for classes <- [["_Calibratable", "Readable"], ["Acquisition", "Readable"]] do
-        module = create_module(classes, [{"value", @double}])
-        assert PlotDB.envelope_params(module) == []
-        refute Map.has_key?(PlotDB.module_plot(module, :historical).option, :_envelope)
-      end
+      module = create_module(["Acquisition", "Readable"], [{"value", @double}])
+      assert PlotDB.envelope_params(module) == []
+      refute Map.has_key?(PlotDB.module_plot(module, :historical).option, :_envelope)
 
       refute Map.has_key?(PlotDB.parameter_plot(target, :historical).option, :_envelope)
     end
@@ -121,6 +119,48 @@ defmodule SecantService.PlotDBTest do
         ])
 
       assert [%{seriesIndex: ^value_index}] = plot.option._envelopes
+    end
+
+    test "a Calibratable's envelopes are on value and _value_uncalibrated, never a setpoint" do
+      module =
+        create_module(["_Calibratable", "Readable"], [
+          {"value", @double},
+          {"target", @double},
+          {"_value_uncalibrated", @double},
+          {"_target_calibrated", @double}
+        ])
+
+      assert [{%{name: "value"}, "line"}, {%{name: "_value_uncalibrated"}, "line"}] =
+               PlotDB.envelope_params(module)
+
+      tc = Enum.find(module.parameters, &(&1.name == "_target_calibrated"))
+      assert PlotDB.envelope_params(tc) == []
+
+      plot = PlotDB.module_plot(module, :historical)
+      index = fn name -> Enum.find_index(plot.option.series, &(&1.name == name)) end
+      value_index = index.("value")
+      uncal_index = index.("_value_uncalibrated")
+
+      assert plot.option._envelope == %{
+               kind: "line",
+               on: true,
+               series: [value_index, uncal_index]
+             }
+
+      plot =
+        PlotDB.put_envelopes(plot, module, :historical, [
+          {"value", envelope([[1, 1.0, 1.0, 1.0]])},
+          {"_value_uncalibrated", envelope([[1, 2.0, 2.0, 2.0]])}
+        ])
+
+      assert [%{seriesIndex: ^value_index}, %{seriesIndex: ^uncal_index}] = plot.option._envelopes
+    end
+
+    test "a Calibratable without _value_uncalibrated has a band on value only" do
+      module = create_module(["_Calibratable", "Readable"], [{"value", @double}])
+      plot = PlotDB.module_plot(module, :historical)
+      value_index = Enum.find_index(plot.option.series, &(&1.name == "value"))
+      assert plot.option._envelope.series == [value_index]
     end
 
     test "an array starts without an envelope, and its rows pass through 0-based" do

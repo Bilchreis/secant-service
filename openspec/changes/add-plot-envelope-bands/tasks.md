@@ -42,9 +42,10 @@
   - a test in `test/secop_service/plot_db/history_test.exs` calls `SecNodes.history_window!(id, from, to, %{envelope: true})` and gets the `envelope` key.
 - [x] 2.2 Add `PlotDB.envelope_params/1` (design decision 1). Verify in `test/secant_service/plot_db_test.exs`:
   - a double parameter (kind `"line"`), a 10-element array parameter (kind `"array"`), and a Readable's and a Drivable's numeric `value` (kind `"line"`) are listed;
-  - a Drivable's `target` (in the module and opened on its own), an enum, a struct, a Calibratable and an Acquisition module are not.
+  - a Calibratable's numeric `value` and `_value_uncalibrated` are listed, its `target` and `_target_calibrated` are not;
+  - a Drivable's `target` (in the module and opened on its own), a standalone `_target_calibrated`, an enum, a struct and an Acquisition module are not.
 - [x] 2.3 Thread the envelope through the first load:
-  - `Builders.fetch_param_window/3` takes `envelope:` with default `false`; `parameter_plot`, `Readable.plot` and `Drivable.plot` pass `true` only for `envelope_params` members of kind `"line"` in `:historical` mode;
+  - `Builders.fetch_param_window/3` takes `envelope:` with default `false`; `parameter_plot`, `Readable.plot`, `Drivable.plot` and `Calibratable.plot` pass `true` only for `envelope_params` members of kind `"line"` in `:historical` mode;
   - add `PlotDB.envelope_updates/3`;
   - set `_envelope` (historical, non-`ArrayLatest` plots only) and `_envelopes` on the option, and `envelope_bucket_ms` on `_windowFetch` when the first load has rows;
   - size array plots by rows as well as readings;
@@ -56,7 +57,8 @@
   - an array's payload carries 0-based element rows;
   - `drop_nil_points/1` removes the `nil` points of an array update, while the plain update path still produces a `nil` point for a NaN element, as today;
   - a live plot carries no `_envelope`;
-  - the first loads of a Calibratable module, an Acquisition module and a standalone `target` parameter carry no `_envelope`; they never request an envelope, so their data is today's.
+  - a Calibratable's option lists the `value` and `_value_uncalibrated` series, and its payloads target those series;
+  - the first loads of an Acquisition module and a standalone `target` parameter carry no `_envelope`; they never request an envelope, so their data is today's.
 
 ## 3. Window fetches and overview reload in `HistoryDB`
 

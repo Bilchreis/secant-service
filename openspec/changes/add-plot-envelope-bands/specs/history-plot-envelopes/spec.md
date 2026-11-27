@@ -7,7 +7,7 @@ Lets historical line plots of long recordings show each bucket's spread and tren
 ## ADDED Requirements
 
 ### Requirement: Envelope of a number line
-While the envelope is on and a historical plot's window is split into buckets of at least 1 minute, a number parameter's line SHALL be drawn per aggregated bucket as a shaded band from the bucket's min to its max and a line through its mean. This applies to a number parameter plotted on its own and to the `value` of a Readable or Drivable module.
+While the envelope is on and a historical plot's window is split into buckets of at least 1 minute, a number parameter's line SHALL be drawn per aggregated bucket as a shaded band from the bucket's min to its max and a line through its mean. This applies to a number parameter plotted on its own, to the `value` of a Readable or Drivable module, and to the `value` and `_value_uncalibrated` of a Calibratable module.
 
 #### Scenario: Long recording of a double
 - **WHEN** the historical plot of a `double` parameter shows 72 h of 1 Hz readings with the envelope on, and the aggregates are materialized for that time
@@ -17,12 +17,16 @@ While the envelope is on and a historical plot's window is split into buckets of
 - **WHEN** a Drivable module whose `value` and `target` are doubles is plotted historically with the envelope on
 - **THEN** `value` is drawn as an envelope wherever its window has aggregated buckets, and `target` is drawn as today's dashed step line with every point it has today, without a band, at every zoom
 
+#### Scenario: Calibratable module
+- **WHEN** a Calibratable module whose `value` is a double is plotted historically with the envelope on
+- **THEN** `value` and `_value_uncalibrated` are each drawn as an envelope wherever their windows have aggregated buckets, `target` and `_target_calibrated` are drawn as today without a band, and hiding `_value_uncalibrated` in the legend hides its band too
+
 #### Scenario: Setpoint opened on its own
-- **WHEN** a Drivable's `target` parameter is opened as a parameter plot on its own
+- **WHEN** a `target` or `_target_calibrated` parameter is opened as a parameter plot on its own
 - **THEN** it is drawn as today, and no envelope toggle is shown
 
 #### Scenario: Plots without envelopes
-- **WHEN** an enum parameter, a struct parameter, or a Calibratable or Acquisition module is plotted historically
+- **WHEN** an enum parameter, a struct parameter, or an Acquisition module is plotted historically
 - **THEN** it is drawn exactly as today
 
 ### Requirement: Envelope of array plots in Lines mode

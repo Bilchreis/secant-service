@@ -26,7 +26,7 @@
 - With the envelope on, the thinning query is skipped over the aggregated part of the window.
 
 **Non-Goals:**
-- Struct members, Calibratable and Acquisition plots, setpoints (`target`), enums and heatmaps. They keep today's drawing. Struct members can follow in a separate change.
+- Struct members, Acquisition plots, setpoints (`target`, `_target_calibrated`), enums and heatmaps. They keep today's drawing. Struct members can follow in a separate change.
 - Bucket widths chosen for the envelope independently of `plan/4`.
 - Server-side memory of the toggle.
 - Detecting holes in the aggregates before `materialized_until` (see Risks).
@@ -40,7 +40,7 @@
 - a numeric array parameter plotted on its own (as heatmap or lines);
 - the `value` parameter of a Readable or Drivable module whose `value` is such a number or numeric array.
 
-It returns `[{param, kind}]` with `kind` `"line"` or `"array"`. Only `:historical` plots use it; live plots and `ArrayLatest` plots never get an envelope. Calibratable and Acquisition modules (Acquisition delegates to `Readable.plot/2`) return `[]`. A parameter named `target` is never listed, also when it is opened on its own (the parameter browser can plot it alone): a setpoint keeps its step line. The first load, the overview reload and every window fetch use this function: `Builders.fetch_param_window/3` takes `envelope:` with default `false`, and only `parameter_plot`, `Readable.plot` and `Drivable.plot` pass `true`, for members of this list of kind `"line"`, in `:historical` mode. Arrays are never fetched with an envelope on the first load (their default is off). Every other parameter, including a Drivable's `target`, is always fetched with `envelope: false`, so its reply is exactly today's. The option gets `_envelope: %{kind: "line" | "array", on: boolean}` only when this list is non-empty. That flag decides whether the hook shows the toggle at all.
+It returns `[{param, kind}]` with `kind` `"line"` or `"array"`. Only `:historical` plots use it; live plots and `ArrayLatest` plots never get an envelope. A Calibratable module lists its `value` and `_value_uncalibrated` when they are numbers (kind `"line"` only; its plot draws scalars). Acquisition modules (Acquisition delegates to `Readable.plot/2`) return `[]`. A parameter named `target` or `_target_calibrated` is never listed, also when it is opened on its own (the parameter browser can plot it alone): a setpoint keeps its step line. The first load, the overview reload and every window fetch use this function: `Builders.fetch_param_window/3` takes `envelope:` with default `false`, and only `parameter_plot`, `Readable.plot`, `Drivable.plot` and `Calibratable.plot` pass `true`, for members of this list of kind `"line"`, in `:historical` mode. Arrays are never fetched with an envelope on the first load (their default is off). Every other parameter, including a Drivable's `target`, is always fetched with `envelope: false`, so its reply is exactly today's. The option gets `_envelope: %{kind: "line" | "array", on: boolean, series: [index]}` only when this list is non-empty; `series` lists the plot's series that may carry a band (two for a Calibratable). That flag decides whether the hook shows the toggle at all.
 
 - **Alternative:** trying `Aggregates.numbers/4` and treating success as capability. It succeeds for a `target` and for structs with only array members, so it would put bands on lines that must not get them.
 

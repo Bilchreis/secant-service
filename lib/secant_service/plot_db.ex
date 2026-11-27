@@ -58,19 +58,25 @@ defmodule SecantService.PlotDB do
   end
 
   @envelope_number_types ~w(double int scaled)
-  # modules whose `value` line may carry an envelope: not Calibratable or
-  # Acquisition (which draws through Readable but is its own class)
-  @envelope_modules [SecantService.PlotDB.Readable, SecantService.PlotDB.Drivable]
+  # the lines of a module's plot that may carry an envelope, by plot module.
+  # Acquisition draws through Readable but is its own class, so it has none.
+  @envelope_lines %{
+    SecantService.PlotDB.Readable => ["value"],
+    SecantService.PlotDB.Drivable => ["value"],
+    SecantService.PlotDB.Calibratable => ["value", "_value_uncalibrated"]
+  }
 
   @doc """
   The parameters of a historical plot whose line may be drawn as an
   envelope (per bucket min, mean and max from the aggregates), as
   `[{param, kind}]` with `kind` `"line"` (a number) or `"array"` (a numeric
-  array, drawn as lines). A parameter plotted on its own, or the `value` of
-  a Readable or Drivable module. A setpoint (`target`) never is, also when
-  it is plotted on its own.
+  array, drawn as lines). A parameter plotted on its own, the `value` of a
+  Readable or Drivable module, or the `value` and `_value_uncalibrated` of
+  a Calibratable module (number lines only). A setpoint (`target`,
+  `_target_calibrated`) never is, also when it is plotted on its own.
   """
-  def envelope_params(%Parameter{name: "target"}), do: []
+  def envelope_params(%Parameter{name: name}) when name in ~w(target _target_calibrated),
+    do: []
 
   def envelope_params(%Parameter{} = param) do
     case envelope_kind(param.datainfo) do
@@ -80,12 +86,13 @@ defmodule SecantService.PlotDB do
   end
 
   def envelope_params(%Module{} = module) do
-    with mod when mod in @envelope_modules <- plot_module_for(module),
-         %Parameter{} = value <- Builders.find_param(module, "value") do
-      envelope_params(value)
-    else
-      _ -> []
-    end
+    plot_module = plot_module_for(module)
+
+    for name <- Map.get(@envelope_lines, plot_module, []),
+        %Parameter{} = param <- [Builders.find_param(module, name)],
+        {_param, kind} = pair <- envelope_params(param),
+        plot_module != SecantService.PlotDB.Calibratable or kind == "line",
+        do: pair
   end
 
   defp envelope_kind(%{"type" => type}) when type in @envelope_number_types, do: "line"
@@ -175,8 +182,8 @@ defmodule SecantService.PlotDB do
           |> Map.put(:_envelope, %{
             kind: kind,
             on: kind == "line",
-            # the series whose line may carry a band
-            series: [envelope_series_index(plot, "value")]
+            # the series whose lines may carry a band
+            series: envelope_series(plot, secop_obj)
           })
           |> Map.put(:_envelopes, payloads)
 
@@ -185,6 +192,13 @@ defmodule SecantService.PlotDB do
   end
 
   def put_envelopes(plot, _secop_obj, _mode, _envelopes), do: plot
+
+  # a parameter on its own is the plot's `value` line
+  defp envelope_series(plot, %Parameter{}), do: [envelope_series_index(plot, "value")]
+
+  defp envelope_series(plot, %Module{} = module),
+    do:
+      for({param, _kind} <- envelope_params(module), do: envelope_series_index(plot, param.name))
 
   defp resolve_param(%Parameter{} = param, _name), do: param
   defp resolve_param(%Module{} = module, name), do: Builders.find_param(module, name)
