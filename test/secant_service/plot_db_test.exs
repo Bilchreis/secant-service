@@ -82,6 +82,10 @@ defmodule SecantService.PlotDBTest do
 
       assert PlotDB.envelope_params(struct) == []
 
+      # an array that may outgrow the heatmap (more than 100 elements)
+      long = generate(parameter(datainfo: %{@array | "maxlen" => 101}))
+      assert PlotDB.envelope_params(long) == []
+
       refute Map.has_key?(PlotDB.parameter_plot(target, :historical).option, :_envelope)
     end
 
@@ -121,6 +125,16 @@ defmodule SecantService.PlotDBTest do
         ])
 
       assert [%{seriesIndex: ^value_index}] = plot.option._envelopes
+
+      # a band goes to its own line or to none, never to another line
+      assert PlotDB.envelope_updates(plot, "nope", envelope([[1, 1.0, 1.0, 1.0]])) == nil
+      [value, _target] = module.parameters |> Enum.sort_by(&(&1.name != "value"))
+      assert PlotDB.envelope_series_name(module, value) == "value"
+    end
+
+    test "a parameter on its own has its band on the plot's value series" do
+      param = generate(parameter(name: "temp", datainfo: @double))
+      assert PlotDB.envelope_series_name(param, param) == "value"
     end
 
     test "a Calibratable's envelopes are on value and _value_uncalibrated, never a setpoint" do
@@ -137,6 +151,7 @@ defmodule SecantService.PlotDBTest do
 
       tc = Enum.find(module.parameters, &(&1.name == "_target_calibrated"))
       assert PlotDB.envelope_params(tc) == []
+      refute Map.has_key?(PlotDB.parameter_plot(tc, :historical).option, :_envelope)
 
       plot = PlotDB.module_plot(module, :historical)
       index = fn name -> Enum.find_index(plot.option.series, &(&1.name == name)) end

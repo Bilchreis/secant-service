@@ -343,7 +343,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         case outgrown_param(windows, plot, secop_obj) do
           nil ->
             windows
-            |> window_reply(plot)
+            |> window_reply(plot, secop_obj)
             |> Map.merge(%{from: from_ms, to: to_ms, req: req, gen: gen, envelope: envelope})
 
           param ->
@@ -386,8 +386,11 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
         # longer readings than the heatmap carries: the latest-reading plot
         case outgrown_param(windows, plot, secop_obj) do
-          nil -> windows |> window_reply(plot) |> Map.merge(%{gen: gen, envelope: envelope})
-          param -> {:rebuild, param}
+          nil ->
+            windows |> window_reply(plot, secop_obj) |> Map.merge(%{gen: gen, envelope: envelope})
+
+          param ->
+            {:rebuild, param}
         end
       end)
 
@@ -845,7 +848,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   # One reply for a plot's windows: their series updates, envelope payloads,
   # resolution and array width. `windows` are `{param, values, timestamps,
   # resolution}`, the resolution carrying the window's `envelope`.
-  defp window_reply(windows, plot) do
+  defp window_reply(windows, plot, secop_obj) do
     {updates, envelopes} =
       windows
       |> Enum.map(fn {param, values, timestamps, resolution} ->
@@ -854,7 +857,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         # a bucket's mean array has nil for an element without a row
         update = PlotDB.drop_nil_points(update, envelope)
         update = Map.update(update, :arrayLen, nil, &max(&1 || 0, rows_len(envelope)))
-        {update, PlotDB.envelope_updates(plot, param.name, envelope)}
+        series = PlotDB.envelope_series_name(secop_obj, param)
+        {update, PlotDB.envelope_updates(plot, series, envelope)}
       end)
       |> Enum.unzip()
 

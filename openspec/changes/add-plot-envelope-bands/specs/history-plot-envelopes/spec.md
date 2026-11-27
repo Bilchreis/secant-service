@@ -30,11 +30,15 @@ While the envelope is on and a historical plot's window is split into buckets of
 - **THEN** it is drawn exactly as today
 
 ### Requirement: Envelope of array plots in Lines mode
-A numeric array plot in Lines mode SHALL draw one band and one mean line per element while the envelope is on, each in that element's line colour. In Heatmap mode the envelope SHALL have no effect.
+A numeric array plot of at most 100 elements (by its `maxlen`) in Lines mode SHALL draw one band and one mean line per element while the envelope is on, each in that element's line colour. In Heatmap mode the envelope SHALL have no effect.
 
 #### Scenario: Array in Lines mode
 - **WHEN** a 10-element `double` array is plotted historically in Lines mode with the envelope on, over a window with buckets of 1 minute or more whose aggregates are materialized
 - **THEN** each element is drawn as a band and a mean line in its own colour
+
+#### Scenario: Array that may outgrow the heatmap
+- **WHEN** a numeric array whose `maxlen` is over 100 is plotted historically
+- **THEN** it is drawn as today, and no envelope toggle is shown
 
 #### Scenario: Array in Heatmap mode
 - **WHEN** the same array is shown in Heatmap mode
