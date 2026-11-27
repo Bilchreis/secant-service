@@ -25,11 +25,33 @@ defmodule SecantService.PlotDB.History do
   The limits follow from a budget of values per chart (`@point_budget`): a
   reading of a 50-element array costs 50 values, so its window gets fewer
   readings and buckets than a plain number's.
+
+  ## Envelope
+
+  With `envelope: true`, a number or numeric array whose window is split into
+  buckets of a minute or more is drawn as an envelope: per bucket its min,
+  mean and max, read from the continuous aggregates
+  (`SecantService.PlotDB.Aggregates`) instead of thinned from every reading.
+  The window splits into a head, the whole buckets in the middle, and a tail
+  (see `SecantService.PlotDB.History.Envelope`):
+
+    * the middle holds the whole buckets inside the window that are
+      materialized. Each becomes a mean point in the line and a band row
+      (`envelope.rows`), at its centre moved into the span of its readings;
+    * the head (before the first whole bucket) and the tail (after the last
+      materialized one) are thinned as above, so the newest readings always
+      show. An empty head or tail is replaced by the first or last stored
+      reading of the middle, so the line starts and ends at a real reading.
+
+  Narrower buckets, raw windows, and windows the aggregates don't cover yet
+  come back as without the option, with `envelope: nil`.
   """
 
   import Ecto.Query
 
+  alias SecantService.PlotDB.Aggregates
   alias SecantService.PlotDB.History.Channels
+  alias SecantService.PlotDB.History.Envelope
   alias SecantService.Repo
   alias SecantService.SecNodes.Parameter
   alias SecantService.SecNodes.Reading.Storage
@@ -54,11 +76,21 @@ defmodule SecantService.PlotDB.History do
                    Enum.map([1, 2, 3, 6, 12], &(&1 * @hour))
 
   @type window :: %{
-          values: [term],
-          timestamps: [integer],
-          aggregated: boolean,
-          bucket_ms: pos_integer | nil
+          required(:values) => [term],
+          required(:timestamps) => [integer],
+          required(:aggregated) => boolean,
+          required(:bucket_ms) => pos_integer | nil,
+          optional(:envelope) => envelope | nil
         }
+
+  @type envelope :: %{
+          bucket_ms: pos_integer,
+          from_ms: integer,
+          until_ms: integer,
+          rows: [list]
+        }
+
+  @number_types ~w(double int scaled)
 
   @doc "Whether a parameter's readings can be thinned out: anything the plots draw."
   def thinnable?(%Parameter{datainfo: datainfo}), do: Channels.from_datainfo(datainfo) != []
@@ -70,16 +102,33 @@ defmodule SecantService.PlotDB.History do
 
   Options: `:max_raw` and `:max_buckets`, see the module doc. Without them,
   both follow from the parameter's type (see `limits/1`).
+
+  With `envelope: true`, a window of a number or numeric array split into
+  buckets of a minute or more is read from the aggregates instead (see
+  "Envelope" in the module doc), and the result gets an `:envelope` key:
+  the band rows, or nil when the window is drawn as without the option.
   """
   @spec window(Parameter.t(), integer | nil, integer | nil, keyword) :: window
   def window(%Parameter{} = param, from_ms, to_ms, opts \\ []) do
     col = column(param)
+    envelope? = Keyword.get(opts, :envelope, false) == true
 
-    case plan(param, from_ms, to_ms, opts) do
-      :empty -> empty()
-      {:raw, from, to} -> raw(col, param.id, from, to)
-      {:buckets, from, to, bucket_ms} -> bucketed(param, col, from, to, bucket_ms)
-    end
+    window =
+      case plan(param, from_ms, to_ms, opts) do
+        :empty ->
+          empty()
+
+        {:raw, from, to} ->
+          raw(col, param.id, from, to)
+
+        {:buckets, from, to, bucket_ms} when envelope? and bucket_ms >= @minute ->
+          enveloped(param, col, from, to, bucket_ms)
+
+        {:buckets, from, to, bucket_ms} ->
+          bucketed(param, col, from, to, bucket_ms)
+      end
+
+    if envelope?, do: Map.put_new(window, :envelope, nil), else: window
   end
 
   @doc """
@@ -174,6 +223,14 @@ defmodule SecantService.PlotDB.History do
 
   defp to_naive(ms) do
     ms |> trunc() |> DateTime.from_unix!(:millisecond) |> DateTime.to_naive()
+  end
+
+  # `{:before, to}` makes the upper bound exclusive
+  defp readings(col, id, from, {:before, to}) do
+    from v in "readings",
+      where:
+        v.parameter_id == ^id and v.timestamp >= ^from and v.timestamp < ^to and
+          not is_nil(field(v, ^col))
   end
 
   defp readings(col, id, from, to) do
@@ -470,6 +527,133 @@ defmodule SecantService.PlotDB.History do
         ),
       select_merge: %{i: e.i, v: e.v}
   end
+
+  # -- envelope --------------------------------------------------------------------
+
+  # The middle of the window from the aggregates, its head and tail thinned
+  # as today. Falls back to today's window (with `envelope: nil`) when the
+  # parameter has no number aggregates, the window holds no whole bucket, or
+  # no whole bucket is materialized.
+  defp enveloped(param, col, from, to, bucket_ms) do
+    {a, b} = Envelope.edges(to_ms(from), to_ms(to), bucket_ms)
+
+    with kind when kind != nil <- envelope_kind(param.datainfo),
+         true <- a < b,
+         {:ok, %{buckets: buckets, materialized_until: until_dt}} <-
+           Aggregates.numbers(param, a, to_ms(to), bucket_ms),
+         until =
+           Envelope.until(a, b, until_dt && DateTime.to_unix(until_dt, :millisecond), bucket_ms),
+         {rows, points} when rows != [] <- envelope_rows(kind, buckets, bucket_ms, until) do
+      head = bucketed(param, col, from, {:before, to_naive(a)}, bucket_ms)
+      tail = bucketed(param, col, to_naive(until), to, bucket_ms)
+      head_points = edge_or(window_points(head), col, param.id, a, until, :first)
+      tail_points = edge_or(window_points(tail), col, param.id, a, until, :last)
+
+      {timestamps, values} =
+        (head_points ++ points ++ tail_points)
+        |> Enum.sort_by(&elem(&1, 0))
+        |> Enum.unzip()
+
+      %{
+        values: values,
+        timestamps: timestamps,
+        aggregated: true,
+        bucket_ms: bucket_ms,
+        envelope: %{bucket_ms: bucket_ms, from_ms: a, until_ms: until, rows: rows}
+      }
+    else
+      _ -> bucketed(param, col, from, to, bucket_ms)
+    end
+  end
+
+  defp envelope_kind(%{"type" => type}) when type in @number_types, do: :scalar
+
+  defp envelope_kind(%{"type" => "array", "members" => %{"type" => type}})
+       when type in @number_types,
+       do: :array
+
+  defp envelope_kind(_datainfo), do: nil
+
+  # Band rows and mean points of the buckets in the middle. A point sits at
+  # its bucket's centre, moved into the span of the bucket's readings (a
+  # scalar's own row, an array's length row). Scalars: row `[t, min, mean,
+  # max]`, point `{t, mean}`. Arrays: one row `[t, i, min, mean, max]` per
+  # element (0-based `i`), and one point `{t, [mean, ...]}` per bucket as
+  # long as its longest reading, with nil for an element that has no row.
+  defp envelope_rows(kind, buckets, bucket_ms, until) do
+    buckets
+    |> Enum.filter(&(DateTime.to_unix(&1.bucket, :millisecond) + bucket_ms <= until))
+    |> Enum.group_by(& &1.bucket)
+    |> Enum.sort_by(fn {bucket, _} -> DateTime.to_unix(bucket, :millisecond) end)
+    |> Enum.flat_map(fn {bucket, rows} -> bucket_rows(kind, bucket, rows, bucket_ms) end)
+    |> Enum.unzip()
+    |> case do
+      {[], []} -> {[], []}
+      {rows, points} -> {Enum.concat(rows), points}
+    end
+  end
+
+  defp bucket_rows(:scalar, bucket, rows, bucket_ms) do
+    case Enum.find(rows, &(&1.idx == 1)) do
+      nil ->
+        []
+
+      r ->
+        t = point_time(bucket, bucket_ms, r)
+        [{[[t, r.min, r.mean, r.max]], {t, r.mean}}]
+    end
+  end
+
+  defp bucket_rows(:array, bucket, rows, bucket_ms) do
+    {lengths, elements} = Enum.split_with(rows, &(&1.idx == 0))
+
+    case {lengths, elements} do
+      {_, []} ->
+        []
+
+      {[length | _], elements} ->
+        t = point_time(bucket, bucket_ms, length)
+        by_idx = Map.new(elements, &{&1.idx, &1})
+        n = max(trunc(length.max), elements |> Enum.map(& &1.idx) |> Enum.max())
+        means = Enum.map(1..n//1, &(by_idx[&1] && by_idx[&1].mean))
+        band = for r <- Enum.sort_by(elements, & &1.idx), do: [t, r.idx - 1, r.min, r.mean, r.max]
+        [{band, {t, means}}]
+
+      {[], elements} ->
+        first = Enum.min_by(elements, &DateTime.to_unix(&1.first_at, :microsecond))
+        last = Enum.max_by(elements, &DateTime.to_unix(&1.last_at, :microsecond))
+        span = %{first_at: first.first_at, last_at: last.last_at, max: 0}
+        bucket_rows(:array, bucket, [span |> Map.put(:idx, 0) | elements], bucket_ms)
+    end
+  end
+
+  defp point_time(bucket, bucket_ms, %{first_at: first, last_at: last}) do
+    Envelope.point_time(
+      DateTime.to_unix(bucket, :millisecond),
+      bucket_ms,
+      DateTime.to_unix(first, :millisecond),
+      DateTime.to_unix(last, :millisecond)
+    )
+  end
+
+  defp window_points(%{timestamps: ts, values: vs}), do: Enum.zip(ts, vs)
+
+  # An empty head or tail: the first or last stored reading of the middle,
+  # whole, so the line starts and ends at a real reading.
+  defp edge_or([], col, id, a, until, which) do
+    order = if which == :first, do: [asc: :timestamp], else: [desc: :timestamp]
+
+    from(v in readings(col, id, to_naive(a), {:before, to_naive(until)}),
+      order_by: ^order,
+      limit: 1,
+      select: [v.timestamp, field(v, ^col)]
+    )
+    |> Repo.all()
+    |> to_window(col, true, nil)
+    |> window_points()
+  end
+
+  defp edge_or(points, _col, _id, _a, _until, _which), do: points
 
   # -- decoding --------------------------------------------------------------------
 

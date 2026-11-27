@@ -60,6 +60,13 @@
 #   BENCH_AGGREGATES   0 skips the aggregates section [1]
 #   BENCH_PLOTS        0 skips the plot breakdown and benchee [1]
 #   BENCH_WIDE_LEN     elements of the aggregates section's wide array [1000]
+#
+# The aggregates section ends with envelope windows: `History.window/4`
+# with `envelope: true` (bucket means and bands from the aggregates, head
+# and tail thinned) against the same window thinned as today, for the
+# double and the array over the whole recording and for the double over
+# 4 h in its middle. It raises if an envelope window comes back without
+# band rows, so a stale or empty view can't pass for a fast one.
 
 defmodule HistoryBench.Config do
   @moduledoc false
@@ -482,6 +489,7 @@ defmodule HistoryBench.Aggregates do
 
   alias HistoryBench.Breakdown
   alias SecantService.PlotDB.Aggregates
+  alias SecantService.PlotDB.History
   alias SecantService.Repo
   alias SecantService.SecNodes.Reading.AggregateViews
 
@@ -532,6 +540,8 @@ defmodule HistoryBench.Aggregates do
       )
     end
 
+    envelopes(config, params)
+
     IO.puts("\nnumbers/4, 15-minute buckets over #{config.hours} h (median of 5 runs)")
     IO.puts("type     buckets  uncompressed_ms  compressed_ms  queries")
 
@@ -578,6 +588,51 @@ defmodule HistoryBench.Aggregates do
         end)
 
       {dtype, length(buckets), timing}
+    end
+  end
+
+  # Envelope windows against today's thinning, with the 1-minute views as
+  # they are now (compressed by run/3 before this).
+  defp envelopes(config, params) do
+    span_ms = config.hours * 3_600_000
+
+    cases =
+      for {dtype, rec} <- params, dtype in ~w(double array) do
+        from = DateTime.to_unix(rec.t0, :millisecond)
+        {"#{dtype} #{config.hours} h", rec.param, from, from + span_ms}
+      end
+
+    cases =
+      case Enum.find(params, &(elem(&1, 0) == "double")) do
+        {_, rec} ->
+          mid = DateTime.to_unix(rec.t0, :millisecond) + div(span_ms, 2)
+          cases ++ [{"double 4 h", rec.param, mid - 2 * 3_600_000, mid + 2 * 3_600_000}]
+
+        nil ->
+          cases
+      end
+
+    IO.puts("\nenvelope windows against today's thinning (median of 5 runs)")
+    IO.puts("case             bucket  rows    envelope_ms  queries  thinned_ms  queries")
+
+    for {name, param, from, to} <- cases do
+      window = History.window(param, from, to, envelope: true)
+
+      unless match?(%{envelope: %{rows: [_ | _]}}, window) do
+        raise "#{name}: no envelope rows; are the aggregates refreshed over the recording?"
+      end
+
+      envelope =
+        Breakdown.measure(fn -> History.window(param, from, to, envelope: true) && nil end)
+
+      thinned = Breakdown.measure(fn -> History.window(param, from, to) && nil end)
+
+      IO.puts(
+        "#{String.pad_trailing(name, 15)}  #{String.pad_leading(to_string(div(window.bucket_ms, 60_000)) <> " min", 6)}  " <>
+          "#{String.pad_leading(to_string(length(window.envelope.rows)), 6)}  " <>
+          "#{String.pad_leading(ms(envelope.wall_us), 11)}  #{String.pad_leading(to_string(envelope.queries), 7)}  " <>
+          "#{String.pad_leading(ms(thinned.wall_us), 10)}  #{String.pad_leading(to_string(thinned.queries), 7)}"
+      )
     end
   end
 

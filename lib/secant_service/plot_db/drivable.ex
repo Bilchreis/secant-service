@@ -19,7 +19,8 @@ defmodule SecantService.PlotDB.Drivable do
     value_param = find_param(module, "value")
 
     if value_param do
-      {v_val, v_ts, v_res} = fetch_param_window(value_param, mode)
+      envelope? = SecantService.PlotDB.envelope_on_load?(module, value_param, mode)
+      {v_val, v_ts, v_res} = fetch_param_window(value_param, mode, envelope: envelope?)
       unit = get_in(value_param.datainfo, ["unit"])
       dtype_mod = DTypePlot.for_datainfo(value_param.datainfo)
 
@@ -53,6 +54,7 @@ defmodule SecantService.PlotDB.Drivable do
                _param_dtype_modules: %{"value" => dtype_mod}
              }}
             |> with_resolution([v_res])
+            |> with_envelopes(module, mode, [{"value", v_res[:envelope]}])
           end
 
         StructDType ->
@@ -84,6 +86,7 @@ defmodule SecantService.PlotDB.Drivable do
              _param_dtype_modules: param_mods
            }}
           |> with_resolution([v_res, t_res])
+          |> with_envelopes(module, mode, [{"value", v_res[:envelope]}])
 
         _enum_or_scalar ->
           target_param = find_param(module, "target")
@@ -119,6 +122,7 @@ defmodule SecantService.PlotDB.Drivable do
              _param_dtype_modules: %{"value" => dtype_mod, "target" => dtype_mod}
            }}
           |> with_resolution([v_res, t_res])
+          |> with_envelopes(module, mode, [{"value", v_res[:envelope]}])
       end
     else
       :not_plottable

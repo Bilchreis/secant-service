@@ -57,6 +57,164 @@ defmodule SecantService.PlotDB do
     |> Enum.filter(&History.thinnable?/1)
   end
 
+  @envelope_number_types ~w(double int scaled)
+  # the lines of a module's plot that may carry an envelope, by plot module
+  # (Acquisition draws through Readable)
+  @envelope_lines %{
+    SecantService.PlotDB.Readable => ["value"],
+    SecantService.PlotDB.Acquisition => ["value"],
+    SecantService.PlotDB.Drivable => ["value"],
+    SecantService.PlotDB.Calibratable => ["value", "_value_uncalibrated"]
+  }
+
+  @doc """
+  The parameters of a historical plot whose line may be drawn as an
+  envelope (per bucket min, mean and max from the aggregates), as
+  `[{param, kind}]` with `kind` `"line"` (a number) or `"array"` (a numeric
+  array of at most 100 elements by its `maxlen`, drawn as lines). A parameter plotted on its own, the `value` of a
+  Readable, Acquisition or Drivable module, or the `value` and `_value_uncalibrated` of
+  a Calibratable module (number lines only). A setpoint (`target`,
+  `_target_calibrated`) never is, also when it is plotted on its own.
+  """
+  def envelope_params(%Parameter{name: name}) when name in ~w(target _target_calibrated),
+    do: []
+
+  def envelope_params(%Parameter{} = param) do
+    case envelope_kind(param.datainfo) do
+      nil -> []
+      kind -> [{param, kind}]
+    end
+  end
+
+  def envelope_params(%Module{} = module) do
+    plot_module = plot_module_for(module)
+
+    for name <- Map.get(@envelope_lines, plot_module, []),
+        %Parameter{} = param <- [Builders.find_param(module, name)],
+        {_param, kind} = pair <- envelope_params(param),
+        plot_module != SecantService.PlotDB.Calibratable or kind == "line",
+        do: pair
+  end
+
+  defp envelope_kind(%{"type" => type}) when type in @envelope_number_types, do: "line"
+
+  # Only arrays that can never outgrow the heatmap: an array that may hold
+  # more elements is plotted as its latest reading once a reading that long
+  # turns up, and an envelope read would load every element's rows first.
+  defp envelope_kind(%{"type" => "array", "maxlen" => maxlen, "members" => %{"type" => type}})
+       when type in @envelope_number_types and is_integer(maxlen) and maxlen <= @max_array_len,
+       do: "array"
+
+  defp envelope_kind(_datainfo), do: nil
+
+  @doc """
+  Whether the first load of `param` in `secop_obj`'s plot is read as an
+  envelope: only historical number lines. Arrays start without one (the
+  browser asks for it when the user switches it on).
+  """
+  def envelope_on_load?(secop_obj, %Parameter{id: id}, :historical) do
+    Enum.any?(envelope_params(secop_obj), fn {p, kind} -> p.id == id and kind == "line" end)
+  end
+
+  def envelope_on_load?(_secop_obj, _param, _mode), do: false
+
+  @doc """
+  The payload the chart hook draws a parameter's envelope from: the series
+  it belongs to, its bucket width, the span it covers and its band rows.
+  """
+  def envelope_updates(_plot, _series_name, nil), do: nil
+
+  def envelope_updates(plot, series_name, envelope) do
+    # no series of that name: no band, rather than a band on another line
+    with index when index != nil <- envelope_series_index(plot, series_name) do
+      %{
+        seriesIndex: index,
+        bucket_ms: envelope.bucket_ms,
+        from: envelope.from_ms,
+        until: envelope.until_ms,
+        rows: envelope.rows
+      }
+    end
+  end
+
+  @doc """
+  The name of the series `param`'s line has in `secop_obj`'s plot: `value`
+  for a parameter plotted on its own, its own name in a module's plot.
+  """
+  def envelope_series_name(%Parameter{}, _param), do: "value"
+  def envelope_series_name(%Module{}, %Parameter{name: name}), do: name
+
+  defp envelope_series_index(%{plot_type: :array_heatmap}, _name), do: 0
+
+  defp envelope_series_index(%{option: %{series: series}}, name),
+    do: Enum.find_index(series, &(Map.get(&1, :name) == name))
+
+  @doc """
+  An array update without the `nil` points of an envelope's bucket means. A
+  bucket's mean array has `nil` for an element with no aggregate row in
+  that bucket; it must not make a gap in that element's line. A `nil` in a
+  stored reading (a NaN, in the head or tail of the window) still makes a
+  gap, as it always has.
+  """
+  def drop_nil_points(update, nil), do: update
+
+  def drop_nil_points(%{seriesUpdates: updates} = update, %{rows: rows}) do
+    mean_times = MapSet.new(rows, &hd/1)
+
+    updates =
+      Enum.map(updates, fn %{data: data} = u ->
+        %{u | data: Enum.reject(data, &(match?([_t, _i, nil], &1) and hd(&1) in mean_times))}
+      end)
+
+    %{update | seriesUpdates: updates}
+  end
+
+  @doc """
+  Marks a historical plot that has envelope-capable lines for the chart
+  hook: `_envelope` (its kind, and whether the first load was read as an
+  envelope) and `_envelopes` (the first load's band payloads, one per
+  `{series name, envelope}`). Other plots are returned as they are.
+  """
+  def put_envelopes(plot, secop_obj, mode, envelopes)
+
+  def put_envelopes(%{plot_type: :array_latest} = plot, _secop_obj, _mode, _envelopes), do: plot
+
+  def put_envelopes(%{option: option} = plot, secop_obj, :historical, envelopes) do
+    case envelope_params(secop_obj) do
+      [] ->
+        plot
+
+      [{_param, kind} | _] ->
+        payloads =
+          for {name, envelope} <- envelopes,
+              payload = envelope_updates(plot, name, envelope),
+              payload != nil,
+              do: payload
+
+        option =
+          option
+          |> Map.put(:_envelope, %{
+            kind: kind,
+            on: kind == "line",
+            # the series whose lines may carry a band
+            series: envelope_series(plot, secop_obj)
+          })
+          |> Map.put(:_envelopes, payloads)
+
+        %{plot | option: option}
+    end
+  end
+
+  def put_envelopes(plot, _secop_obj, _mode, _envelopes), do: plot
+
+  # the indexes of the series whose lines may carry a band
+  defp envelope_series(plot, secop_obj) do
+    for {param, _kind} <- envelope_params(secop_obj),
+        index = envelope_series_index(plot, envelope_series_name(secop_obj, param)),
+        index != nil,
+        do: index
+  end
+
   defp resolve_param(%Parameter{} = param, _name), do: param
   defp resolve_param(%Module{} = module, name), do: Builders.find_param(module, name)
 
@@ -142,7 +300,8 @@ defmodule SecantService.PlotDB do
 
   def parameter_plot(parameter, mode \\ :live) do
     if plottable?(parameter) do
-      {val, ts, resolution} = Builders.fetch_param_window(parameter, mode)
+      envelope? = envelope_on_load?(parameter, parameter, mode)
+      {val, ts, resolution} = Builders.fetch_param_window(parameter, mode, envelope: envelope?)
       unit = get_in(parameter.datainfo, ["unit"])
 
       case parameter.datainfo["type"] do
@@ -203,6 +362,7 @@ defmodule SecantService.PlotDB do
           }
       end
       |> Builders.put_resolution([resolution])
+      |> put_envelopes(parameter, mode, [{"value", resolution[:envelope]}])
     else
       not_plottable()
     end

@@ -43,6 +43,24 @@ const readArrayMode = () => {
   }
 };
 
+// Envelope (min/mean/max band per bucket) on historical line plots,
+// remembered per browser: on by default for plain lines, off for arrays,
+// whose one band per element can bury the lines.
+const ENVELOPE_KEYS = { line: "secant:envelope", array: "secant:envelope-array" };
+const readEnvelopePref = (kind) => {
+  try {
+    const v = localStorage.getItem(ENVELOPE_KEYS[kind]);
+    return v == null ? kind === "line" : v === "on";
+  } catch (_e) {
+    return kind === "line";
+  }
+};
+const writeEnvelopePref = (kind, on) => {
+  try {
+    localStorage.setItem(ENVELOPE_KEYS[kind], on ? "on" : "off");
+  } catch (_e) {}
+};
+
 // Line colours for array elements: index 0 → violet … last → rose, so the
 // order reads at a glance; all stops stay visible on light and dark.
 const ARRAY_LINE_STOPS = [
@@ -258,7 +276,7 @@ Hooks.EChartsChart = {
 
     // Register handlers immediately — server may send data before rAF fires (eager push)
     this.handleEvent(`echarts-data-${this.el.id}`, ({ option }) => {
-      const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, _windowFetch, ...echartsOption } = option;
+      const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, _windowFetch, _envelope, _envelopes, ...echartsOption } = option;
       // historical plots: the server thins out long recordings and
       // sends more detail for the window the chart is zoomed to
       this._windowFetch = !!_windowFetch;
@@ -267,6 +285,13 @@ Hooks.EChartsChart = {
       this._detail = null;
       this._windowReq = 0;
       clearTimeout(this._windowTimer);
+      // envelope: what this plot can show, and what its overview holds
+      this._envMeta = _envelope || null;
+      this._overviewEnvelope = !!(_envelope && _envelope.on);
+      this._overviewEnvelopes = this._envelopesBySeries(_envelopes);
+      this._envGen = 0;
+      this._reloadPending = false;
+      this._bandCache = null;
       this._rangeButtons = _rangeButtons || null;
       this._activeButton = _activeButton != null ? _activeButton : null;
       this._arrayLen = _arrayLen != null ? _arrayLen : null;
@@ -328,7 +353,7 @@ Hooks.EChartsChart = {
     });
 
     this.handleEvent("chart-update", ({ option }) => {
-      const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, _windowFetch, ...echartsOption } = option;
+      const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, _windowFetch, _envelope, _envelopes, ...echartsOption } = option;
       this._lastOption = echartsOption;
       this._chart && this._chart.setOption(this._themed(echartsOption), { notMerge: true });
     });
@@ -344,6 +369,8 @@ Hooks.EChartsChart = {
     });
 
     this.handleEvent(`window-chart-data-${this.el.id}`, (reply) => this._applyWindow(reply));
+    this.handleEvent(`overview-chart-data-${this.el.id}`, (reply) => this._applyOverview(reply));
+    this.handleEvent(`overview-chart-error-${this.el.id}`, (reply) => this._overviewFailed(reply));
 
     this.handleEvent(`extend-chart-${this.el.id}`, ({ seriesUpdates, arrayLen, snapshot }) => {
       if (snapshot) {
@@ -474,6 +501,8 @@ Hooks.EChartsChart = {
 
   _fetchWindow() {
     if (!this._chart || !this._windowFetch) return;
+    // an overview in the other mode is on its way; the window follows it
+    if (this._reloadPending) return;
     const visible = this._visibleWindow();
     const full = this._overviewExtent();
     if (!visible || !full) return;
@@ -483,6 +512,7 @@ Hooks.EChartsChart = {
     if (from <= full[0] && to >= full[1]) {
       this._windowReq++; // a reply still on its way is outdated
       this._detail = null;
+      this._bandCache = null;
       this._drawWindowData();
       return;
     }
@@ -496,18 +526,98 @@ Hooks.EChartsChart = {
       from: Math.floor(Math.max(from - pad, full[0])),
       to: Math.ceil(Math.min(to + pad, full[1])),
       req: ++this._windowReq,
+      envelope: this._envFlag(),
+      gen: this._envGen || 0,
     });
   },
 
-  _applyWindow({ req, from, to, aggregated, bucket_ms, seriesUpdates }) {
-    // only the answer to the latest request (the chart may have moved on)
+  _applyWindow({ req, gen, from, to, aggregated, bucket_ms, envelope_bucket_ms, seriesUpdates, envelopes, arrayLen }) {
+    // only the answer to the latest request (the chart may have moved on),
+    // in the envelope mode the chart is in now
     if (!this._windowFetch || req !== this._windowReq) return;
+    if (gen != null && gen !== (this._envGen || 0)) return;
     const series = {};
     (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
       series[seriesIndex] = data;
     });
-    this._detail = { from, to, aggregated, bucket_ms, series };
+    this._bandCache = null;
+    this._detail = {
+      from,
+      to,
+      aggregated,
+      bucket_ms,
+      envelope_bucket_ms,
+      series,
+      envelopes: this._envelopesBySeries(envelopes),
+    };
+    // element rows can show a wider array than the thinned readings did:
+    // merge the window first, then rebuild with the new element's line
+    const grew = this._growsArray(arrayLen);
     this._drawWindowData();
+    if (grew) this._recompose();
+  },
+
+  // A reloaded overview in the other envelope mode (after the toggle, a
+  // Heatmap/Lines switch, or a first load whose mode differs from the
+  // browser's preference) replaces the old one; then the zoomed window.
+  _applyOverview({ gen, envelope, seriesUpdates, envelopes, arrayLen, aggregated, bucket_ms, envelope_bucket_ms }) {
+    if (!this._windowFetch || gen !== this._envGen) return;
+    this._reloadPending = false;
+    this._overviewEnvelope = !!envelope;
+    const overview = { ...(this._overview || {}) };
+    (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
+      overview[seriesIndex] = data;
+    });
+    this._overview = overview;
+    this._bandCache = null;
+    this._overviewEnvelopes = this._envelopesBySeries(envelopes);
+    this._seriesData = { ...overview };
+    if (this._lastOption && Array.isArray(this._lastOption.series)) {
+      this._lastOption = {
+        ...this._lastOption,
+        series: this._lastOption.series.map((s, i) => (overview[i] ? { ...s, data: overview[i] } : s)),
+      };
+    }
+    if (this._arrayLen != null) {
+      this._visualMapMin = null;
+      this._visualMapMax = null;
+      this._trackHeatRange(this._seriesData[0] || []);
+    }
+    this._growsArray(arrayLen);
+    this._resolution = { aggregated, bucket_ms, envelope_bucket_ms };
+    this._detail = null;
+    this._recompose();
+    this._fetchWindow();
+  },
+
+  // the reload failed: stay in the mode the overview holds
+  _overviewFailed({ gen }) {
+    if (gen !== this._envGen) return;
+    this._reloadPending = false;
+    if (this._envMeta) writeEnvelopePref(this._envMeta.kind, this._overviewEnvelope);
+    // the loaded overview holds bucket means: only Lines mode draws them
+    if (this._envMeta && this._envMeta.kind === "array" && this._overviewEnvelope && this._arrayMode !== "lines") {
+      this._arrayMode = "lines";
+      try { localStorage.setItem(ARRAY_MODE_KEY, "lines"); } catch (_e) {}
+      this._recompose();
+    }
+    this._renderEnvelopeToggle();
+    this._fetchWindow();
+  },
+
+  // payloads by series index: {bucket_ms, from, until, rows}
+  _envelopesBySeries(list) {
+    const out = {};
+    (list || []).forEach((e) => {
+      if (e && e.seriesIndex != null) out[e.seriesIndex] = e;
+    });
+    return out;
+  },
+
+  _growsArray(arrayLen) {
+    if (this._arrayLen == null || arrayLen == null || arrayLen <= this._arrayLen) return false;
+    this._arrayLen = arrayLen;
+    return this._arrayMode === "lines";
   },
 
   // overview outside the detail window, detail inside
@@ -526,8 +636,276 @@ Hooks.EChartsChart = {
         : overview;
     });
     // in lines mode an array buffer is drawn as one series per element
-    this._chart.setOption({ series: this._chartSeriesData().map((data) => ({ data })) });
+    this._chart.setOption({ series: this._seriesPatch() });
     this._renderResolution();
+  },
+
+  // The data of every drawn series, plus whether a line is sampled: not
+  // while it shows bucket means (each one counts), as today otherwise.
+  _seriesPatch() {
+    const data = this._chartSeriesData();
+    if (!this._envActive()) return data.map((d) => ({ data: d }));
+    const map = this._seriesMap || [];
+    return data.map((d, j) => {
+      const m = map[j];
+      if (!m || m.band || !this._bandParent(m)) return { data: d };
+      const band = this._hasBand(m.src, m.elem);
+      // array element lines never show markers
+      return m.elem == null
+        ? { data: d, sampling: band ? "none" : "lttb", showSymbol: !band }
+        : { data: d, sampling: band ? "none" : "lttb" };
+    });
+  },
+
+  // --- Envelope (min/mean/max per bucket) ---------------------------------
+  // The server puts each bucket's mean into the line and sends the band
+  // rows apart (per series: [t, min, mean, max], arrays [t, i, min, mean,
+  // max]). Overview rows show outside the zoomed window, its rows inside.
+
+  // a drawn line that can carry a band: an array element, or a line the
+  // server named (a Drivable's `value`, not its `target`)
+  _bandParent(m) {
+    if (!m || m.band) return false;
+    return this._isArrayPlot() ? m.elem != null : (this._envMeta.series || []).includes(m.src);
+  },
+
+  // the envelope the user wants for this plot right now
+  _envFlag() {
+    const m = this._envMeta;
+    if (!m || !this._windowFetch) return false;
+    if (m.kind === "array" && this._arrayMode !== "lines") return false;
+    return readEnvelopePref(m.kind);
+  },
+
+  // bands are drawn: the overview the chart shows holds an envelope
+  _envActive() {
+    return !!this._envMeta && this._overviewEnvelope && (this._envMeta.kind === "line" || this._arrayMode === "lines");
+  },
+
+  // band rows of a series, overview outside the zoomed window and detail
+  // inside, with a break (null) wherever one segment ends and the next begins
+  _bandRows(src) {
+    const ov = (this._overviewEnvelopes[src] || {}).rows || [];
+    const d = this._detail;
+    if (!d) return ov;
+    const inner = ((d.envelopes || {})[src] || {}).rows || [];
+    const segments = [ov.filter((r) => r[0] < d.from), inner, ov.filter((r) => r[0] > d.to)].filter((g) => g.length);
+    const out = [];
+    segments.forEach((g, k) => {
+      if (k > 0) out.push(null);
+      out.push(...g);
+    });
+    return out;
+  },
+
+  // rows of one band: a line's own, or one array element's (cached until
+  // the overview or the zoomed window changes)
+  _bandRowsOf(src, elem) {
+    this._bandCache = this._bandCache || {};
+    const key = `${src}:${elem}`;
+    if (!this._bandCache[key]) this._bandCache[key] = this._splitBandRows(src, elem);
+    return this._bandCache[key];
+  },
+
+  _splitBandRows(src, elem) {
+    const rows = this._bandRows(src);
+    if (elem == null) return rows.map((r) => (r ? { t: r[0], min: r[1], mean: r[2], max: r[3] } : null));
+    return rows
+      .filter((r) => r === null || r[1] === elem)
+      .map((r) => (r ? { t: r[0], min: r[2], mean: r[3], max: r[4] } : null));
+  },
+
+  _hasBand(src, elem) {
+    return this._bandRowsOf(src, elem).some((r) => r);
+  },
+
+  // helper series data: the lower edge, and the range stacked on it
+  _bandData(src, elem, which) {
+    const rows = this._bandRowsOf(src, elem);
+    const out = [];
+    rows.forEach((r, k) => {
+      if (r) {
+        out.push([r.t, which === "lower" ? r.min : r.max - r.min]);
+      } else if (k > 0 && rows[k - 1]) {
+        // a break, at the time of the row before it
+        out.push([rows[k - 1].t, null]);
+      }
+    });
+    return out;
+  },
+
+  // The band row at time t of a line (or array element), for the tooltip.
+  _bandRowAt(src, elem, t) {
+    return this._bandRowsOf(src, elem).find((r) => r && r.t === t) || null;
+  },
+
+  // Adds the band helpers to a composed option: per envelope line a lower
+  // series and a range series stacked on it, after all other series so the
+  // server's series indexes stay put. Same name as the line, so its legend
+  // entry hides the band too.
+  _withBands(option) {
+    if (!this._envActive()) return option;
+    const base = option.series || [];
+    const map = this._seriesMap || base.map((_s, i) => ({ src: i, elem: null }));
+    const n = this._arrayLen || 0;
+    const parents = [];
+    map.forEach((m, j) => {
+      if (!this._bandParent(m)) return;
+      const color = this._isArrayPlot() ? arrayLineColor(m.elem, n) : CHART_PALETTE[j % CHART_PALETTE.length];
+      parents.push({ ...m, parent: base[j], color });
+    });
+    const helpers = [];
+    const helperMap = [];
+    parents.forEach(({ src, elem, parent, color }) => {
+      const key = `env-${src}-${elem == null ? "x" : elem}`;
+      const common = {
+        type: "line",
+        name: parent && parent.name,
+        xAxisIndex: parent && parent.xAxisIndex,
+        yAxisIndex: parent && parent.yAxisIndex,
+        stack: key,
+        stackStrategy: "all",
+        symbol: "none",
+        showSymbol: false,
+        lineStyle: { width: 0, opacity: 0 },
+        tooltip: { show: false },
+        silent: true,
+        z: 1,
+        animation: false,
+        color,
+      };
+      helpers.push({ ...common, id: `${key}-lower`, data: this._bandData(src, elem, "lower") });
+      helpers.push({
+        ...common,
+        id: `${key}-range`,
+        areaStyle: { color, opacity: isDarkTheme() ? 0.22 : 0.16 },
+        data: this._bandData(src, elem, "range"),
+      });
+      helperMap.push({ src, elem, band: "lower" }, { src, elem, band: "range" });
+    });
+    this._seriesMap = [...map, ...helperMap];
+    const series = base.map((s, j) => {
+      const m = map[j];
+      // a line of bucket means: every mean counts, and no markers on them
+      return m && !m.band && helpers.length && this._hasBand(m.src, m.elem)
+        ? { ...s, sampling: "none", showSymbol: false }
+        : s;
+    });
+    const tooltip = this._isArrayPlot()
+      ? option.tooltip
+      : { ...(option.tooltip || {}), trigger: "axis", formatter: (ps) => this._envelopeTooltip(ps) };
+    return { ...option, tooltip, series: [...series, ...helpers] };
+  },
+
+  // Axis tooltip of a line plot with bands: each line once, as
+  // "mean (min … max)" where a bucket's band is, else its value.
+  _envelopeTooltip(ps) {
+    if (!ps || ps.length === 0) return "";
+    const esc = escHtml;
+    const fmt = (v) => (typeof v === "number" ? formatAxisNumber(v) : esc(String(v)));
+    const t = ps[0].value && ps[0].value[0];
+    const head = `<div>${esc(new Date(t).toLocaleString([], { hour12: false }))}</div>`;
+    const seen = new Set();
+    const rows = [];
+    ps.forEach((p) => {
+      if (seen.has(p.seriesName)) return;
+      const m = (this._seriesMap || [])[p.seriesIndex];
+      if (m && m.band) return;
+      const v = p.value && p.value[1];
+      const band = m ? this._bandRowAt(m.src, m.elem, p.value[0]) : null;
+      seen.add(p.seriesName);
+      const text = band ? `${fmt(band.mean)} <span style="opacity:.7">(${fmt(band.min)} … ${fmt(band.max)})</span>` : fmt(v);
+      rows.push(`<span style="color:${p.color}">●</span> ${esc(p.seriesName)} ${text}`);
+    });
+    return head + rows.join("<br>");
+  },
+
+  // Rebuilds the chart from scratch (bands appear or go, the array grew),
+  // keeping its zoom and the legend's hidden series.
+  _recompose() {
+    if (!this._chart || !this._lastOption) return;
+    this._heatCache = {};
+    const shown = this._windowFetch ? this._visibleWindow() : null;
+    const full = this._overviewExtent();
+    const current = this._chart.getOption();
+    const legend = (current.legend || [])[0];
+    const selected = legend && legend.selected;
+    // an open time range slider stays open
+    const zooms = (current.dataZoom || []).filter(Boolean);
+    const slider = zooms.some((dz) => dz.type === "slider");
+    let option = this._themed(this._composeOption(this._lastOption));
+    if (selected && option.legend && !Array.isArray(option.legend)) {
+      option = { ...option, legend: { ...option.legend, selected } };
+    }
+    this._chart.setOption(option, { notMerge: true });
+    if (slider) {
+      const update = {
+        dataZoom: zooms.map((dz) => ({ type: dz.type, xAxisIndex: dz.xAxisIndex, filterMode: dz.filterMode, ...(dz.type === "slider" ? { bottom: 8 } : {}) })),
+      };
+      if (this._xAxisCount === 1) update.grid = { bottom: 80 };
+      this._chart.setOption(update, { replaceMerge: ["dataZoom"] });
+    }
+    if (shown && full && (shown[0] > full[0] || shown[1] < full[1])) {
+      this._chart.dispatchAction({ type: "dataZoom", startValue: shown[0], endValue: shown[1] });
+    }
+    this._chart.setOption({ series: this._seriesPatch() });
+    this._renderArrayModeButtons();
+    this._renderEnvelopeToggle();
+    this._renderResolution();
+  },
+
+  // The envelope switch, next to Heatmap/Lines: for historical line plots,
+  // and for arrays only while they are drawn as lines.
+  _renderEnvelopeToggle() {
+    const el = document.getElementById(`envelope-toggle-${this.el.id}`);
+    if (!el) return;
+    const m = this._envMeta;
+    if (!m || !this._windowFetch || (m.kind === "array" && this._arrayMode !== "lines")) {
+      el.innerHTML = "";
+      return;
+    }
+    const on = readEnvelopePref(m.kind);
+    let b = el.querySelector("button");
+    if (!b) {
+      el.innerHTML = "";
+      b = document.createElement("button");
+      b.type = "button";
+      b.id = `envelope-btn-${this.el.id}`;
+      b.className = "ml-1 inline-flex items-center gap-1 rounded border border-line px-2 py-0.5 text-xs transition-colors";
+      const i = document.createElement("span");
+      i.className = "hero-chart-bar-square-micro size-3.5";
+      b.append(i, "Band");
+      b.addEventListener("click", () => {
+        writeEnvelopePref(m.kind, !readEnvelopePref(m.kind));
+        this._onEnvFlagChange();
+      });
+      el.appendChild(b);
+    }
+    b.setAttribute("aria-pressed", String(on));
+    b.title = on
+      ? "Showing each interval's min–max band and mean. Click for the thinned readings."
+      : "Show each interval's min–max band and mean";
+    this._styleRangeButton(b, on);
+  },
+
+  // The wanted envelope mode changed: back to the loaded overview's mode at
+  // once, or load the overview in the new mode first.
+  _onEnvFlagChange() {
+    if (!this._envMeta || !this._windowFetch) return;
+    this._bandCache = null;
+    const want = this._envFlag();
+    this._envGen = (this._envGen || 0) + 1;
+    this._windowReq = (this._windowReq || 0) + 1; // a window reply on its way is outdated
+    if (want === this._overviewEnvelope) {
+      this._reloadPending = false;
+      this._detail = null;
+      this._recompose();
+      this._fetchWindow();
+    } else {
+      this._reloadPending = true;
+      this.pushEventTo(this.el, "fetch-chart-overview", { envelope: want, gen: this._envGen });
+    }
+    this._renderEnvelopeToggle();
   },
 
   // "thinned · 15 min intervals" while readings are thinned out, "every reading" once
@@ -539,6 +917,9 @@ Hooks.EChartsChart = {
     if (!this._windowFetch || !r) {
       el.textContent = "";
       el.removeAttribute("title");
+    } else if (r.envelope_bucket_ms && this._envActive()) {
+      el.textContent = `min/mean/max · ${formatBucket(r.envelope_bucket_ms)} intervals`;
+      el.title = "Each interval shows the band from its lowest to its highest value, and the line runs through its mean. Zoom in to see the readings.";
     } else if (r.aggregated) {
       el.textContent = `thinned · ${formatBucket(r.bucket_ms)} intervals`;
       el.title = "Long recordings are thinned out: each interval shows its first and last reading, and the readings with the lowest and highest values and with each state. Zoom in to see every reading.";
@@ -911,9 +1292,14 @@ Hooks.EChartsChart = {
     return this._arrayLen != null;
   },
 
+  // The option to draw, with envelope bands where they are on.
+  _composeOption(option) {
+    return this._withBands(this._composeBase(option));
+  },
+
   // The option to draw: the server's heatmap option, or for "lines" one line
   // per array element built from the same buffered points.
-  _composeOption(option) {
+  _composeBase(option) {
     // which buffer each drawn series shows; null = one series per buffer
     this._seriesMap = null;
     if (this._arrayLatest) {
@@ -1061,7 +1447,8 @@ Hooks.EChartsChart = {
     const map = this._seriesMap;
     if (!map) return Object.keys(this._seriesData).map((idx) => this._drawnData(idx));
     const split = {};
-    return map.map(({ src, elem }) => {
+    return map.map(({ src, elem, band }) => {
+      if (band) return this._bandData(src, elem, band);
       if (elem == null) return this._drawnData(src);
       if (!split[src]) split[src] = this._splitArray(this._seriesData[src] || [], this._elementCount(src));
       return split[src][elem] || [];
@@ -1090,17 +1477,25 @@ Hooks.EChartsChart = {
     const time = new Date(ps[0].value[0]).toLocaleTimeString([], { hour12: false });
     const unit = this._arrayUnit ? ` ${esc(this._arrayUnit)}` : "";
     const fmt = (v) => (typeof v === "number" ? formatAxisNumber(v) : esc(v));
+    // a bucket of an envelope: its mean, with its min and max
+    const val = (p) => {
+      const m = this._envActive() && (this._seriesMap || [])[p.seriesIndex];
+      const b = m ? this._bandRowAt(m.src, m.elem, p.value[0]) : null;
+      return b ? `${fmt(b.mean)} (${fmt(b.min)} … ${fmt(b.max)})` : fmt(p.value[1]);
+    };
     // pointer on a line: only that element
     const hit = this._hoverSeries != null && ps.find((p) => p.seriesIndex === this._hoverSeries);
     if (hit) {
       return (
         `<div>${time}</div>` +
         `<div style="font-size:13px;font-weight:600"><span style="color:${hit.color}">●</span> ` +
-        `${esc(hit.seriesName)} ${fmt(hit.value[1])}${unit}</div>`
+        `${esc(hit.seriesName)} ${val(hit)}${unit}</div>`
       );
     }
+    const seen = new Set();
     const rows = ps
-      .map((p) => `<span style="color:${p.color}">●</span> ${esc(p.seriesName)} ${fmt(p.value[1])}`)
+      .filter((p) => !seen.has(p.seriesName) && seen.add(p.seriesName))
+      .map((p) => `<span style="color:${p.color}">●</span> ${esc(p.seriesName)} ${val(p)}`)
       .join("<br>");
     const cols = ps.length > 16 ? `columns:${ps.length > 48 ? 4 : 2};column-gap:12px;` : "";
     return `<div>${time}${unit ? ` ·${unit}` : ""}</div><div style="${cols}font-size:11px;line-height:1.35">${rows}</div>`;
@@ -1152,6 +1547,12 @@ Hooks.EChartsChart = {
           x.setAttribute("aria-pressed", String(on));
         });
         this._redrawArray();
+        // the envelope shows only in Lines mode
+        if (this._envMeta && (this._reloadPending || this._envFlag() !== this._overviewEnvelope)) {
+          this._onEnvFlagChange();
+        } else {
+          this._renderEnvelopeToggle();
+        }
       });
       el.appendChild(b);
     });
@@ -1159,6 +1560,14 @@ Hooks.EChartsChart = {
 
   _reinitForTheme() {
     if (!this._chart || !this._lastOption) return;
+    // the rebuilt chart is zoomed out again and shows the overview: reset
+    // before composing, since array lines are built from the buffers
+    if (this._windowFetch && this._overview) {
+      this._windowReq = (this._windowReq || 0) + 1;
+      this._detail = null;
+      this._bandCache = null;
+      this._seriesData = { ...this._overview };
+    }
     this._chart.dispose();
     this._chart = this._initChart();
     this._heatTipBound = false;
@@ -1199,6 +1608,9 @@ Hooks.EChartsChart = {
     if (loadingEl) loadingEl.style.display = "none";
     this._renderRangeButtons();
     this._renderResolution();
+    this._renderEnvelopeToggle();
+    // the browser's preference differs from the server's default
+    if (this._envMeta && this._envFlag() !== this._overviewEnvelope) this._onEnvFlagChange();
   },
 
   _disposeChart() {

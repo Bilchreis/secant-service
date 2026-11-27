@@ -15,11 +15,19 @@ defmodule SecantService.PlotDB.Calibratable do
     value_param = find_param(module, "value")
 
     if value_param && value_param.datainfo["type"] in @scalar_types do
-      {v_val, v_ts, v_res} = fetch_param_window(value_param, mode)
+      vu_param = find_param(module, "_value_uncalibrated")
+
+      {v_val, v_ts, v_res} =
+        fetch_param_window(value_param, mode,
+          envelope: envelope_on_load?(module, value_param, mode)
+        )
+
       {t_val, t_ts, t_res} = fetch_optional(find_param(module, "target"), mode, :held)
 
       {vu_val, vu_ts, vu_res} =
-        fetch_optional(find_param(module, "_value_uncalibrated"), mode)
+        fetch_optional(vu_param, mode, :plain,
+          envelope: envelope_on_load?(module, vu_param, mode)
+        )
 
       {tc_val, tc_ts, tc_res} = fetch_optional(find_param(module, "_target_calibrated"), mode)
 
@@ -51,6 +59,10 @@ defmodule SecantService.PlotDB.Calibratable do
          _param_dtype_modules: param_dtype_modules
        }}
       |> with_resolution([v_res, t_res, vu_res, tc_res])
+      |> with_envelopes(module, mode, [
+        {"value", v_res[:envelope]},
+        {"_value_uncalibrated", vu_res[:envelope]}
+      ])
     else
       :not_plottable
     end
@@ -58,10 +70,18 @@ defmodule SecantService.PlotDB.Calibratable do
 
   # Only "value" is required; the module may lack the other parameters (they
   # were renamed between interface class versions). Missing ones plot empty.
-  defp fetch_optional(param, mode, kind \\ :plain)
-  defp fetch_optional(nil, _mode, _kind), do: {[], [], %{aggregated: false, bucket_ms: nil}}
-  defp fetch_optional(param, mode, :held), do: fetch_held_param_window(param, mode)
-  defp fetch_optional(param, mode, :plain), do: fetch_param_window(param, mode)
+  defp fetch_optional(param, mode, kind \\ :plain, opts \\ [])
+
+  defp fetch_optional(nil, _mode, _kind, _opts),
+    do: {[], [], %{aggregated: false, bucket_ms: nil}}
+
+  defp fetch_optional(param, mode, :held, _opts), do: fetch_held_param_window(param, mode)
+  defp fetch_optional(param, mode, :plain, opts), do: fetch_param_window(param, mode, opts)
+
+  defp envelope_on_load?(_module, nil, _mode), do: false
+
+  defp envelope_on_load?(module, param, mode),
+    do: SecantService.PlotDB.envelope_on_load?(module, param, mode)
 
   @impl true
   def trace_updates(

@@ -46,13 +46,17 @@ defmodule SecantService.PlotDB.Builders do
   right edge, so it is pinned to where the plot starts instead (see
   `plot_start_ms/1`).
   """
-  def fetch_param_window(param, :historical) do
+  def fetch_param_window(param, mode, opts \\ [])
+
+  def fetch_param_window(param, :historical, opts) do
     from_ms = plot_start_ms(param)
+    args = if Keyword.get(opts, :envelope, false), do: %{envelope: true}, else: %{}
 
     {values, timestamps, resolution} =
       if History.thinnable?(param) do
-        window = SecNodes.history_window!(param.id, from_ms, nil)
-        {window.values, window.timestamps, Map.take(window, [:aggregated, :bucket_ms])}
+        window = SecNodes.history_window!(param.id, from_ms, nil, args)
+
+        {window.values, window.timestamps, Map.take(window, [:aggregated, :bucket_ms, :envelope])}
       else
         {values, timestamps} = fetch_param_data_in_range(param, from_ms, nil)
         {values, timestamps, @unthinned}
@@ -62,7 +66,7 @@ defmodule SecantService.PlotDB.Builders do
     {values, timestamps, resolution}
   end
 
-  def fetch_param_window(param, :live) do
+  def fetch_param_window(param, :live, _opts) do
     {values, timestamps} = fetch_live_data(param)
     {values, timestamps, @unthinned}
   end
@@ -72,14 +76,30 @@ defmodule SecantService.PlotDB.Builders do
   its chart (`_windowFetch`, see `history_zoom/2`): thinned out if any of
   them is, with the widest bucket. Other plots are returned as they are.
   """
-  def put_resolution(%{option: %{_windowFetch: _}} = plot, resolutions),
-    do: put_in(plot, [:option, :_windowFetch], History.coarsest(resolutions))
+  def put_resolution(%{option: %{_windowFetch: _}} = plot, resolutions) do
+    resolution =
+      case resolutions |> Enum.map(&envelope_bucket_ms/1) |> Enum.reject(&is_nil/1) do
+        [] -> History.coarsest(resolutions)
+        widths -> Map.put(History.coarsest(resolutions), :envelope_bucket_ms, Enum.max(widths))
+      end
+
+    put_in(plot, [:option, :_windowFetch], resolution)
+  end
 
   def put_resolution(plot, _resolutions), do: plot
+
+  defp envelope_bucket_ms(%{envelope: %{bucket_ms: bucket_ms}}), do: bucket_ms
+  defp envelope_bucket_ms(_resolution), do: nil
 
   @doc "`put_resolution/2` on a `PlotSpec.plot/2` result."
   def with_resolution({:ok, plot}, resolutions), do: {:ok, put_resolution(plot, resolutions)}
   def with_resolution(result, _resolutions), do: result
+
+  @doc "`SecantService.PlotDB.put_envelopes/4` on a `PlotSpec.plot/2` result."
+  def with_envelopes({:ok, plot}, secop_obj, mode, envelopes),
+    do: {:ok, SecantService.PlotDB.put_envelopes(plot, secop_obj, mode, envelopes)}
+
+  def with_envelopes(result, _secop_obj, _mode, _envelopes), do: result
 
   defp fetch_live_data(param) do
     {from_ms, to_ms, _buttons, _active} = default_live_range_ms()

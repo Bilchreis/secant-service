@@ -88,6 +88,9 @@ defmodule SecantService.SecNodes.Parameter do
       argument :max_raw, :integer, constraints: [min: 1, max: 50_000]
       # otherwise it is split into at most this many time buckets
       argument :max_buckets, :integer, constraints: [min: 1, max: 5_000]
+      # read whole buckets of a minute or more from the aggregates, as a
+      # min/mean/max envelope (see SecantService.PlotDB.History)
+      argument :envelope, :boolean, default: false
 
       run SecantService.SecNodes.Actions.HistoryWindow
     end

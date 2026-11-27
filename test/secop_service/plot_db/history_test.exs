@@ -273,6 +273,19 @@ defmodule SecantService.PlotDB.HistoryTest do
                SecNodes.history_window(parameter.id, nil, nil, %{max_buckets: 10_000_000})
     end
 
+    test ":history_window takes the envelope flag" do
+      parameter = generate(parameter(datainfo: %{"type" => "double"}))
+      insert_readings(parameter, 20, &(&1 * 1.0))
+
+      # in the sandbox the aggregates are empty: the window is today's,
+      # with the key saying no envelope was drawn
+      with_envelope = SecNodes.history_window!(parameter.id, nil, nil, %{envelope: true})
+      assert Map.fetch!(with_envelope, :envelope) == nil
+      assert Map.delete(with_envelope, :envelope) == History.window(parameter, nil, nil)
+
+      refute Map.has_key?(SecNodes.history_window!(parameter.id, nil, nil), :envelope)
+    end
+
     test "refuse parameters that are not plotted, and unknown ones" do
       parameter = generate(parameter(datainfo: %{"type" => "string"}))
 
@@ -629,6 +642,74 @@ defmodule SecantService.PlotDB.HistoryTest do
       # only the first reading is pinned, to the second one
       assert timestamps == [ms(1) | Enum.map(1..19, &ms/1)]
       assert values == [0.0 | Enum.map(1..19, &(&1 * 1.0))]
+    end
+  end
+
+  describe "Envelope arithmetic" do
+    alias SecantService.PlotDB.History.Envelope
+
+    @min 60_000
+    @hour 3_600_000
+    @day 86_400_000
+    # 2000-01-03 00:00 UTC, time_bucket's default origin
+    @origin 946_857_600_000
+
+    test "edges: aligned windows keep their edges, unaligned ones move inwards" do
+      t = @origin + 10 * @hour
+      assert Envelope.edges(t, t + 2 * @hour, @hour) == {t, t + 2 * @hour}
+      assert Envelope.edges(t + 1, t + 2 * @hour - 1, @hour) == {t + @hour, t + @hour}
+      assert Envelope.edges(t + 30 * @min, t + 3 * @hour + 5, @hour) == {t + @hour, t + 3 * @hour}
+    end
+
+    test "edges: a window holding no whole bucket has a >= b" do
+      t = @origin + 10 * @hour + 1
+      {a, b} = Envelope.edges(t, t + 30 * @min, @hour)
+      assert a >= b
+    end
+
+    test "edges: multi-day widths and instants before 2000 use the same origin" do
+      # 2-day buckets start on the origin's grid, not at the Unix epoch
+      two_days = 2 * @day
+      from = @origin + 3 * @day + 5
+
+      assert Envelope.edges(from, from + 10 * @day, two_days) ==
+               {@origin + 4 * @day, @origin + 12 * @day}
+
+      # 1999-12-31 12:00 UTC
+      before_2000 = @origin - 2 * @day - 12 * @hour
+      assert Envelope.floor_to(before_2000, @day) == @origin - 3 * @day
+
+      assert Envelope.edges(before_2000, before_2000 + @day, @day) ==
+               {@origin - 2 * @day, @origin - 2 * @day}
+
+      # and before 1970
+      assert Envelope.floor_to(-1, @min) == -@min
+    end
+
+    test "until: the materialized point, floored and kept within [a, b]" do
+      a = @origin + 10 * @hour
+      b = a + 5 * @hour
+
+      # never refreshed
+      assert Envelope.until(a, b, nil, @hour) == a
+      # watermark before the window
+      assert Envelope.until(a, b, a - 3 * @hour, @hour) == a
+      # inside: floored to a bucket boundary
+      assert Envelope.until(a, b, a + 2 * @hour + 17, @hour) == a + 2 * @hour
+      # after the window
+      assert Envelope.until(a, b, b + @day, @hour) == b
+    end
+
+    test "point_time: the bucket centre, moved into the span of its readings" do
+      bucket = @origin + 10 * @hour
+      w = 15 * @min
+
+      assert Envelope.point_time(bucket, w, bucket, bucket + w - 1) == bucket + div(w, 2)
+      # the only reading lies after the centre
+      only = bucket + 10 * @min
+      assert Envelope.point_time(bucket, w, only, only) == only
+      # all readings before the centre
+      assert Envelope.point_time(bucket, w, bucket, bucket + @min) == bucket + @min
     end
   end
 end

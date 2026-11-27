@@ -18,7 +18,8 @@ defmodule SecantService.PlotDB.Readable do
     value_param = find_param(module, "value")
 
     if value_param do
-      {val, ts, resolution} = fetch_param_window(value_param, mode)
+      envelope? = SecantService.PlotDB.envelope_on_load?(module, value_param, mode)
+      {val, ts, resolution} = fetch_param_window(value_param, mode, envelope: envelope?)
       unit = get_in(value_param.datainfo, ["unit"])
       dtype_mod = DTypePlot.for_datainfo(value_param.datainfo)
 
@@ -79,6 +80,7 @@ defmodule SecantService.PlotDB.Readable do
            }}
       end
       |> with_resolution([resolution])
+      |> with_envelopes(module, mode, [{"value", resolution[:envelope]}])
     else
       :not_plottable
     end
