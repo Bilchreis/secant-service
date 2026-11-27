@@ -452,20 +452,24 @@ export const EChartsChart = {
   // while it shows bucket means (each one counts), as today otherwise.
   _seriesPatch() {
     const data = this._chartSeriesData();
-    if (!this._envActive()) return data.map((d) => this._dataPatch(d));
+    if (!this._envActive()) return data.map((d, j) => this._dataPatch(d, j));
     const map = this._seriesMap || [];
     return data.map((d, j) => {
       const m = map[j];
-      if (!m || m.band || !this._bandParent(m)) return this._dataPatch(d);
-      return { ...this._dataPatch(d), sampling: this._hasBand(m.src) ? "none" : "lttb" };
+      if (!m || m.band || !this._bandParent(m)) return this._dataPatch(d, j);
+      return { ...this._dataPatch(d, j), sampling: this._hasBand(m.src) ? "none" : "lttb" };
     });
   },
 
-  // A series' new data. Lines show no marker on their readings, so a lone
-  // reading gets one, or it would not show at all.
-  _dataPatch(data) {
-    // (array lines draw no symbol otherwise, not even on hover)
-    return data.length === 1 ? { data, showSymbol: true, symbol: "circle" } : { data, showSymbol: false };
+  // The new data of drawn series `j`. Lines show no marker on their
+  // readings, so a lone reading gets one, or it would not show at all
+  // (array lines have no symbol, not even on hover: it gets one, and gets
+  // its own back with the next reading).
+  _dataPatch(data, j) {
+    const symbol = this._symbols ? this._symbols[j] : undefined;
+    if (symbol === null) return { data };
+    if (data.length === 1) return { data, showSymbol: true, symbol: "circle" };
+    return symbol ? { data, showSymbol: false, symbol } : { data, showSymbol: false };
   },
 
   // --- Band (min/mean/max per bucket) ---------------------------------------
@@ -637,6 +641,10 @@ export const EChartsChart = {
       option = { ...option, legend: { ...option.legend, selected } };
     }
     this._chart.setOption(option, { notMerge: true });
+    // each drawn line's own marker, for _dataPatch; null for series that
+    // draw no reading as a point (band helpers are stacked, heatmaps and
+    // state bands are no lines)
+    this._symbols = (option.series || []).map((s) => (s && s.type === "line" && !s.stack ? s.symbol || "emptyCircle" : null));
     if (slider) this._setSlider(true);
     if (shown && full && (shown[0] > full[0] || shown[1] < full[1])) {
       this._chart.dispatchAction({ type: "dataZoom", startValue: shown[0], endValue: shown[1] });
@@ -1648,7 +1656,7 @@ export const EChartsChart = {
         this._rebuild();
         return;
       }
-      patch.series = this._chartSeriesData().map((data) => this._dataPatch(data));
+      patch.series = this._chartSeriesData().map((data, j) => this._dataPatch(data, j));
       if (this._isArrayPlot() && this._arrayMode !== "lines") Object.assign(patch, this._heatPatch());
       this._renderEmpty();
     } else if (this._targetIdx && this._targetIdx.size > 0) {
