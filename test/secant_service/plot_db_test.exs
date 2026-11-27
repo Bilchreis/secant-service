@@ -59,9 +59,15 @@ defmodule SecantService.PlotDBTest do
         module = create_module([class], [{"value", @double}, {"target", @double}])
         assert [{%{name: "value"}, "line"}] = PlotDB.envelope_params(module)
       end
+
+      acquisition = create_module(["Acquisition", "Readable"], [{"value", @array}])
+      assert [{%{name: "value"}, "array"}] = PlotDB.envelope_params(acquisition)
+
+      assert %{kind: "array", on: false, series: [0]} =
+               PlotDB.module_plot(acquisition, :historical).option._envelope
     end
 
-    test "envelope_params: never a setpoint, an enum, a struct or Acquisition" do
+    test "envelope_params: never a setpoint, an enum or a struct" do
       drivable = create_module(["Drivable"], [{"value", @double}, {"target", @double}])
       target = Enum.find(drivable.parameters, &(&1.name == "target"))
       assert PlotDB.envelope_params(target) == []
@@ -75,10 +81,6 @@ defmodule SecantService.PlotDBTest do
         )
 
       assert PlotDB.envelope_params(struct) == []
-
-      module = create_module(["Acquisition", "Readable"], [{"value", @double}])
-      assert PlotDB.envelope_params(module) == []
-      refute Map.has_key?(PlotDB.module_plot(module, :historical).option, :_envelope)
 
       refute Map.has_key?(PlotDB.parameter_plot(target, :historical).option, :_envelope)
     end

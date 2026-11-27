@@ -7,7 +7,7 @@ Lets historical line plots of long recordings show each bucket's spread and tren
 ## ADDED Requirements
 
 ### Requirement: Envelope of a number line
-While the envelope is on and a historical plot's window is split into buckets of at least 1 minute, a number parameter's line SHALL be drawn per aggregated bucket as a shaded band from the bucket's min to its max and a line through its mean. This applies to a number parameter plotted on its own, to the `value` of a Readable or Drivable module, and to the `value` and `_value_uncalibrated` of a Calibratable module.
+While the envelope is on and a historical plot's window is split into buckets of at least 1 minute, a number parameter's line SHALL be drawn per aggregated bucket as a shaded band from the bucket's min to its max and a line through its mean. This applies to a number parameter plotted on its own, to the `value` of a Readable, Acquisition or Drivable module, and to the `value` and `_value_uncalibrated` of a Calibratable module.
 
 #### Scenario: Long recording of a double
 - **WHEN** the historical plot of a `double` parameter shows 72 h of 1 Hz readings with the envelope on, and the aggregates are materialized for that time
@@ -26,7 +26,7 @@ While the envelope is on and a historical plot's window is split into buckets of
 - **THEN** it is drawn as today, and no envelope toggle is shown
 
 #### Scenario: Plots without envelopes
-- **WHEN** an enum parameter, a struct parameter, or an Acquisition module is plotted historically
+- **WHEN** an enum parameter or a struct parameter is plotted historically
 - **THEN** it is drawn exactly as today
 
 ### Requirement: Envelope of array plots in Lines mode

@@ -58,10 +58,11 @@ defmodule SecantService.PlotDB do
   end
 
   @envelope_number_types ~w(double int scaled)
-  # the lines of a module's plot that may carry an envelope, by plot module.
-  # Acquisition draws through Readable but is its own class, so it has none.
+  # the lines of a module's plot that may carry an envelope, by plot module
+  # (Acquisition draws through Readable)
   @envelope_lines %{
     SecantService.PlotDB.Readable => ["value"],
+    SecantService.PlotDB.Acquisition => ["value"],
     SecantService.PlotDB.Drivable => ["value"],
     SecantService.PlotDB.Calibratable => ["value", "_value_uncalibrated"]
   }
@@ -71,7 +72,7 @@ defmodule SecantService.PlotDB do
   envelope (per bucket min, mean and max from the aggregates), as
   `[{param, kind}]` with `kind` `"line"` (a number) or `"array"` (a numeric
   array, drawn as lines). A parameter plotted on its own, the `value` of a
-  Readable or Drivable module, or the `value` and `_value_uncalibrated` of
+  Readable, Acquisition or Drivable module, or the `value` and `_value_uncalibrated` of
   a Calibratable module (number lines only). A setpoint (`target`,
   `_target_calibrated`) never is, also when it is plotted on its own.
   """
