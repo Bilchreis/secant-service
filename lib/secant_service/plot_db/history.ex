@@ -321,10 +321,11 @@ defmodule SecantService.PlotDB.History do
           ts: v.timestamp,
           start?:
             fragment(
-              "? IS DISTINCT FROM lag(?) OVER (ORDER BY ?)",
+              "? IS DISTINCT FROM lag(?) OVER (ORDER BY ?, ?)",
               field(v, ^col),
               field(v, ^col),
-              v.timestamp
+              v.timestamp,
+              v.id
             )
         }
 

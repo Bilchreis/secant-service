@@ -8,6 +8,7 @@ defmodule SecantService.PlotDB do
   alias SecantService.SecNodes
   alias SecantService.Util
   alias SecantService.PlotDB.Builders
+  alias SecantService.PlotDB.History
   alias SecantService.PlotDB.TimePlot
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
   alias SecantService.PlotDB.DTypes.ArrayLatest
@@ -48,13 +49,17 @@ defmodule SecantService.PlotDB do
   The lines a plot of `secop_obj` draws, value first, as
   `%{param:, series:, setpoint?:, hidden?:}`. A parameter plotted on its own
   is the plot's `value` series; a module's lines are its parameters named by
-  its interface class, as far as it has them. Empty when nothing is plotted.
+  its interface class, as far as it has them and they hold values a plot
+  draws (see `SecantService.PlotDB.History.thinnable?/1`). Empty when
+  nothing is plotted.
 
   A setpoint (`target`, `_target_calibrated`) is only recorded when it
   changes, so its readings are held from before a window.
   """
   def lines(%Parameter{} = param) do
-    [%{param: param, series: "value", setpoint?: param.name in @setpoints, hidden?: false}]
+    if History.thinnable?(param),
+      do: [%{param: param, series: "value", setpoint?: param.name in @setpoints, hidden?: false}],
+      else: []
   end
 
   def lines(%Module{} = module) do
@@ -63,6 +68,7 @@ defmodule SecantService.PlotDB do
     lines =
       for spec <- Map.get(@class_lines, iface_class, []),
           %Parameter{} = param <- [Builders.find_param(module, spec.name)],
+          History.thinnable?(param),
           do: Map.merge(spec, %{param: param, series: spec.name}) |> Map.delete(:name)
 
     case {iface_class, lines} do
@@ -92,12 +98,6 @@ defmodule SecantService.PlotDB do
       {param, latest} -> ArrayLatest.plot(param, latest)
       nil -> build(lines, mode)
     end
-  end
-
-  def module_plot(%Module{} = module, mode \\ :live), do: module |> lines() |> build(mode)
-
-  def parameter_plot(%Parameter{} = parameter, mode \\ :live) do
-    if plottable?(parameter), do: parameter |> lines() |> build(mode), else: not_plottable()
   end
 
   defp build(lines, mode) do

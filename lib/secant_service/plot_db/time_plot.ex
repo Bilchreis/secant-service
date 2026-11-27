@@ -104,11 +104,10 @@ defmodule SecantService.PlotDB.TimePlot do
 
     series =
       for {line, {vals, ts, _res}} <- fetched do
-        # a module's setpoint is drawn as one; a setpoint plotted on its own
-        # is that plot's value
-        Scalar.scalar_line_series(line.series, ts, vals,
-          setpoint: line.setpoint? and line.series != "value"
-        )
+        # a module's target is drawn as a setpoint (dashed, held); a
+        # setpoint plotted on its own is that plot's value, and the hidden
+        # `_target_calibrated` an ordinary line (it is still held, see fetch/2)
+        Scalar.scalar_line_series(line.series, ts, vals, setpoint: line.series == "target")
       end
 
     legend_selected = for line <- lines, line.hidden?, into: %{}, do: {line.series, false}
@@ -116,11 +115,7 @@ defmodule SecantService.PlotDB.TimePlot do
     series
     |> Scalar.timeseries_option(value.param.datainfo["unit"], mode, legend_selected)
     |> plot(lines, Scalar, Enum.map(fetched, fn {_line, {_v, _t, res}} -> res end))
-    |> Bands.put(
-      lines,
-      mode,
-      Enum.map(fetched, fn {line, {_v, _t, res}} -> {line.series, res[:envelope]} end)
-    )
+    |> Bands.put(fetched, mode)
   end
 
   defp plot(option, lines, dtype, resolutions) do

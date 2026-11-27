@@ -27,7 +27,7 @@ defmodule SecantService.PlotDBTest do
     module = create_module(["Readable"], [{"value", @double}])
 
     assert %{plottable: true, option: %{series: [%{data: []}]}} =
-             PlotDB.module_plot(module, :historical)
+             PlotDB.init(module, :historical)
   end
 
   test "a non-numeric parameter without readings plots empty in history" do
@@ -37,14 +37,14 @@ defmodule SecantService.PlotDBTest do
       ])
 
     assert %{plottable: true, option: %{series: [%{data: []} | _]}} =
-             PlotDB.module_plot(module, :historical)
+             PlotDB.init(module, :historical)
   end
 
   test "a calibratable module without its calibration parameters still plots" do
     module = create_module(["_Calibratable", "Readable"], [{"value", @double}])
 
     assert %{plottable: true, option: %{series: [%{name: "value"}]}} =
-             PlotDB.module_plot(module, :historical)
+             PlotDB.init(module, :historical)
   end
 
   describe "lines" do
@@ -80,6 +80,28 @@ defmodule SecantService.PlotDBTest do
       enum = %{"type" => "enum", "members" => %{"a" => 0}}
       assert PlotDB.lines(create_module(["_Calibratable", "Readable"], [{"value", enum}])) == []
     end
+
+    test "a parameter with nothing to draw is no line" do
+      string = %{"type" => "string"}
+      assert PlotDB.lines(generate(parameter(name: "note", datainfo: string))) == []
+
+      drivable = create_module(["Drivable"], [{"value", @double}, {"target", string}])
+      assert [%{series: "value"}] = PlotDB.lines(drivable)
+      assert PlotDB.lines(create_module(["Readable"], [{"value", string}])) == []
+    end
+
+    test "only a module's target is drawn as a setpoint" do
+      calibratable =
+        create_module(["_Calibratable", "Drivable"], [
+          {"value", @double},
+          {"target", @double},
+          {"_target_calibrated", @double}
+        ])
+
+      series = PlotDB.init(calibratable, :live).option.series
+      assert %{_target: true} = Enum.find(series, &(&1.name == "target"))
+      refute Map.has_key?(Enum.find(series, &(&1.name == "_target_calibrated")), :_target)
+    end
   end
 
   describe "updates" do
@@ -87,7 +109,7 @@ defmodule SecantService.PlotDBTest do
 
     test "a struct parameter on its own takes live readings under its own name" do
       param = generate(parameter(name: "settings", datainfo: @struct))
-      plot = PlotDB.parameter_plot(param, :live)
+      plot = PlotDB.init(param, :live)
 
       assert %{seriesUpdates: [%{data: [[10, 1.0]]}]} =
                PlotDB.trace_updates(plot, [{%{"x" => 1.0}, 10}], "settings")
@@ -95,33 +117,22 @@ defmodule SecantService.PlotDBTest do
 
     test "readings of a parameter the plot doesn't draw update nothing" do
       param = generate(parameter(name: "temp", datainfo: @double))
-      plot = PlotDB.parameter_plot(param, :live)
+      plot = PlotDB.init(param, :live)
       assert PlotDB.trace_updates(plot, [{1.0, 10}], "other") == %{seriesUpdates: []}
     end
 
     test "a Drivable's setpoint goes to the target series" do
       module = create_module(["Drivable"], [{"value", @double}, {"target", @double}])
-      plot = PlotDB.module_plot(module, :live)
+      plot = PlotDB.init(module, :live)
       target_index = Enum.find_index(plot.option.series, &(&1.name == "target"))
 
       assert %{seriesUpdates: [%{seriesIndex: ^target_index}]} =
                PlotDB.trace_updates(plot, [{1.0, 10}], "target")
     end
 
-    test "_target_calibrated is drawn as a setpoint" do
-      module =
-        create_module(["_Calibratable", "Readable"], [
-          {"value", @double},
-          {"_target_calibrated", @double}
-        ])
-
-      plot = PlotDB.module_plot(module, :live)
-      assert %{_target: true} = Enum.find(plot.option.series, &(&1.name == "_target_calibrated"))
-    end
-
     test "a heatmap outgrows when a reading is longer than it carries" do
       array = generate(parameter(name: "spectrum", datainfo: @array))
-      plot = PlotDB.parameter_plot(array, :live)
+      plot = PlotDB.init(array, :live)
       long = List.duplicate(1.0, 101)
 
       assert PlotDB.outgrown(plot, "spectrum", [{[1.0], 1}]) == nil
@@ -147,14 +158,14 @@ defmodule SecantService.PlotDBTest do
 
       for datainfo <- [%{"type" => "enum", "members" => %{"a" => 0}}, @struct, @array] do
         assert band_lines(generate(parameter(datainfo: datainfo))) == [], inspect(datainfo)
-        plot = PlotDB.parameter_plot(generate(parameter(datainfo: datainfo)), :historical)
+        plot = PlotDB.init(generate(parameter(datainfo: datainfo)), :historical)
         refute Map.has_key?(plot.option, :_envelope)
       end
     end
 
     test "a double's first load is marked as a band plot" do
       param = generate(parameter(name: "temp", datainfo: @double))
-      plot = PlotDB.parameter_plot(param, :historical)
+      plot = PlotDB.init(param, :historical)
 
       assert plot.option._envelope == %{on: true, series: [0]}
       # no aggregates in the sandbox: no band rows
@@ -166,7 +177,7 @@ defmodule SecantService.PlotDBTest do
 
     test "a band goes to its own line or to none, never to another line" do
       module = create_module(["Drivable"], [{"value", @double}, {"target", @double}])
-      plot = PlotDB.module_plot(module, :historical)
+      plot = PlotDB.init(module, :historical)
       value_index = Enum.find_index(plot.option.series, &(&1.name == "value"))
 
       assert plot.option._envelope.series == [value_index]
@@ -184,14 +195,14 @@ defmodule SecantService.PlotDBTest do
 
       assert band_lines(module) == ["value", "_value_uncalibrated"]
 
-      plot = PlotDB.module_plot(module, :historical)
+      plot = PlotDB.init(module, :historical)
       index = fn name -> Enum.find_index(plot.option.series, &(&1.name == name)) end
       assert plot.option._envelope.series == [index.("value"), index.("_value_uncalibrated")]
     end
 
     test "live plots carry no band" do
       param = generate(parameter(name: "temp", datainfo: @double))
-      refute Map.has_key?(PlotDB.parameter_plot(param, :live).option, :_envelope)
+      refute Map.has_key?(PlotDB.init(param, :live).option, :_envelope)
     end
   end
 end

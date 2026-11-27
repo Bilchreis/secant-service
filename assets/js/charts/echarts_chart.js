@@ -89,6 +89,9 @@ export const EChartsChart = {
       // (the range shown at load, or all of them)
       const xAxis0 = Array.isArray(echartsOption.xAxis) ? echartsOption.xAxis[0] : echartsOption.xAxis;
       this._coveredFrom = xAxis0 && xAxis0.min != null ? xAxis0.min : -Infinity;
+      // ... and from which those readings are not thinned out (a wider range
+      // can come back thinned, see `fetch-chart-range`)
+      this._rawFrom = this._coveredFrom;
       // a new chart: its time range slider starts closed
       const sliderBtn = document.getElementById(`rangeslider-btn-${this.el.id}`);
       if (sliderBtn) sliderBtn.setAttribute("aria-pressed", "false");
@@ -125,8 +128,10 @@ export const EChartsChart = {
 
     // older readings for a live chart whose range got wider: those before
     // `to`, where the buffers started when they were asked for, and before
-    // a series' first buffered reading (a setpoint keeps the one in force)
-    this.handleEvent(`prepend-chart-data-${this.el.id}`, ({ seriesUpdates, arrayLen, from, to }) => {
+    // a series' first buffered reading (a setpoint keeps the one in force).
+    // Only the answer to the last range click: the range may have changed.
+    this.handleEvent(`prepend-chart-data-${this.el.id}`, ({ req, seriesUpdates, arrayLen, from, to, aggregated }) => {
+      if (req !== this._rangeReq) return;
       (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
         const buffer = this._seriesData[seriesIndex] || [];
         const first = buffer.length ? this._pointTs(buffer[0]) : null;
@@ -136,13 +141,15 @@ export const EChartsChart = {
         if (this._arrayLen != null && seriesIndex === 0) this._trackHeatRange(older);
       });
       this._coveredFrom = Math.min(this._coveredFrom, from == null ? -Infinity : from);
+      // every reading, right up to the ones already raw
+      if (!aggregated && this._rawFrom <= to) this._rawFrom = this._coveredFrom;
       this._growArrayLen(arrayLen);
       this._dataDirty = true;
     });
 
     this.handleEvent(`window-chart-data-${this.el.id}`, (reply) => this._applyWindow(reply));
-    this.handleEvent(`window-chart-error-${this.el.id}`, () => {
-      if (this._detailState !== "loading") return;
+    this.handleEvent(`window-chart-error-${this.el.id}`, ({ req }) => {
+      if (req !== this._windowReq || this._detailState !== "loading") return;
       this._detailState = "failed";
       this._renderResolution();
     });
@@ -292,7 +299,13 @@ export const EChartsChart = {
     }
     // every reading of this window is already loaded
     const d = this._detail;
-    if (d && !d.aggregated && from >= d.from && to <= d.to) return;
+    if (d && !d.aggregated && from >= d.from && to <= d.to) {
+      // a reply still on its way is for a window the chart has left
+      this._windowReq++;
+      this._detailState = null;
+      this._renderResolution();
+      return;
+    }
 
     // some margin on both sides, so that short pans stay inside the detail
     const pad = (to - from) / 2;
@@ -405,13 +418,12 @@ export const EChartsChart = {
           ]
         : overview;
     });
+    // the heatmap's colour scale covers the detail's values too
+    const heat = this._isArrayPlot() && this._arrayMode !== "lines";
+    if (heat && d && d.series[0]) this._trackHeatRange(d.series[0]);
     if (!draw) return;
     const patch = { series: this._seriesPatch() };
-    // the heatmap's colour scale covers the detail's values too
-    if (this._isArrayPlot() && this._arrayMode !== "lines" && d && d.series[0]) {
-      this._trackHeatRange(d.series[0]);
-      Object.assign(patch, this._heatPatch());
-    }
+    if (heat) Object.assign(patch, this._heatPatch());
     this._chart.setOption(patch);
     this._renderResolution();
     this._renderEmpty();
@@ -620,8 +632,11 @@ export const EChartsChart = {
       this._chart.dispatchAction({ type: "dataZoom", startValue: shown[0], endValue: shown[1] });
     }
     this._bindHeatTooltip();
-    // the buffers as they are now (the option holds the data of the load)
-    this._chart.setOption({ series: this._seriesPatch() });
+    // the buffers as they are now (the option holds the data of the load),
+    // with a heatmap's index axis and colour scale to match
+    const patch = { series: this._seriesPatch() };
+    if (this._isArrayPlot() && this._arrayMode !== "lines") Object.assign(patch, this._heatPatch());
+    this._chart.setOption(patch);
     this._renderArrayModeButtons();
     this._renderEnvelopeToggle();
     this._renderResolution();
@@ -1021,6 +1036,8 @@ export const EChartsChart = {
   // Long arrays: the newest reading replaces the line.
   _applySnapshot({ data, ...info }) {
     this._arrayLatest = { ...(this._arrayLatest || {}), ...info };
+    // the buffer too: a rebuild (theme change) draws from it
+    this._seriesData[0] = data;
     if (this._lastOption) {
       this._lastOption = {
         ...this._lastOption,
@@ -1218,7 +1235,7 @@ export const EChartsChart = {
         type: "line",
         data,
         showSymbol: false,
-        symbol: "none",
+        symbol: "circle", // shown on a lone reading (see _dataPatch)
         step: false,
         sampling: "lttb",
         lineStyle: { width: n > 20 ? 1 : 1.5 },
@@ -1250,7 +1267,7 @@ export const EChartsChart = {
             xAxisIndex: s.xAxisIndex,
             yAxisIndex: s.yAxisIndex,
             showSymbol: false,
-            symbol: "none",
+            symbol: "circle", // shown on a lone reading (see _dataPatch)
             sampling: "lttb",
             color: arrayLineColor(k, n),
             lineStyle: { width: n > 20 ? 1 : 1.5, type: s._targetArray ? [6, 4] : "solid" },
@@ -1443,10 +1460,15 @@ export const EChartsChart = {
         const now = Date.now();
         const { xMin: newXMin, xMax: newXMax } = this._computeRange(btn, now);
 
-        // wider than what the buffers hold: ask for the readings before it
-        if (newXMin === null ? this._coveredFrom > -Infinity : newXMin < this._coveredFrom) {
+        // a reply to an earlier click is for another range
+        this._rangeReq = (this._rangeReq || 0) + 1;
+        // wider than the buffers hold every reading of: ask for the readings
+        // before it (all of them may come back thinned out: so be it)
+        if (newXMin === null ? this._coveredFrom > -Infinity : newXMin < this._rawFrom) {
+          // thinned readings inside the new range are fetched again
+          if (newXMin !== null && this._rawFrom > this._coveredFrom) this._trimBuffers(this._rawFrom);
           const to = Number.isFinite(this._coveredFrom) ? this._coveredFrom : now;
-          this.pushEventTo(this.el, "fetch-chart-range", { from: newXMin, to: Math.ceil(to) });
+          this.pushEventTo(this.el, "fetch-chart-range", { from: newXMin, to: Math.ceil(to), req: this._rangeReq });
         } else if (newXMin !== null) {
           // narrower: drop the readings that left it
           this._trimBuffers(newXMin);
@@ -1576,6 +1598,7 @@ export const EChartsChart = {
         }
       });
     }
+    this._rawFrom = Math.max(this._rawFrom, this._coveredFrom);
   },
 
   _flushBuffer() {

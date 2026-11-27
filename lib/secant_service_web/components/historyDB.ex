@@ -256,10 +256,12 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   # view's (see SecantService.PlotDB.History), so a wide range stays light.
   def handle_event(
         "fetch-chart-range",
-        %{"from" => from_ms, "to" => to_ms},
+        %{"from" => from_ms, "to" => to_ms} = params,
         %{assigns: %{plot: %AsyncResult{ok?: true, result: plot}}} = socket
       )
       when (is_number(from_ms) or is_nil(from_ms)) and is_number(to_ms) do
+    req = params["req"]
+
     secop_obj = socket.assigns.secop_obj
     latest = latest_window_ms()
     from_ms = from_ms && from_ms |> max(@earliest_window_ms) |> min(latest) |> trunc()
@@ -269,7 +271,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       start_async(socket, :fetch_chart_range, fn ->
         secop_obj
         |> PlotDB.lines()
-        |> Enum.reduce_while([], fn %{param: param}, acc ->
+        |> Enum.reduce_while({[], false}, fn %{param: param}, {acc, aggregated} ->
           window = SecNodes.history_window!(param.id, from_ms, to_ms)
           datapoints = Enum.zip(window.values, window.timestamps)
 
@@ -278,18 +280,22 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           if PlotDB.outgrown(plot, param.name, datapoints) do
             {:halt, {:rebuild, param}}
           else
-            {:cont, [PlotDB.trace_updates(plot, datapoints, param.name) | acc]}
+            {:cont,
+             {[PlotDB.trace_updates(plot, datapoints, param.name) | acc],
+              aggregated or window.aggregated}}
           end
         end)
         |> case do
           {:rebuild, param} ->
             {:rebuild, param}
 
-          updates ->
+          # `req`: the browser's, so it can drop answers to earlier clicks;
+          # `aggregated`: thinned out, so not every reading is in the buffers
+          {updates, aggregated} ->
             updates
             |> Enum.reverse()
             |> merge_trace_updates()
-            |> Map.merge(%{from: from_ms, to: to_ms})
+            |> Map.merge(%{from: from_ms, to: to_ms, aggregated: aggregated, req: req})
         end
       end)
 
@@ -323,6 +329,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       socket
       # only the newest window matters: stop a fetch still running
       |> cancel_async(:fetch_chart_window)
+      |> assign(:window_req, req)
       |> start_async(:fetch_chart_window, fn ->
         windows =
           for line <- PlotDB.lines(secop_obj) do
@@ -464,6 +471,13 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
     socket =
       case display_mode do
+        # already shown: nothing to do (a live plot would lose its buffers),
+        # unless it failed to load
+        :graph
+        when socket.assigns.display_mode == :graph and
+               socket.assigns.plot.failed in [nil, false] ->
+          socket
+
         # A live plot is loaded again: the readings it got while the table
         # was shown went into a chart that is gone.
         :graph when socket.assigns.plot == nil or socket.assigns.plot_mode == :live ->
@@ -583,7 +597,11 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   def handle_async(:fetch_chart_window, {:exit, reason}, socket) do
     Logger.error("Chart window fetch failed: #{inspect(reason)}")
-    {:noreply, push_event(socket, "window-chart-error-#{socket.assigns.id}", %{})}
+
+    {:noreply,
+     push_event(socket, "window-chart-error-#{socket.assigns.id}", %{
+       req: socket.assigns[:window_req]
+     })}
   end
 
   def handle_async(:fetch_chart_overview, {:ok, {:rebuild, param}}, socket) do

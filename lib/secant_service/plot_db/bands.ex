@@ -27,13 +27,13 @@ defmodule SecantService.PlotDB.Bands do
   @doc """
   Marks a historical plot with band-capable lines for the chart hook:
   `_envelope` (the indexes of those series; the first load was read as an
-  envelope) and `_envelopes` (the first load's band payloads, from
-  `envelopes`, a list of `{series name, envelope}`). Other plots are
-  returned as they are.
+  envelope) and `_envelopes` (the first load's band payloads). `fetched` is
+  a list of `{line, {values, timestamps, resolution}}`, the resolution
+  carrying the line's `:envelope`. Other plots are returned as they are.
   """
-  def put(%{option: option} = plot, lines, :historical, envelopes) do
+  def put(%{option: option} = plot, fetched, :historical) do
     indexes =
-      for line <- lines,
+      for {line, _fetched} <- fetched,
           eligible?(line),
           index = series_index(option, line.series),
           index != nil,
@@ -45,8 +45,8 @@ defmodule SecantService.PlotDB.Bands do
 
       indexes ->
         payloads =
-          for {series, envelope} <- envelopes,
-              payload = payload(option, series, envelope),
+          for {line, {_values, _timestamps, resolution}} <- fetched,
+              payload = payload(option, line.series, resolution[:envelope]),
               payload != nil,
               do: payload
 
@@ -59,7 +59,7 @@ defmodule SecantService.PlotDB.Bands do
     end
   end
 
-  def put(plot, _lines, _mode, _envelopes), do: plot
+  def put(plot, _fetched, _mode), do: plot
 
   @doc """
   The payload the chart hook draws one band from: the series it belongs to,
