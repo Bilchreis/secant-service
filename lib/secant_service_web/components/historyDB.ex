@@ -6,6 +6,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   alias SecantService.PlotDB
   alias SecantService.PlotDB.Bands
   alias SecantService.PlotDB.Builders
+  alias SecantService.PlotDB.Gaps
   alias SecantService.PlotDB.History
   alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.SecNodes.Reading.Storage
@@ -34,7 +35,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
   @impl true
   def mount(socket) do
-    {:ok, assign(socket, :chart_height, 340)}
+    {:ok, socket |> assign(:chart_height, 340) |> assign(:gap_events, [])}
   end
 
   defp chart_height(%{option: %{_structFields: fields}}, base) when is_map(fields) do
@@ -164,6 +165,35 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     {:ok, socket}
   end
 
+  # Recording of the node stopped or resumed (`SecantService.PlotCache`):
+  # a live number-line plot opens or closes a gap there. Events that arrive
+  # while the plot loads are pushed after it.
+  def update(%{recording: {kind, ms}}, socket) do
+    event = %{
+      kind: if(kind == :stopped, do: "open", else: "close"),
+      ms: ms,
+      # when the server sent it, to order it against loaded gaps
+      at: System.os_time(:millisecond)
+    }
+
+    socket =
+      cond do
+        socket.assigns[:plot_mode] != :live ->
+          socket
+
+        not socket.assigns.plot.ok? or socket.assigns[:rebuilding_plot] ->
+          update(socket, :gap_events, &(&1 ++ [event]))
+
+        match?(%{option: %{_gaps: _}}, socket.assigns.plot.result) ->
+          push_event(socket, "gap-chart-#{socket.assigns.id}", event)
+
+        true ->
+          socket
+      end
+
+    {:ok, socket}
+  end
+
   def update(%{value_update: value_update_list, parameter: parameter} = _assigns, socket) do
     # a historical plot draws what is stored; it takes no live readings
     socket =
@@ -273,9 +303,10 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       |> cancel_async(:fetch_chart_range)
       |> assign(:range_req, req)
       |> start_async(:fetch_chart_range, fn ->
-        secop_obj
-        |> PlotDB.lines()
-        |> Enum.reduce_while({[], false}, fn %{param: param}, {acc, aggregated} ->
+        lines = PlotDB.lines(secop_obj)
+
+        lines
+        |> Enum.reduce_while({[], false, nil}, fn %{param: param}, {acc, aggregated, bucket} ->
           window = SecNodes.history_window!(param.id, from_ms, to_ms)
           datapoints = Enum.zip(window.values, window.timestamps)
 
@@ -286,7 +317,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           else
             {:cont,
              {[PlotDB.trace_updates(plot, datapoints, param.name) | acc],
-              aggregated or window.aggregated}}
+              aggregated or window.aggregated, max_bucket(bucket, window.bucket_ms)}}
           end
         end)
         |> case do
@@ -295,11 +326,18 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
           # `req`: the browser's, so it can drop answers to earlier clicks;
           # `aggregated`: thinned out, so not every reading is in the buffers
-          {updates, aggregated} ->
+          {updates, aggregated, bucket_ms} ->
             updates
             |> Enum.reverse()
             |> merge_trace_updates()
-            |> Map.merge(%{from: from_ms, to: to_ms, aggregated: aggregated, req: req})
+            |> Map.merge(%{
+              from: from_ms,
+              to: to_ms,
+              aggregated: aggregated,
+              bucket_ms: bucket_ms,
+              req: req
+            })
+            |> Map.merge(Gaps.reply(plot, lines, {from_ms, to_ms}, bucket_ms: bucket_ms))
         end
       end)
 
@@ -339,8 +377,10 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       |> cancel_async(:fetch_chart_window)
       |> assign(:window_req, req)
       |> start_async(:fetch_chart_window, fn ->
+        lines = PlotDB.lines(secop_obj)
+
         windows =
-          for line <- PlotDB.lines(secop_obj) do
+          for line <- lines do
             args = if envelope and Bands.eligible?(line), do: %{envelope: true}, else: %{}
             window = SecNodes.history_window!(line.param.id, trunc(from_ms), trunc(to_ms), args)
             {values, timestamps} = held_window(line, from_ms, window)
@@ -350,9 +390,13 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         # longer readings than the heatmap carries: the latest-reading plot
         case outgrown_param(windows, plot) do
           nil ->
-            windows
-            |> window_reply(plot)
+            reply = window_reply(windows, plot)
+
+            reply
             |> Map.merge(%{from: from_ms, to: to_ms, req: req, gen: gen, envelope: envelope})
+            |> Map.merge(
+              Gaps.reply(plot, lines, {trunc(from_ms), trunc(to_ms)}, bucket_ms: reply.bucket_ms)
+            )
 
           param ->
             {:rebuild, param}
@@ -382,8 +426,10 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       |> assign(:overview_gen, gen)
       |> cancel_async(:fetch_chart_overview)
       |> start_async(:fetch_chart_overview, fn ->
+        lines = PlotDB.lines(secop_obj)
+
         windows =
-          for line <- PlotDB.lines(secop_obj) do
+          for line <- lines do
             {values, timestamps, resolution} =
               if line.setpoint? do
                 Builders.fetch_held_param_window(line.param, :historical)
@@ -399,7 +445,13 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         # longer readings than the heatmap carries: the latest-reading plot
         case outgrown_param(windows, plot) do
           nil ->
-            windows |> window_reply(plot) |> Map.merge(%{gen: gen, envelope: envelope})
+            reply = window_reply(windows, plot)
+
+            reply
+            |> Map.merge(%{gen: gen, envelope: envelope})
+            |> Map.merge(
+              Gaps.reply(plot, lines, {nil, nil}, bucket_ms: reply.bucket_ms, fallback?: true)
+            )
 
           param ->
             {:rebuild, param}
@@ -555,7 +607,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         socket
       end
 
-    {:noreply, socket}
+    {:noreply, push_gap_events(socket, plot)}
   end
 
   def handle_async(:load_plot, {:exit, reason}, socket) do
@@ -937,6 +989,19 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       PlotDB.outgrown(plot, param.name, Enum.zip(values, timestamps)) && param
     end)
   end
+
+  # the recording events kept while the plot loaded, for a number-line plot
+  defp push_gap_events(socket, %{option: %{_gaps: _}}) do
+    socket.assigns.gap_events
+    |> Enum.reduce(socket, &push_event(&2, "gap-chart-#{socket.assigns.id}", &1))
+    |> assign(:gap_events, [])
+  end
+
+  defp push_gap_events(socket, _plot), do: assign(socket, :gap_events, [])
+
+  defp max_bucket(nil, bucket), do: bucket
+  defp max_bucket(bucket, nil), do: bucket
+  defp max_bucket(a, b), do: max(a, b)
 
   defp held_window(%{param: param} = line, from_ms, window) do
     if line.setpoint? or from_ms <= Builders.plot_start_ms(param) do

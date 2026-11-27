@@ -9,6 +9,7 @@ import {
   readBandPref,
   writeBandPref,
 } from "./common";
+import { breakRows } from "./gaps.mjs";
 
 export const Bands = {
   // payloads by series index: {bucket_ms, from, until, rows}
@@ -71,7 +72,8 @@ export const Bands = {
 
   // helper series data: the lower edge, and the range stacked on it
   _bandData(src, which) {
-    const rows = this._bandRowsOf(src);
+    // a break wherever the band's line broke at a gap (./gaps.mjs)
+    const rows = breakRows(this._bandRowsOf(src), this._lineBreaks(src));
     const out = [];
     rows.forEach((r, k) => {
       if (r) {

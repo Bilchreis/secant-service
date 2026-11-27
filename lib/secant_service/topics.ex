@@ -11,7 +11,9 @@ defmodule SecantService.Topics do
 
   On `SecantService.PubSub`:
     * `processed_values/1`: values that changed, from `SecantService.NodeValues`
-    * `plot_data/1`: batched plot points, from `SecantService.PlotCache`
+    * `plot_data/1`: batched plot points, `{:plot_data, batch}`, and the
+      starts and ends of recording, `{:recording, :stopped | :resumed, ms}`,
+      from `SecantService.PlotCache`
     * `node_services/0`: services started and stopped, from `SecantService.NodeManager`
   """
 
@@ -32,5 +34,12 @@ defmodule SecantService.Topics do
   @spec node_services() :: String.t()
   def node_services, do: "node_services"
 
-  defp address({host, port}), do: "#{host}:#{port}"
+  @doc """
+  `"host:port"`: how secant_client names a node in its broadcasts (the
+  `pubsub_topic` of `state_change` and `conn_state` reports).
+  """
+  @spec node_address(node_id) :: String.t()
+  def node_address({host, port}), do: "#{host}:#{port}"
+
+  defp address(node_id), do: node_address(node_id)
 end

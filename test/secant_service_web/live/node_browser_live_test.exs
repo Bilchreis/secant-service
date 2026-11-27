@@ -96,5 +96,39 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
 
       assert_push_event(view, "window-chart-data-" <> ^id, %{gen: 5})
     end
+
+    test "window and overview replies carry the session's gaps" do
+      {view, id, chart} = drivable_plot()
+      [node] = Ash.read!(SecantService.SecNodes.SecNode)
+      t = fn s -> DateTime.from_unix!(1_000_000 + s, :second) end
+
+      for {from, to} <- [{0, 100}, {400, 500}] do
+        SecantService.SecNodes.record_span!(%{
+          id: Ecto.UUID.generate(),
+          sec_node_id: node.uuid,
+          started_at: t.(from),
+          alive_until: t.(to),
+          ended_at: t.(to),
+          end_reason: :disconnected
+        })
+      end
+
+      gap = [(1_000_000 + 100) * 1000, (1_000_000 + 400) * 1000]
+
+      render_hook(chart, "fetch-chart-window", %{
+        "from" => 1_000_000_000,
+        "to" => 1_000_600_000,
+        "req" => 1,
+        "gen" => 1,
+        "envelope" => false
+      })
+
+      render_async(view)
+      assert_push_event(view, "window-chart-data-" <> ^id, %{gaps: [^gap, [_, nil]]})
+
+      render_hook(chart, "fetch-chart-overview", %{"gen" => 2, "envelope" => false})
+      render_async(view)
+      assert_push_event(view, "overview-chart-data-" <> ^id, %{gaps: [^gap, [_, nil]]})
+    end
   end
 end

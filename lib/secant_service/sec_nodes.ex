@@ -38,6 +38,12 @@ defmodule SecantService.SecNodes do
         not_found_error?: false
     end
 
+    resource SecantService.SecNodes.RecordingSpan do
+      # writes a span whole, by id; see SecantService.RecordingTracker
+      define :record_span, action: :record
+      define :open_span, action: :open_for_session, args: [:sec_node_id], not_found_error?: false
+    end
+
     resource SecantService.SecNodes.Parameter do
       define :get_parameter,
         action: :read,

@@ -1,0 +1,142 @@
+defmodule SecantService.PlotDB.GapsTest do
+  # inserts readings: hypertable chunk creation deadlocks with other tests
+  # inserting readings concurrently
+  use SecantService.DataCase, async: false
+
+  alias SecantService.PlotDB
+  alias SecantService.PlotDB.Gaps
+  alias SecantService.SecNodes
+  alias SecantService.SecNodes.Reading.Storage
+
+  @start ~U[2026-11-27 08:00:00.000000Z]
+
+  defp at(s), do: DateTime.add(@start, s, :second)
+  defp ms(s), do: DateTime.to_unix(at(s), :millisecond)
+
+  defp span(node, from, to, opts \\ []) do
+    alive = Keyword.get(opts, :alive, to)
+
+    SecNodes.record_span!(%{
+      id: Ecto.UUID.generate(),
+      sec_node_id: node.uuid,
+      started_at: at(from),
+      alive_until: at(alive),
+      ended_at: to && at(to),
+      end_reason: to && :disconnected
+    })
+  end
+
+  describe "gaps/4" do
+    # spans as {started, alive, ended} in seconds from @start
+    defp gaps(spans, now, from \\ nil, to \\ nil) do
+      spans
+      |> Enum.map(fn {s, a, e} -> {at(s), at(a), e && at(e)} end)
+      |> Gaps.gaps(ms(now), from && ms(from), to && ms(to))
+    end
+
+    test "the time between spans, and after the last one" do
+      assert gaps([{0, 3590, 3590}, {4320, 4320, nil}], 4321) == {:spans, [[ms(3590), ms(4320)]]}
+
+      # the session ended
+      assert gaps([{0, 100, 100}], 200) == {:spans, [[ms(100), nil]]}
+    end
+
+    test "an open span ends now while alive, at its last heartbeat once stale" do
+      assert gaps([{0, 100, nil}], 120) == {:spans, []}
+      assert gaps([{0, 100, nil}], 700) == {:spans, [[ms(100), nil]]}
+    end
+
+    test "time before the first span is no gap; no spans at all is :no_spans" do
+      assert gaps([{100, 200, 200}, {300, 400, nil}], 401, 0, 400) ==
+               {:spans, [[ms(200), ms(300)]]}
+
+      assert Gaps.gaps([], 0, nil, nil) == :no_spans
+    end
+
+    test "only gaps overlapping the window, whole, also one the window lies inside" do
+      spans = [{0, 100, 100}, {200, 300, 300}, {1000, 1000, nil}]
+
+      assert gaps(spans, 1001, 250, 900) == {:spans, [[ms(300), ms(1000)]]}
+      assert gaps(spans, 1001, 400, 500) == {:spans, [[ms(300), ms(1000)]]}
+      assert gaps(spans, 1001, 0, 150) == {:spans, [[ms(100), ms(200)]]}
+    end
+  end
+
+  test "drop_short/2 keeps what the bucket width can show, and open gaps" do
+    gaps = [[0, 1_000], [0, 30_000], [0, 900_000], [5, nil]]
+
+    assert Gaps.drop_short(gaps, nil) == [[0, 30_000], [0, 900_000], [5, nil]]
+    assert Gaps.drop_short(gaps, 60_000) == [[0, 900_000], [5, nil]]
+  end
+
+  describe "for_param/3" do
+    test "the gaps of the parameter's session" do
+      {node, param} = node_with_parameter()
+      span(node, 0, 100)
+      span(node, 200, 300)
+
+      assert {:spans, [[g0, g1], [g2, nil]]} = Gaps.for_param(param.id, nil, nil)
+      assert {g0, g1, g2} == {ms(100), ms(200), ms(300)}
+
+      # another session's spans don't count
+      {_other, other_param} = node_with_parameter()
+      assert Gaps.for_param(other_param.id, nil, nil) == :no_spans
+    end
+  end
+
+  describe "pollinterval_ms/1" do
+    test "the last poll interval of the module, in ms" do
+      {_node, value} = node_with_parameter()
+      poll = generate(parameter(module_id: value.module_id, name: "pollinterval"))
+
+      assert Gaps.pollinterval_ms(value.id) == nil
+
+      rows =
+        for {seconds, i} <- Enum.with_index([5.0, 2.0]),
+            do: Storage.to_row(seconds, poll, at(i), %{})
+
+      %Ash.BulkResult{status: :success} = SecNodes.insert_readings(rows)
+
+      assert Gaps.pollinterval_ms(value.id) == 2_000
+    end
+  end
+
+  describe "the plots" do
+    test "a number plot carries its session's gaps; an enum plot carries none" do
+      {node, value} = node_with_parameter()
+      span(node, 0, 100)
+      span(node, 200, 200, alive: 200)
+
+      plot = PlotDB.init(value, :historical)
+      assert %{gaps: [[g0, g1], [_, nil]], fallback: %{}} = plot.option._gaps
+      assert {g0, g1} == {ms(100), ms(200)}
+
+      {enum_node, enum} =
+        node_with_parameter(datainfo: %{"type" => "enum", "members" => %{"a" => 0, "b" => 1}})
+
+      span(enum_node, 0, 100)
+      refute Map.has_key?(PlotDB.init(enum, :historical).option, :_gaps)
+    end
+
+    test "a session without spans lists its value lines for the fallback" do
+      module = generate(sec_module(interface_classes: ["Drivable"]))
+      value = generate(parameter(module_id: module.id, name: "value"))
+      _target = generate(parameter(module_id: module.id, name: "target"))
+      poll = generate(parameter(module_id: module.id, name: "pollinterval"))
+
+      %Ash.BulkResult{status: :success} =
+        SecNodes.insert_readings([Storage.to_row(2.0, poll, at(0), %{})])
+
+      _ = value
+      module = Ash.load!(module, :parameters)
+
+      plot = PlotDB.init(module, :historical)
+      index = Enum.find_index(plot.option.series, &(&1.name == "value"))
+
+      assert plot.option._gaps == %{gaps: [], fallback: %{index => 2_000}}
+
+      # live plots get no fallback
+      assert PlotDB.init(module, :live).option._gaps == %{gaps: [], fallback: %{}}
+    end
+  end
+end

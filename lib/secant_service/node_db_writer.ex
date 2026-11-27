@@ -662,24 +662,7 @@ defmodule SecantService.NodeDBWriter do
   defp describe(error) when is_exception(error), do: Exception.message(error)
   defp describe(error), do: inspect(error, limit: 5)
 
-  # Positive evidence that the failure may pass: no connection, or Postgres
-  # saying so (SQLSTATE 08 connection, 40 rollback, 53 resources, 57
-  # operator intervention, 55P03 lock not available).
-  defp transient?(%DBConnection.ConnectionError{}), do: true
-  defp transient?(%Ash.Error.Invalid.Unavailable{}), do: true
-
-  defp transient?(%Postgrex.Error{
-         postgres: %{pg_code: <<class::binary-size(2), _::binary>> = code}
-       }),
-       do: class in ["08", "40", "53", "57"] or code == "55P03"
-
-  defp transient?(list) when is_list(list), do: Enum.any?(list, &transient?/1)
-  defp transient?(%{} = map), do: map |> Map.delete(:__struct__) |> Map.values() |> transient?()
-  # AshPostgres keeps some errors only as their formatted text
-  defp transient?(text) when is_binary(text),
-    do: String.contains?(text, "DBConnection.ConnectionError")
-
-  defp transient?(_other), do: false
+  defp transient?(error), do: SecantService.DBErrors.transient?(error)
 
   defp db_reachable? do
     match?({:ok, _}, SecantService.Repo.query("SELECT 1"))

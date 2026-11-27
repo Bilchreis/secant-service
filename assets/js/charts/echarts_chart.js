@@ -14,6 +14,7 @@ import { Arrays } from "./arrays";
 import { ArrayLatest } from "./array_latest";
 import { Live } from "./live";
 import { Setpoints } from "./setpoints";
+import { Gaps } from "./gaps.mjs";
 
 // The chart hook of every plot (live and history; numbers, enums, arrays,
 // structs). Its methods are split by concern over the modules imported
@@ -25,6 +26,8 @@ export const EChartsChart = {
   ...ArrayLatest,
   ...Live,
   ...Setpoints,
+  // after Setpoints: its _drawnData breaks the lines, then holds setpoints
+  ...Gaps,
 
   mounted() {
     // seriesIndex → [[ts, val], ...]  — maintained across flushes for windowing
@@ -50,7 +53,9 @@ export const EChartsChart = {
 
     // Register handlers immediately — server may send data before rAF fires (eager push)
     this.handleEvent(`echarts-data-${this.el.id}`, ({ option }) => {
-      const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, _windowFetch, _envelope, _envelopes, ...echartsOption } = option;
+      const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, _windowFetch, _envelope, _envelopes, _gaps, ...echartsOption } = option;
+      // number-line plots: the gaps of their session, where the lines break
+      this._resetGaps(_gaps);
       // historical plots: the server thins out long recordings and
       // sends more detail for the window the chart is zoomed to
       this._windowFetch = !!_windowFetch;
@@ -127,6 +132,7 @@ export const EChartsChart = {
     this._listenArrayLatest();
     this._listenLive();
     this._listenWindow();
+    this._listenGaps();
 
     this._toggleRangeslider = (e) => {
       if (e.target.dataset.chartId !== this.el.id || !this._chart) return;
@@ -182,7 +188,7 @@ export const EChartsChart = {
     return data.map((d, j) => {
       const m = map[j];
       if (!m || m.band || !this._bandParent(m)) return this._dataPatch(d, j);
-      return { ...this._dataPatch(d, j), sampling: this._hasBand(m.src) ? "none" : "lttb" };
+      return { ...this._dataPatch(d, j), sampling: this._sampling(d, this._hasBand(m.src)) };
     });
   },
 
@@ -201,6 +207,14 @@ export const EChartsChart = {
   // its own back with the next reading).
   _dataPatch(data, j) {
     const symbol = this._symbols ? this._symbols[j] : undefined;
+    // a line with breaks is not sampled (see ./gaps.mjs)
+    if (this._gapsOn && !(this._seriesMap && this._seriesMap[j] && this._seriesMap[j].band)) {
+      return { ...this._dataPatchOf(data, symbol), sampling: this._sampling(data, false) };
+    }
+    return this._dataPatchOf(data, symbol);
+  },
+
+  _dataPatchOf(data, symbol) {
     if (symbol === null) return { data };
     if (this._lone(data)) return { data, showSymbol: true, symbol: "circle" };
     return symbol ? { data, showSymbol: false, symbol } : { data, showSymbol: false };

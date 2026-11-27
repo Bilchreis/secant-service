@@ -11,13 +11,20 @@ export const HistoryWindow = {
   // Server events of a historical plot: a zoomed window, or the overview
   // reloaded in the other band mode.
   _listenWindow() {
-    this.handleEvent(`window-chart-data-${this.el.id}`, (reply) => this._applyWindow(reply));
+    // gaps are facts, kept whatever happens to the reply's points
+    this.handleEvent(`window-chart-data-${this.el.id}`, (reply) => {
+      this._addGaps(reply);
+      this._applyWindow(reply);
+    });
     this.handleEvent(`window-chart-error-${this.el.id}`, ({ req }) => {
       if (req !== this._windowReq || this._detailState !== "loading") return;
       this._detailState = "failed";
       this._renderResolution();
     });
-    this.handleEvent(`overview-chart-data-${this.el.id}`, (reply) => this._applyOverview(reply));
+    this.handleEvent(`overview-chart-data-${this.el.id}`, (reply) => {
+      this._addGaps(reply);
+      this._applyOverview(reply);
+    });
     this.handleEvent(`overview-chart-error-${this.el.id}`, (reply) => this._overviewFailed(reply));
   },
 
