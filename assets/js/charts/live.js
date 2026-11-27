@@ -18,21 +18,26 @@ export const Live = {
     this.handleEvent(`prepend-chart-data-${this.el.id}`, ({ req, seriesUpdates, arrayLen, from, to, aggregated, bucket_ms, gaps }) => {
       this._addGaps({ gaps });
       if (req !== this._rangeReq) return;
-      // a thinned range: its gaps are judged at its bucket width (./gaps.mjs)
-      // the reply's readings go in before the buffers' first: that part is
-      // new, and replaces the widths of ranges lying wholly inside it
-      if (this._liveRanges) {
-        const lo = from == null ? -Infinity : from;
-        const firsts = Object.values(this._seriesData)
-          .filter((d) => d.length)
-          .map((d) => this._pointTs(d[0]));
-        const hi = Math.min(to, ...firsts);
-        this._liveRanges = this._liveRanges.filter((r) => !(r.from >= lo && r.to <= hi));
-        if (aggregated && bucket_ms) this._liveRanges.push({ from: lo, to: hi, bucket_ms });
-      }
       // the thinned readings this reply replaces (kept until it came)
       if (this._rangeTrim != null) this._trimBuffers(this._rangeTrim);
       this._rangeTrim = null;
+      // a thinned range: its gaps are judged at its bucket width (./gaps.mjs).
+      // Each series takes the reply's readings before its own first one:
+      // that part is new, and replaces the widths of ranges lying wholly
+      // inside it (the widest series' part counts)
+      if (this._liveRanges) {
+        const lo = from == null ? -Infinity : from;
+        const hi = Math.max(
+          lo,
+          ...(seriesUpdates || []).map(({ seriesIndex }) => {
+            const buffer = this._seriesData[seriesIndex] || [];
+            const first = buffer.length ? this._pointTs(buffer[0]) : null;
+            return first != null && first < to ? first : to;
+          }),
+        );
+        this._liveRanges = this._liveRanges.filter((r) => !(r.from >= lo && r.to <= hi));
+        if (aggregated && bucket_ms) this._liveRanges.push({ from: lo, to: hi, bucket_ms });
+      }
       (seriesUpdates || []).forEach(({ seriesIndex, data }) => {
         const buffer = this._seriesData[seriesIndex] || [];
         const first = buffer.length ? this._pointTs(buffer[0]) : null;

@@ -288,8 +288,8 @@ export const Gaps = {
   _gapDataPatch(data, symbol) {
     const alone = isolatedPoints(data);
     if (alone.size === 0 || this._lone(data)) {
-      const patch = this._dataPatchOf(data, symbol);
-      return patch.showSymbol ? patch : { ...patch, symbolSize: GAP_MARKER_SIZE };
+      // a fixed size again, replacing a size callback set before
+      return { ...this._dataPatchOf(data, symbol), symbolSize: GAP_MARKER_SIZE };
     }
     return {
       data,
