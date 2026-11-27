@@ -461,6 +461,15 @@ export const EChartsChart = {
     });
   },
 
+  // exactly one reading with a value (a gap in an array is a null)
+  _lone(data) {
+    let n = 0;
+    for (const p of data) {
+      if (p != null && (!Array.isArray(p) || p[1] != null) && ++n > 1) return false;
+    }
+    return n === 1;
+  },
+
   // The new data of drawn series `j`. Lines show no marker on their
   // readings, so a lone reading gets one, or it would not show at all
   // (array lines have no symbol, not even on hover: it gets one, and gets
@@ -468,7 +477,7 @@ export const EChartsChart = {
   _dataPatch(data, j) {
     const symbol = this._symbols ? this._symbols[j] : undefined;
     if (symbol === null) return { data };
-    if (data.length === 1) return { data, showSymbol: true, symbol: "circle" };
+    if (this._lone(data)) return { data, showSymbol: true, symbol: "circle" };
     return symbol ? { data, showSymbol: false, symbol } : { data, showSymbol: false };
   },
 
@@ -644,7 +653,8 @@ export const EChartsChart = {
     // each drawn line's own marker, for _dataPatch; null for series that
     // draw no reading as a point (band helpers are stacked, heatmaps and
     // state bands are no lines)
-    this._symbols = (option.series || []).map((s) => (s && s.type === "line" && !s.stack ? s.symbol || "emptyCircle" : null));
+    // (undefined: the theme's default)
+    this._symbols = (option.series || []).map((s) => (s && s.type === "line" && !s.stack ? s.symbol : null));
     if (slider) this._setSlider(true);
     if (shown && full && (shown[0] > full[0] || shown[1] < full[1])) {
       this._chart.dispatchAction({ type: "dataZoom", startValue: shown[0], endValue: shown[1] });
