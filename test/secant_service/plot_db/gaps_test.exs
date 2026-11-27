@@ -131,5 +131,52 @@ defmodule SecantService.PlotDB.GapsTest do
       # live plots get no fallback
       assert PlotDB.init(module, :live).option._gaps == %{gaps: [], fallback: %{}}
     end
+
+    @array %{"type" => "array", "maxlen" => 10, "members" => %{"type" => "double"}}
+
+    defp insert_arrays(param, arrays) do
+      rows =
+        for {array, i} <- Enum.with_index(arrays), do: Storage.to_row(array, param, at(i), %{})
+
+      %Ash.BulkResult{status: :success} = SecNodes.insert_readings(rows)
+    end
+
+    test "a numeric array plot carries its session's gaps, and no fallback" do
+      {node, value} = node_with_parameter(datainfo: @array)
+      insert_arrays(value, [[1.0, 2.0], [3.0, 4.0]])
+      span(node, 0, 100)
+      span(node, 200, 200, alive: 200)
+
+      plot = PlotDB.init(value, :historical)
+      assert plot.plot_type == :array_heatmap
+      assert %{gaps: [[g0, g1], [_, nil]], fallback: %{}} = plot.option._gaps
+      assert {g0, g1} == {ms(100), ms(200)}
+    end
+
+    test "an array of a session without spans gets no fallback, even with a poll interval" do
+      module = generate(sec_module())
+      value = generate(parameter(module_id: module.id, name: "value", datainfo: @array))
+      poll = generate(parameter(module_id: module.id, name: "pollinterval"))
+      insert_arrays(value, [[1.0, 2.0]])
+
+      %Ash.BulkResult{status: :success} =
+        SecNodes.insert_readings([Storage.to_row(2.0, poll, at(0), %{})])
+
+      assert PlotDB.init(value, :historical).option._gaps == %{gaps: [], fallback: %{}}
+    end
+
+    test "a setpoint array and a long array drawn as its latest reading carry none" do
+      {node, target} = node_with_parameter(name: "target", datainfo: @array)
+      insert_arrays(target, [[1.0, 2.0]])
+      span(node, 0, 100)
+      refute Map.has_key?(PlotDB.init(target, :historical).option, :_gaps)
+
+      {long_node, long} = node_with_parameter(datainfo: %{@array | "maxlen" => 1000})
+      insert_arrays(long, [Enum.map(1..200, &(&1 * 1.0))])
+      span(long_node, 0, 100)
+      plot = PlotDB.init(long, :historical)
+      refute plot[:plot_type] == :array_heatmap
+      refute Map.has_key?(plot.option, :_gaps)
+    end
   end
 end

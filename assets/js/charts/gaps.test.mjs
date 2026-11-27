@@ -2,7 +2,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { Gaps, breakHeld, breakLine, breakRows, isolatedPoints, mergeGaps, spacingGaps } from "./gaps.mjs";
+import {
+  Gaps,
+  breakHeld,
+  breakLine,
+  breakRows,
+  clipRowEnds,
+  isolatedPoints,
+  mergeGaps,
+  spacingGaps,
+} from "./gaps.mjs";
 
 const s = (n) => n * 1000;
 // a reading every second from `from` to `to` (seconds), value = its second
@@ -158,4 +167,126 @@ test("a reading a break left on its own is marked", () => {
   // the reading after the break, with nothing after it yet
   assert.deepEqual([...isolatedPoints(data)], [13]);
   assert.equal(isolatedPoints(every(0, 10)).size, 0);
+});
+
+// -- heatmap rows (array plots) ----------------------------------------------
+
+// row ends as the heatmap holds them: until the next reading, the last for `lastHold`
+const holds = (times, lastHold) => times.map((t, k) => (k + 1 < times.length ? times[k + 1] : t + lastHold));
+
+test("a heatmap row ends at the gap start, and the rows resume after it", () => {
+  // a 20-element array every 10 s; a 5-minute gap after 600 s
+  const times = [];
+  for (let t = 0; t <= 600; t += 10) times.push(s(t));
+  for (let t = 900; t <= 1200; t += 10) times.push(s(t));
+  const ends = clipRowEnds(times, holds(times, s(10)), [[s(605), s(900)]]);
+  const k = times.indexOf(s(600));
+  assert.equal(ends[k], s(605));
+  assert.equal(ends[k - 1], s(600));
+  assert.equal(ends[k + 1], s(910));
+});
+
+test("rows of readings stamped inside a gap end at their own times", () => {
+  const times = [0, s(120), s(240), s(400)];
+  const ends = clipRowEnds(times, holds(times, s(10)), [[s(60), s(360)]]);
+  assert.deepEqual(ends, [s(60), s(120), s(240), s(410)]);
+});
+
+test("a short gap before a long one: the row ends at the long one", () => {
+  const ends = clipRowEnds([0, s(1000)], holds([0, s(1000)], s(10)), [[s(10), s(11)], [s(100), s(700)]]);
+  assert.equal(ends[0], s(100));
+});
+
+test("short or coarse gaps, and readings that go on through one, clip nothing", () => {
+  const times = [0, s(1000)];
+  // 30 s gap at a 15-minute bucket width
+  assert.deepEqual(clipRowEnds(times, holds(times, s(10)), [[s(100), s(130)]], { widthAt: () => s(900) }), [
+    s(1000),
+    s(1010),
+  ]);
+  // readings 1 s apart through a closed 20 s recorded gap
+  const every1 = [];
+  for (let t = 0; t <= 60; t++) every1.push(s(t));
+  const h = holds(every1, s(1));
+  assert.deepEqual(clipRowEnds(every1, h, [[s(20), s(40)]]), h);
+  // no gaps
+  assert.equal(clipRowEnds(times, h, []), h);
+});
+
+test("a live last row ends at an open gap at once; a historical one is never lengthened", () => {
+  const now = s(1000);
+  // open gap started 1 s ago
+  assert.deepEqual(clipRowEnds([s(990)], [now], [[s(999), null]]), [s(999)]);
+  // a reading stamped after the open gap's start (node clock ahead): its own time
+  assert.deepEqual(clipRowEnds([s(990)], [now], [[s(980), null]]), [s(990)]);
+  // the session ended long after the historical row's end: unchanged
+  assert.deepEqual(clipRowEnds([s(100)], [s(110)], [[s(5000), null]]), [s(110)]);
+});
+
+// a fake array hook with the gap state of a plot that has gaps
+const arrayHook = (gaps, extra = {}) => ({
+  ...Gaps,
+  _isArrayPlot: () => true,
+  _arrayMode: "lines",
+  _gapsOn: true,
+  _gapSets: [gaps],
+  _gapLive: [],
+  _gapFallback: {},
+  _rangeButtons: null,
+  _resolution: null,
+  _detail: null,
+  _lone: (data) => data.filter((p) => p[1] != null).length === 1,
+  _dataPatchOf: (data) => ({ data, showSymbol: false }),
+  ...extra,
+});
+
+test("an array plot's cell buffer never gets line breaks", () => {
+  const cells = [[0, 0, 1], [0, 1, 2], [s(500), 0, 3], [s(500), 1, 4]];
+  const hook = arrayHook([[s(10), s(400)]], { _seriesData: { 0: cells } });
+  assert.equal(hook._broken(0).data, cells);
+});
+
+test("element lines break, with a circle on a lone reading", () => {
+  const hook = arrayHook([[s(10), s(400)]], {
+    _seriesMap: [{ src: 0, elem: 0 }],
+    _symbols: ["none"],
+  });
+  const line = hook._elementLine([[0, 1], [s(5), 2], [s(500), 3]]);
+  assert.deepEqual(nulls(line), [s(10)]);
+  const patch = hook._gapPatch(line, 0);
+  assert.equal(patch.symbol, "circle");
+  assert.equal(patch.sampling, "none");
+});
+
+test("a span-less array in Lines mode (no gaps) and a heatmap get the plain patch", () => {
+  const withNaN = [[0, 1], [s(1), null], [s(2), 3], [s(3), null]];
+  const lines = arrayHook([], { _seriesMap: [{ src: 0, elem: 0 }], _symbols: ["none"] });
+  assert.equal(lines._gapPatch(withNaN, 0), null);
+  assert.equal(lines._elementLine(withNaN), withNaN);
+  const heat = arrayHook([[0, s(10)]], { _arrayMode: "heatmap", _seriesMap: null, _symbols: [null] });
+  assert.equal(heat._gapPatch(withNaN, 0), null);
+});
+
+test("a span-less number line with fallback breaks keeps its gap patch", () => {
+  const data = [[0, 1], [s(60), 2], [s(120), 3]];
+  const hook = {
+    ...Gaps,
+    _isArrayPlot: () => false,
+    _gapsOn: true,
+    _gapSets: [[]],
+    _gapLive: [],
+    _gapFallback: { 0: 2000 },
+    _rangeButtons: null,
+    _resolution: null,
+    _detail: null,
+    _seriesData: { 0: data },
+    _seriesMap: null,
+    _symbols: ["circle"],
+    _lone: () => false,
+    _dataPatchOf: (d) => ({ data: d, showSymbol: false }),
+  };
+  const broken = hook._broken(0).data;
+  const patch = hook._gapPatch(broken, 0);
+  assert.equal(patch.sampling, "none");
+  assert.equal(patch.showSymbol, true);
 });

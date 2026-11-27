@@ -1,10 +1,11 @@
 // Gaps: time in which a session was not recorded. The server sends them as
 // intervals [g0, g1] (ms; g1 null when no recording followed) with every
-// load of a number-line plot (`_gaps` on the option, `gaps` on window,
-// overview and range replies), and live plots get `gap-chart-<id>` events
-// when recording stops or resumes. The lines break there, once, on the data
-// as drawn: after the overview, the zoomed detail, live backfill and live
-// readings are merged, so no seam between them can erase or invent a break.
+// load of a number-line or numeric array plot (`_gaps` on the option, `gaps`
+// on window, overview and range replies), and live plots get
+// `gap-chart-<id>` events when recording stops or resumes. The lines break
+// there, and heatmap rows end there, once, on the data as drawn: after the
+// overview, the zoomed detail, live backfill and live readings are merged,
+// so no seam between them can erase or invent a break.
 // See SecantService.PlotDB.Gaps.
 //
 // The functions below are pure (tested with `node --test`); `Gaps` is the
@@ -181,6 +182,32 @@ export function breakRows(rows, breaks) {
   return out;
 }
 
+// A heatmap's row ends ([times[k], ends[k]] is the hold of reading k), each
+// ended at the start of the earliest gap its hold overlaps by at least the
+// width the gap is judged at (2 s, or the bucket width), or of an open gap
+// it reaches (recording stopped). A row never ends before its reading and
+// is never longer than before. Rows and gaps are in time order.
+export function clipRowEnds(times, ends, gaps, { widthAt = () => 0 } = {}) {
+  if (gaps.length === 0) return ends;
+  const out = ends.slice();
+  let first = 0;
+  for (let k = 0; k < times.length; k++) {
+    const t = times[k];
+    const e = ends[k];
+    while (first < gaps.length && end(gaps[first]) <= t) first++;
+    for (let j = first; j < gaps.length && gaps[j][0] < e; j++) {
+      const g = gaps[j];
+      const ge = end(g);
+      const reaches = g[1] == null || Math.min(e, ge) - Math.max(t, g[0]) >= Math.max(MIN_GAP_MS, widthAt(g[0], ge));
+      if (reaches) {
+        out[k] = Math.min(e, Math.max(t, g[0]));
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 export const hasNull = (data) => data.some((p) => Array.isArray(p) && p[1] == null);
 
 // Indexes of readings a break left on their own (nulls, or the ends of the
@@ -257,10 +284,17 @@ export const Gaps = {
     return !!(this._targetIdx && this._targetIdx.has(String(idx)));
   },
 
-  // the data of buffer `idx` with its breaks, and the times it broke at
+  // an array plot (heatmap or its element lines; not a struct)
+  _gapArray() {
+    return !!(this._isArrayPlot && this._isArrayPlot());
+  },
+
+  // the data of buffer `idx` with its breaks, and the times it broke at. An
+  // array plot's buffer is heatmap cells, not a line: it stays as it is
+  // (its rows end in `_heatRowEnds`, its element lines in `_elementLine`).
   _broken(idx) {
     const d = this._seriesData[idx] || [];
-    if (!this._gapsOn) return { data: d, breaks: [] };
+    if (!this._gapsOn || this._gapArray()) return { data: d, breaks: [] };
     const widthAt = (a, b) => this._gapWidth(a, b);
     let gaps = this._gapList();
     const poll = this._gapFallback[idx];
@@ -283,8 +317,34 @@ export const Gaps = {
     return this._gapsOn ? this._broken(src).breaks : [];
   },
 
-  // A number line's data patch: a reading a break left on its own gets a
-  // marker, the others none (they show on hover, as without gaps).
+  // An array element line with its breaks (Lines mode)
+  _elementLine(data) {
+    if (!this._gapsOn || this._gapList().length === 0) return data;
+    return breakLine(data, this._gapList(), { widthAt: (a, b) => this._gapWidth(a, b) }).data;
+  },
+
+  // The ends of a heatmap's rows, ended at gaps
+  _heatRowEnds(times, ends) {
+    if (!this._gapsOn || this._gapList().length === 0) return ends;
+    return clipRowEnds(times, ends, this._gapList(), { widthAt: (a, b) => this._gapWidth(a, b) });
+  },
+
+  // The data patch of drawn series `j` with gaps in play, or null for the
+  // ordinary one: number lines (their fallback breaks come with an empty
+  // gap list), and array element lines while there are gaps. Bands and a
+  // heatmap's own series take the ordinary patch.
+  _gapPatch(data, j) {
+    if (!this._gapsOn) return null;
+    const m = this._seriesMap && this._seriesMap[j];
+    if (m && m.band) return null;
+    if (this._gapArray() && (!m || m.elem == null || this._gapList().length === 0)) return null;
+    const symbol = this._symbols ? this._symbols[j] : undefined;
+    return { ...this._gapDataPatch(data, symbol), sampling: this._sampling(data, false) };
+  },
+
+  // A line's data patch: a reading a break left on its own gets a marker
+  // (a circle where the line has none), the others none (they show on
+  // hover, as without gaps).
   _gapDataPatch(data, symbol) {
     const alone = isolatedPoints(data);
     if (alone.size === 0 || this._lone(data)) {
@@ -294,7 +354,7 @@ export const Gaps = {
     return {
       data,
       showSymbol: true,
-      symbol: symbol || "circle",
+      symbol: symbol && symbol !== "none" ? symbol : "circle",
       symbolSize: (_value, params) => (alone.has(params.dataIndex) ? GAP_MARKER_SIZE : 0),
     };
   },

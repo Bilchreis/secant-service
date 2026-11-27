@@ -60,7 +60,9 @@ export const Arrays = {
         const g = times.length;
         // the last reading holds until now (live) or for one typical interval
         const lastSpan = g > 1 ? times[g - 1] - times[g - 2] : 1000;
-        const ends = times.map((t, k) => (k + 1 < g ? times[k + 1] : live ? Math.max(Date.now(), t) : t + lastSpan));
+        const held = times.map((t, k) => (k + 1 < g ? times[k + 1] : live ? Math.max(Date.now(), t) : t + lastSpan));
+        // rows end at recording gaps (./gaps.mjs)
+        const ends = this._heatRowEnds(times, held);
 
         const rowH = Math.abs(api.size([0, 1])[1]) || 1;
         // value and target of a drivable's array share each row: value in

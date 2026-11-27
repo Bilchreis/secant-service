@@ -166,8 +166,9 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   # Recording of the node stopped or resumed (`SecantService.PlotCache`):
-  # a live number-line plot opens or closes a gap there. Events that arrive
-  # while the plot loads are pushed after it.
+  # a live plot that has gaps (number lines, numeric arrays) opens or
+  # closes a gap there. Events that arrive while the plot loads are pushed
+  # after it.
   def update(%{recording: {kind, ms}}, socket) do
     event = %{
       kind: if(kind == :stopped, do: "open", else: "close"),
@@ -303,7 +304,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       |> cancel_async(:fetch_chart_range)
       |> assign(:range_req, req)
       |> start_async(:fetch_chart_range, fn ->
-        lines = PlotDB.lines(secop_obj)
+        lines = drawn_lines(secop_obj, plot)
 
         lines
         |> Enum.reduce_while({[], false, nil}, fn %{param: param}, {acc, aggregated, bucket} ->
@@ -377,7 +378,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       |> cancel_async(:fetch_chart_window)
       |> assign(:window_req, req)
       |> start_async(:fetch_chart_window, fn ->
-        lines = PlotDB.lines(secop_obj)
+        lines = drawn_lines(secop_obj, plot)
 
         windows =
           for line <- lines do
@@ -424,7 +425,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
       |> assign(:overview_gen, gen)
       |> cancel_async(:fetch_chart_overview)
       |> start_async(:fetch_chart_overview, fn ->
-        lines = PlotDB.lines(secop_obj)
+        lines = drawn_lines(secop_obj, plot)
 
         windows =
           for line <- lines do
@@ -986,7 +987,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     end)
   end
 
-  # the recording events kept while the plot loaded, for a number-line plot
+  # the recording events kept while the plot loaded, for a plot with gaps
   defp push_gap_events(socket, %{option: %{_gaps: _}}) do
     socket.assigns.gap_events
     |> Enum.reduce(socket, &push_event(&2, "gap-chart-#{socket.assigns.id}", &1))
@@ -994,6 +995,19 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   end
 
   defp push_gap_events(socket, _plot), do: assign(socket, :gap_events, [])
+
+  # The lines of `secop_obj` the plot draws: a heatmap draws only the
+  # value, so an undrawn target must not set the resolution of a reply (nor
+  # the width its gaps are judged at). Plots without `lines` (the
+  # latest-reading plot) use all of them.
+  defp drawn_lines(secop_obj, plot) do
+    lines = PlotDB.lines(secop_obj)
+
+    case Map.get(plot, :lines) do
+      %{} = drawn -> Enum.filter(lines, &Map.has_key?(drawn, &1.param.name))
+      nil -> lines
+    end
+  end
 
   defp max_bucket(nil, bucket), do: bucket
   defp max_bucket(bucket, nil), do: bucket

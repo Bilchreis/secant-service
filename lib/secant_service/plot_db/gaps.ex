@@ -1,9 +1,10 @@
 defmodule SecantService.PlotDB.Gaps do
   @moduledoc """
   Gaps of a session: time in which it was not recorded, from its recording
-  spans (`SecantService.SecNodes.RecordingSpan`). The number-line plots get
-  them as intervals `[g0, g1]` (Unix milliseconds; `g1` nil when no span
-  follows), and the chart hook breaks the lines there (`assets/js/charts/gaps.mjs`).
+  spans (`SecantService.SecNodes.RecordingSpan`). Number-line plots and
+  numeric array plots (not setpoints) get them as intervals `[g0, g1]` (Unix
+  milliseconds; `g1` nil when no span follows), and the chart hook breaks
+  the lines and ends the heatmap rows there (`assets/js/charts/gaps.mjs`).
 
     * A gap is time after the session's first span that no span covers,
       including the time after its last span. Time before the first span is
@@ -12,8 +13,9 @@ defmodule SecantService.PlotDB.Gaps do
       ends there: its tracker is gone (a server kill, a power loss). An open
       span alive more recently ends now.
     * Sessions without any span (recorded before spans existed) get
-      `:no_spans`; their plots break `value` lines by the spacing of the
-      readings instead, using the module's poll interval (`pollinterval_ms/1`).
+      `:no_spans`; their number plots break `value` lines by the spacing of
+      the readings instead, using the module's poll interval
+      (`pollinterval_ms/1`). Array plots get no such fallback.
 
   The plots send gaps with every load (`put/3`, `reply/4`), all of them:
   the hook decides which it can draw at the current zoom, and a short gap
@@ -22,6 +24,7 @@ defmodule SecantService.PlotDB.Gaps do
 
   import Ecto.Query
 
+  alias SecantService.PlotDB.DTypes.Scalar
   alias SecantService.Repo
 
   @stale_ms 45_000
@@ -130,7 +133,7 @@ defmodule SecantService.PlotDB.Gaps do
   def put(plot, _plot_lines, _window), do: plot
 
   @doc """
-  The gaps for a reply of a number-line plot (a zoomed window, a reloaded
+  The gaps for a reply of a plot that has them (a zoomed window, a reloaded
   overview, a widened live range): `%{gaps: [[g0, g1]]}`, with `fallback`
   too when asked (`fallback?: true`, the overview). Empty for other plots.
   """
@@ -152,10 +155,12 @@ defmodule SecantService.PlotDB.Gaps do
 
   def reply(_plot, _plot_lines, _window, _opts), do: %{}
 
-  # series index => poll interval of the `value` lines (by parameter name: a
-  # parameter plotted on its own is always series "value")
+  # series index => poll interval of the `value` number lines (by parameter
+  # name: a parameter plotted on its own is always series "value"); arrays
+  # get none
   defp fallback(option, plot_lines) do
     for %{param: %{name: "value"} = param, series: series} <- plot_lines,
+        Scalar.supported_type?(param.datainfo),
         index = Enum.find_index(option.series, &(Map.get(&1, :name) == series)),
         index != nil,
         poll = pollinterval_ms(param.id),

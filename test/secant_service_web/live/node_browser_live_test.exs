@@ -130,5 +130,57 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
       render_async(view)
       assert_push_event(view, "overview-chart-data-" <> ^id, %{gaps: [^gap, [_, nil]]})
     end
+
+    test "an array plot's window reply takes its resolution from the drawn value alone" do
+      alias SecantService.SecNodes.Reading.Storage
+
+      node = generate(sec_node(equipment_id: "array cryo"))
+
+      module =
+        generate(
+          sec_module(sec_node_id: node.uuid, name: "spec", interface_classes: ["Drivable"])
+        )
+
+      array = %{"type" => "array", "maxlen" => 10, "members" => %{"type" => "double"}}
+      value = generate(parameter(name: "value", datainfo: array, module_id: module.id))
+      target = generate(parameter(name: "target", datainfo: @double, module_id: module.id))
+      t = fn s -> DateTime.from_unix!(1_000_000 + s, :second) end
+
+      # few array readings, many target ones: the target alone would be thinned
+      rows =
+        for(i <- 0..9, do: Storage.to_row([i * 1.0, 1.0], value, t.(i * 10), %{})) ++
+          for(i <- 0..4999, do: Storage.to_row(i * 1.0, target, t.(i), %{}))
+
+      %Ash.BulkResult{status: :success} = SecantService.SecNodes.insert_readings(rows)
+
+      SecantService.SecNodes.record_span!(%{
+        id: Ecto.UUID.generate(),
+        sec_node_id: node.uuid,
+        started_at: t.(0),
+        alive_until: t.(30),
+        ended_at: t.(30),
+        end_reason: :disconnected
+      })
+
+      {:ok, view, _html} = live(build_conn(), "/browse/node/#{node.uuid}?module=spec")
+      render_async(view)
+      id = "hplot:#{node.uuid}:spec:module"
+      chart = with_target(view, ~s([id="history-#{id}"]))
+
+      render_hook(chart, "fetch-chart-window", %{
+        "from" => 1_000_000_000,
+        "to" => 1_005_000_000,
+        "req" => 1,
+        "gen" => 1,
+        "envelope" => false
+      })
+
+      render_async(view)
+
+      assert_push_event(view, "window-chart-data-" <> ^id, %{
+        aggregated: false,
+        gaps: [[_, nil]]
+      })
+    end
   end
 end

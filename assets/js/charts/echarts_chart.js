@@ -54,7 +54,8 @@ export const EChartsChart = {
     // Register handlers immediately — server may send data before rAF fires (eager push)
     this.handleEvent(`echarts-data-${this.el.id}`, ({ option }) => {
       const { _rangeButtons, _activeButton, _arrayLen, _arrayUnit, _arrayName, _arrayLatest, _arrayTimes, _windowFetch, _envelope, _envelopes, _gaps, ...echartsOption } = option;
-      // number-line plots: the gaps of their session, where the lines break
+      // number-line and numeric array plots: the gaps of their session, where
+      // the lines break and heatmap rows end
       this._resetGaps(_gaps);
       // historical plots: the server thins out long recordings and
       // sends more detail for the window the chart is zoomed to
@@ -206,12 +207,10 @@ export const EChartsChart = {
   // (array lines have no symbol, not even on hover: it gets one, and gets
   // its own back with the next reading).
   _dataPatch(data, j) {
-    const symbol = this._symbols ? this._symbols[j] : undefined;
-    // a line with breaks is not sampled (see ./gaps.mjs)
-    if (this._gapsOn && !(this._seriesMap && this._seriesMap[j] && this._seriesMap[j].band)) {
-      return { ...this._gapDataPatch(data, symbol), sampling: this._sampling(data, false) };
-    }
-    return this._dataPatchOf(data, symbol);
+    // a line with breaks is not sampled, and marks lone readings (./gaps.mjs)
+    const gapPatch = this._gapPatch(data, j);
+    if (gapPatch) return gapPatch;
+    return this._dataPatchOf(data, this._symbols ? this._symbols[j] : undefined);
   },
 
   _dataPatchOf(data, symbol) {
@@ -430,7 +429,8 @@ export const EChartsChart = {
       if (band) return this._bandData(src, band);
       if (elem == null) return this._drawnData(src);
       if (!split[src]) split[src] = this._splitArray(this._seriesData[src] || [], this._elementCount(src));
-      return split[src][elem] || [];
+      // element lines break at gaps (./gaps.mjs)
+      return this._elementLine(split[src][elem] || []);
     });
   },
 
