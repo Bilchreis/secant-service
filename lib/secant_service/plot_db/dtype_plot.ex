@@ -1,27 +1,11 @@
 defmodule SecantService.PlotDB.DTypePlot do
-  @doc "Build one or more ECharts series maps for the given parameter data."
+  @doc "Build the ECharts series of one struct field (see `DTypes.Struct`)."
   @callback build_series(
               name :: String.t(),
               ts :: [integer],
               vals :: [term],
               datainfo :: map
             ) :: [map]
-
-  @doc """
-  Build a complete ECharts option map for the given series.
-
-  `opts` accepts type-specific overrides:
-    - `array_len: integer` (ArrayHeatmap)
-    - `y_categories: [String.t()]` (Enum — for multi-param plots like Drivable)
-    - `legend_selected: map` (Scalar — hide/show series in legend by default)
-  """
-  @callback build_option(
-              series :: [map],
-              datainfo :: map,
-              unit :: String.t() | nil,
-              mode :: :live | :historical,
-              opts :: keyword
-            ) :: map
 
   @doc "Convert a batch of live datapoints into series update payloads for the JS chart hook."
   @callback series_updates(

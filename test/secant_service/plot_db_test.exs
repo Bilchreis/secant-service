@@ -6,6 +6,7 @@ defmodule SecantService.PlotDBTest do
   use SecantService.DataCase, async: false
 
   alias SecantService.PlotDB
+  alias SecantService.PlotDB.Bands
 
   # No node is connected at this address, so any read from the device fails.
   defp create_module(interface_classes, params) do
@@ -20,11 +21,13 @@ defmodule SecantService.PlotDBTest do
   end
 
   @double %{"type" => "double", "unit" => "K"}
+  @array %{"type" => "array", "maxlen" => 10, "members" => %{"type" => "double"}}
 
   test "a readable without readings plots empty in history" do
     module = create_module(["Readable"], [{"value", @double}])
 
-    assert %{plottable: true, plot_available: false} = PlotDB.module_plot(module, :historical)
+    assert %{plottable: true, option: %{series: [%{data: []}]}} =
+             PlotDB.init(module, :historical)
   end
 
   test "a non-numeric parameter without readings plots empty in history" do
@@ -33,111 +36,158 @@ defmodule SecantService.PlotDBTest do
         {"value", %{"type" => "enum", "members" => %{"off" => 0, "on" => 1}}}
       ])
 
-    assert %{plot_available: false} = PlotDB.module_plot(module, :historical)
+    assert %{plottable: true, option: %{series: [%{data: []} | _]}} =
+             PlotDB.init(module, :historical)
   end
 
   test "a calibratable module without its calibration parameters still plots" do
     module = create_module(["_Calibratable", "Readable"], [{"value", @double}])
 
-    assert %{plottable: true, plot_available: false} = PlotDB.module_plot(module, :historical)
+    assert %{plottable: true, option: %{series: [%{name: "value"}]}} =
+             PlotDB.init(module, :historical)
   end
 
-  describe "envelopes" do
-    @array %{"type" => "array", "maxlen" => 10, "members" => %{"type" => "double"}}
-
-    defp envelope(rows),
-      do: %{bucket_ms: 60_000, from_ms: 0, until_ms: 600_000, rows: rows}
-
-    test "envelope_params: number lines and numeric arrays of plain plots" do
+  describe "lines" do
+    test "a parameter on its own is the plot's value; a setpoint is held" do
       param = generate(parameter(name: "temp", datainfo: @double))
-      assert [{^param, "line"}] = PlotDB.envelope_params(param)
+      assert [%{param: ^param, series: "value", setpoint?: false}] = PlotDB.lines(param)
 
-      array = generate(parameter(name: "spectrum", datainfo: @array))
-      assert [{^array, "array"}] = PlotDB.envelope_params(array)
-
-      for class <- ["Readable", "Drivable"] do
-        module = create_module([class], [{"value", @double}, {"target", @double}])
-        assert [{%{name: "value"}, "line"}] = PlotDB.envelope_params(module)
-      end
-
-      acquisition = create_module(["Acquisition", "Readable"], [{"value", @array}])
-      assert [{%{name: "value"}, "array"}] = PlotDB.envelope_params(acquisition)
-
-      assert %{kind: "array", on: false, series: [0]} =
-               PlotDB.module_plot(acquisition, :historical).option._envelope
+      target = generate(parameter(name: "target", datainfo: @double))
+      assert [%{series: "value", setpoint?: true}] = PlotDB.lines(target)
     end
 
-    test "envelope_params: never a setpoint, an enum or a struct" do
+    test "a module's lines follow its interface class, as far as it has them" do
       drivable = create_module(["Drivable"], [{"value", @double}, {"target", @double}])
-      target = Enum.find(drivable.parameters, &(&1.name == "target"))
-      assert PlotDB.envelope_params(target) == []
 
-      enum = generate(parameter(datainfo: %{"type" => "enum", "members" => %{"a" => 0}}))
-      assert PlotDB.envelope_params(enum) == []
+      assert [%{series: "value", setpoint?: false}, %{series: "target", setpoint?: true}] =
+               PlotDB.lines(drivable)
 
-      struct =
-        generate(
-          parameter(datainfo: %{"type" => "struct", "members" => %{"x" => %{"type" => "double"}}})
-        )
-
-      assert PlotDB.envelope_params(struct) == []
-
-      # an array that may outgrow the heatmap (more than 100 elements)
-      long = generate(parameter(datainfo: %{@array | "maxlen" => 101}))
-      assert PlotDB.envelope_params(long) == []
-
-      refute Map.has_key?(PlotDB.parameter_plot(target, :historical).option, :_envelope)
-    end
-
-    test "a double's first load is marked as an envelope plot" do
-      param = generate(parameter(name: "temp", datainfo: @double))
-      plot = PlotDB.parameter_plot(param, :historical)
-
-      assert plot.option._envelope == %{kind: "line", on: true, series: [0]}
-      # no aggregates in the sandbox: no band rows
-      assert plot.option._envelopes == []
-
-      plot =
-        PlotDB.put_envelopes(plot, param, :historical, [
-          {"value", envelope([[30_000, 1.0, 2.0, 3.0]])}
+      calibratable =
+        create_module(["_Calibratable", "Readable"], [
+          {"value", @double},
+          {"_target_calibrated", @double}
         ])
 
       assert [
-               %{
-                 seriesIndex: 0,
-                 bucket_ms: 60_000,
-                 from: 0,
-                 until: 600_000,
-                 rows: [[30_000, 1.0, 2.0, 3.0]]
-               }
-             ] =
-               plot.option._envelopes
+               %{series: "value"},
+               %{series: "_target_calibrated", setpoint?: true, hidden?: true}
+             ] = PlotDB.lines(calibratable)
+
+      assert PlotDB.lines(create_module(["Drivable"], [{"target", @double}])) == []
     end
 
-    test "a Drivable's envelope is on value, never on target" do
-      module = create_module(["Drivable"], [{"value", @double}, {"target", @double}])
-      plot = PlotDB.module_plot(module, :historical)
-      value_index = Enum.find_index(plot.option.series, &(&1.name == "value"))
+    test "a calibratable's lines are numbers only" do
+      enum = %{"type" => "enum", "members" => %{"a" => 0}}
+      assert PlotDB.lines(create_module(["_Calibratable", "Readable"], [{"value", enum}])) == []
+    end
 
-      plot =
-        PlotDB.put_envelopes(plot, module, :historical, [
-          {"value", envelope([[1, 1.0, 1.0, 1.0]])}
+    test "a parameter with nothing to draw is no line" do
+      string = %{"type" => "string"}
+      assert PlotDB.lines(generate(parameter(name: "note", datainfo: string))) == []
+
+      drivable = create_module(["Drivable"], [{"value", @double}, {"target", string}])
+      assert [%{series: "value"}] = PlotDB.lines(drivable)
+      assert PlotDB.lines(create_module(["Readable"], [{"value", string}])) == []
+    end
+
+    test "every setpoint is held; only a module's target is drawn as one" do
+      calibratable =
+        create_module(["_Calibratable", "Drivable"], [
+          {"value", @double},
+          {"target", @double},
+          {"_target_calibrated", @double}
         ])
 
-      assert [%{seriesIndex: ^value_index}] = plot.option._envelopes
+      series = PlotDB.init(calibratable, :live).option.series
+      assert %{_target: true} = Enum.find(series, &(&1.name == "target"))
+      calibrated = Enum.find(series, &(&1.name == "_target_calibrated"))
+      refute Map.has_key?(calibrated, :_target)
+      # still a setpoint: each reading holds until the next one
+      assert %{_held: true, step: "end"} = calibrated
+    end
+  end
 
-      # a band goes to its own line or to none, never to another line
-      assert PlotDB.envelope_updates(plot, "nope", envelope([[1, 1.0, 1.0, 1.0]])) == nil
-      [value, _target] = module.parameters |> Enum.sort_by(&(&1.name != "value"))
-      assert PlotDB.envelope_series_name(module, value) == "value"
+  describe "updates" do
+    @struct %{"type" => "struct", "members" => %{"x" => @double}}
+
+    test "a struct parameter on its own takes live readings under its own name" do
+      param = generate(parameter(name: "settings", datainfo: @struct))
+      plot = PlotDB.init(param, :live)
+
+      assert %{seriesUpdates: [%{data: [[10, 1.0]]}]} =
+               PlotDB.trace_updates(plot, [{%{"x" => 1.0}, 10}], "settings")
     end
 
-    test "a parameter on its own has its band on the plot's value series" do
+    test "readings of a parameter the plot doesn't draw update nothing" do
       param = generate(parameter(name: "temp", datainfo: @double))
-      assert PlotDB.envelope_series_name(param, param) == "value"
+      plot = PlotDB.init(param, :live)
+      assert PlotDB.trace_updates(plot, [{1.0, 10}], "other") == %{seriesUpdates: []}
     end
 
-    test "a Calibratable's envelopes are on value and _value_uncalibrated, never a setpoint" do
+    test "a Drivable's setpoint goes to the target series" do
+      module = create_module(["Drivable"], [{"value", @double}, {"target", @double}])
+      plot = PlotDB.init(module, :live)
+      target_index = Enum.find_index(plot.option.series, &(&1.name == "target"))
+
+      assert %{seriesUpdates: [%{seriesIndex: ^target_index}]} =
+               PlotDB.trace_updates(plot, [{1.0, 10}], "target")
+    end
+
+    test "a heatmap outgrows when a reading is longer than it carries" do
+      array = generate(parameter(name: "spectrum", datainfo: @array))
+      plot = PlotDB.init(array, :live)
+      long = List.duplicate(1.0, 101)
+
+      assert PlotDB.outgrown(plot, "spectrum", [{[1.0], 1}]) == nil
+      assert PlotDB.outgrown(plot, "spectrum", [{long, 1}, {[1.0], 2}]) == {[1.0], 2}
+      assert PlotDB.outgrown(plot, "other", [{long, 1}]) == nil
+    end
+  end
+
+  describe "bands" do
+    defp envelope(rows),
+      do: %{bucket_ms: 60_000, from_ms: 0, until_ms: 600_000, rows: rows}
+
+    defp band_lines(secop_obj),
+      do: secop_obj |> PlotDB.lines() |> Enum.filter(&Bands.eligible?/1) |> Enum.map(& &1.series)
+
+    test "number lines carry a band; setpoints, enums, structs and arrays don't" do
+      assert band_lines(generate(parameter(name: "temp", datainfo: @double))) == ["value"]
+
+      drivable = create_module(["Drivable"], [{"value", @double}, {"target", @double}])
+      assert band_lines(drivable) == ["value"]
+      target = Enum.find(drivable.parameters, &(&1.name == "target"))
+      assert band_lines(target) == []
+
+      for datainfo <- [%{"type" => "enum", "members" => %{"a" => 0}}, @struct, @array] do
+        assert band_lines(generate(parameter(datainfo: datainfo))) == [], inspect(datainfo)
+        plot = PlotDB.init(generate(parameter(datainfo: datainfo)), :historical)
+        refute Map.has_key?(plot.option, :_envelope)
+      end
+    end
+
+    test "a double's first load is marked as a band plot" do
+      param = generate(parameter(name: "temp", datainfo: @double))
+      plot = PlotDB.init(param, :historical)
+
+      assert plot.option._envelope == %{on: true, series: [0]}
+      # no aggregates in the sandbox: no band rows
+      assert plot.option._envelopes == []
+
+      assert %{seriesIndex: 0, bucket_ms: 60_000, from: 0, until: 600_000, rows: [[1, 2, 3, 4]]} =
+               Bands.payload(plot.option, "value", envelope([[1, 2, 3, 4]]))
+    end
+
+    test "a band goes to its own line or to none, never to another line" do
+      module = create_module(["Drivable"], [{"value", @double}, {"target", @double}])
+      plot = PlotDB.init(module, :historical)
+      value_index = Enum.find_index(plot.option.series, &(&1.name == "value"))
+
+      assert plot.option._envelope.series == [value_index]
+      assert Bands.payload(plot.option, "nope", envelope([[1, 1.0, 1.0, 1.0]])) == nil
+    end
+
+    test "a Calibratable's bands are on value and _value_uncalibrated" do
       module =
         create_module(["_Calibratable", "Readable"], [
           {"value", @double},
@@ -146,71 +196,16 @@ defmodule SecantService.PlotDBTest do
           {"_target_calibrated", @double}
         ])
 
-      assert [{%{name: "value"}, "line"}, {%{name: "_value_uncalibrated"}, "line"}] =
-               PlotDB.envelope_params(module)
+      assert band_lines(module) == ["value", "_value_uncalibrated"]
 
-      tc = Enum.find(module.parameters, &(&1.name == "_target_calibrated"))
-      assert PlotDB.envelope_params(tc) == []
-      refute Map.has_key?(PlotDB.parameter_plot(tc, :historical).option, :_envelope)
-
-      plot = PlotDB.module_plot(module, :historical)
+      plot = PlotDB.init(module, :historical)
       index = fn name -> Enum.find_index(plot.option.series, &(&1.name == name)) end
-      value_index = index.("value")
-      uncal_index = index.("_value_uncalibrated")
-
-      assert plot.option._envelope == %{
-               kind: "line",
-               on: true,
-               series: [value_index, uncal_index]
-             }
-
-      plot =
-        PlotDB.put_envelopes(plot, module, :historical, [
-          {"value", envelope([[1, 1.0, 1.0, 1.0]])},
-          {"_value_uncalibrated", envelope([[1, 2.0, 2.0, 2.0]])}
-        ])
-
-      assert [%{seriesIndex: ^value_index}, %{seriesIndex: ^uncal_index}] = plot.option._envelopes
+      assert plot.option._envelope.series == [index.("value"), index.("_value_uncalibrated")]
     end
 
-    test "a Calibratable without _value_uncalibrated has a band on value only" do
-      module = create_module(["_Calibratable", "Readable"], [{"value", @double}])
-      plot = PlotDB.module_plot(module, :historical)
-      value_index = Enum.find_index(plot.option.series, &(&1.name == "value"))
-      assert plot.option._envelope.series == [value_index]
-    end
-
-    test "an array starts without an envelope, and its rows pass through 0-based" do
-      array = generate(parameter(name: "spectrum", datainfo: @array))
-      plot = PlotDB.parameter_plot(array, :historical)
-      assert plot.option._envelope == %{kind: "array", on: false, series: [0]}
-
-      rows = [[30_000, 0, 1.0, 2.0, 3.0], [30_000, 1, 4.0, 5.0, 6.0]]
-      plot = PlotDB.put_envelopes(plot, array, :historical, [{"value", envelope(rows)}])
-      assert [%{seriesIndex: 0, rows: ^rows}] = plot.option._envelopes
-    end
-
-    test "live plots carry no envelope" do
+    test "live plots carry no band" do
       param = generate(parameter(name: "temp", datainfo: @double))
-      refute Map.has_key?(PlotDB.parameter_plot(param, :live).option, :_envelope)
-    end
-
-    test "nil points are dropped from envelope array updates only" do
-      array = generate(parameter(name: "spectrum", datainfo: @array))
-      plot = PlotDB.parameter_plot(array, :historical)
-      update = PlotDB.get_trace_updates_batch(plot, [{[1.0, nil, 3.0], 1_000}], array.name)
-
-      # a NaN element (nil) still makes a gap in the live and plain paths
-      assert [%{data: [[1_000, 0, 1.0], [1_000, 1, nil], [1_000, 2, 3.0]]}] = update.seriesUpdates
-
-      # dropped only at an envelope's mean-point times
-      envelope = envelope([[1_000, 0, 1.0, 1.0, 1.0]])
-
-      assert [%{data: [[1_000, 0, 1.0], [1_000, 2, 3.0]]}] =
-               PlotDB.drop_nil_points(update, envelope).seriesUpdates
-
-      assert PlotDB.drop_nil_points(update, envelope([[2_000, 0, 1.0, 1.0, 1.0]])) == update
-      assert PlotDB.drop_nil_points(update, nil) == update
+      refute Map.has_key?(PlotDB.init(param, :live).option, :_envelope)
     end
   end
 end

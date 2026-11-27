@@ -16,7 +16,7 @@
 #   * db: window    `SecNodes.history_window!` over the whole recording,
 #                   the thinning query alone
 #   * build option  the chart option from an already loaded window (what
-#                   `PlotDB.Readable.plot/2` does after its fetch)
+#                   `PlotDB.TimePlot.build/2` does after its fetch)
 #   * encode        JSON of the initial load's option
 #   * zoom 10%      a zoom into the middle tenth of the recording, as the
 #                   `fetch-chart-window` event does: window, trace updates, JSON
@@ -423,6 +423,8 @@ defmodule HistoryBench.Steps do
   alias SecantService.PlotDB
   alias SecantService.PlotDB.DTypePlot
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
+  alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
+  alias SecantService.PlotDB.DTypes.Scalar
   alias SecantService.PlotDB.DTypes.Struct
   alias SecantService.PlotDB.History
   alias SecantService.SecNodes
@@ -440,12 +442,12 @@ defmodule HistoryBench.Steps do
 
   def encode(plot), do: @json.encode_to_iodata!(%{option: plot.option})
 
-  # the thinning query over the whole recording, as `Builders.fetch_param_data/2`
-  # runs it
+  # the thinning query over the whole recording, as
+  # `Builders.fetch_param_window/3` runs it
   def window(%{param: param, from_ms: from_ms}),
     do: SecNodes.history_window!(param.id, from_ms, nil)
 
-  # `PlotDB.Readable.plot/2` after its fetch (the initial load also holds the
+  # `PlotDB.TimePlot.build/2` after its fetch (the initial load also holds the
   # last reading before the session start; there is none here)
   def build_option(%{param: param}, %{values: val, timestamps: ts}) do
     datainfo = param.datainfo
@@ -463,9 +465,15 @@ defmodule HistoryBench.Steps do
       Struct ->
         Struct.build_struct_option("value", ts, val, datainfo, :historical)
 
-      dtype_mod ->
-        series = dtype_mod.build_series("value", ts, val, datainfo)
-        dtype_mod.build_option(series, datainfo, datainfo["unit"], :historical, [])
+      EnumDType ->
+        members = datainfo["members"] || %{}
+
+        [EnumDType.enum_series("value", ts, val, members)]
+        |> EnumDType.enum_timeseries_option(members, :historical)
+
+      Scalar ->
+        [Scalar.scalar_line_series("value", ts, val)]
+        |> Scalar.timeseries_option(datainfo["unit"], :historical)
     end
   end
 
@@ -474,7 +482,7 @@ defmodule HistoryBench.Steps do
   def zoom(%{param: param, plot: plot}, {from_ms, to_ms}) do
     window = SecNodes.history_window!(param.id, from_ms, to_ms)
     datapoints = Enum.zip(window.values, window.timestamps)
-    updates = PlotDB.get_trace_updates_batch(plot, datapoints, param.name)
+    updates = PlotDB.trace_updates(plot, datapoints, param.name)
 
     History.coarsest([window])
     |> Map.merge(updates)

@@ -143,62 +143,18 @@ defmodule SecantService.PlotDB.HistoryEnvelopeTest do
     end)
   end
 
-  test "an array: 0-based rows, one mean array per bucket, a whole last reading" do
+  test "an array gets no envelope, only its thinned readings" do
     unboxed(fn ->
-      param =
-        parameter!(%{
-          "type" => "array",
-          "minlen" => 1,
-          "maxlen" => 3,
-          "members" => %{"type" => "double"}
-        })
-
+      param = parameter!(%{"type" => "array", "maxlen" => 3, "members" => %{"type" => "double"}})
       start = fresh_start()
       seed(param, start, 719, 10, fn i -> [i * 1.0, 1.0, 2.0] end)
-      # the window's last reading is shorter than the one before it
-      last_at = DateTime.add(start, 7_195, :second)
-      insert!(param, [{[7.0, 8.0], last_at}])
       refresh(start, DateTime.add(start, 2, :hour))
 
       window = History.window(param, ms(start), ms(start) + 2 * 3_600_000, @opts)
 
-      assert [[t0, 0, +0.0, _mean, 5.0], [t0, 1, 1.0, 1.0, 1.0], [t0, 2, 2.0, 2.0, 2.0] | _] =
-               window.envelope.rows
-
-      refute Enum.any?(window.envelope.rows, fn [_t, i | _] -> i < 0 end)
-
-      assert {^t0, [_, 1.0, 2.0]} =
-               Enum.find(Enum.zip(window.timestamps, window.values), &(elem(&1, 0) == t0))
-
-      # the tail is empty: the edge point is the last stored reading, whole
-      assert List.last(window.values) == [7.0, 8.0]
-      assert List.last(window.timestamps) == ms(last_at)
-    end)
-  end
-
-  test "an element missing from a bucket leaves a hole in its mean array" do
-    unboxed(fn ->
-      param =
-        parameter!(%{"type" => "array", "maxlen" => 3, "members" => %{"type" => "double"}})
-
-      start = fresh_start()
-      seed(param, DateTime.add(start, 60, :second), 713, 10, fn _ -> [1.0, 2.0, 3.0] end)
-      # bucket 0: element 3 is NaN in every reading, so it has no row there
-      for s <- [0, 10, 20] do
-        insert_sql!(
-          param,
-          "value_float_array",
-          "ARRAY[1, 2, 'NaN']::float8[]",
-          DateTime.add(start, s, :second)
-        )
-      end
-
-      refresh(start, DateTime.add(start, 2, :hour))
-
-      window = History.window(param, ms(start), ms(start) + 2 * 3_600_000, @opts)
-      [[t0 | _] | _] = window.envelope.rows
-
-      assert {t0, [1.0, 2.0, nil]} in Enum.zip(window.timestamps, window.values)
+      assert window.aggregated
+      assert window.envelope == nil
+      assert Enum.all?(window.values, &is_list/1)
     end)
   end
 

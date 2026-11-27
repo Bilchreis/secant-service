@@ -29,20 +29,12 @@ While the envelope is on and a historical plot's window is split into buckets of
 - **WHEN** an enum parameter or a struct parameter is plotted historically
 - **THEN** it is drawn exactly as today
 
-### Requirement: Envelope of array plots in Lines mode
-A numeric array plot of at most 100 elements (by its `maxlen`) in Lines mode SHALL draw one band and one mean line per element while the envelope is on, each in that element's line colour. In Heatmap mode the envelope SHALL have no effect.
+### Requirement: Array plots carry no envelope
+A numeric array plot SHALL be drawn without an envelope, as a heatmap or in Lines mode, and SHALL show no envelope toggle.
 
 #### Scenario: Array in Lines mode
-- **WHEN** a 10-element `double` array is plotted historically in Lines mode with the envelope on, over a window with buckets of 1 minute or more whose aggregates are materialized
-- **THEN** each element is drawn as a band and a mean line in its own colour
-
-#### Scenario: Array that may outgrow the heatmap
-- **WHEN** a numeric array whose `maxlen` is over 100 is plotted historically
-- **THEN** it is drawn as today, and no envelope toggle is shown
-
-#### Scenario: Array in Heatmap mode
-- **WHEN** the same array is shown in Heatmap mode
-- **THEN** the heatmap is drawn as today, and the envelope toggle is not shown
+- **WHEN** a 10-element `double` array is plotted historically in Lines mode, over a window with buckets of 1 minute or more
+- **THEN** each element is drawn as today's thinned line, with no band, and no envelope toggle is shown
 
 ### Requirement: Fallback when zoomed in
 When the requested window is shown with every reading, or with buckets narrower than 1 minute, the plot SHALL draw exactly what it draws without the envelope, with no band in that window.
@@ -94,15 +86,15 @@ Historical plots that have a line able to carry an envelope SHALL show a toggle 
 - **THEN** no envelope toggle is shown
 
 ### Requirement: Envelope defaults
-The envelope SHALL be on by default for plots other than array plots, and off by default for array plots. A user's choice SHALL be remembered in the browser, separately for array plots and for other plots.
+The envelope SHALL be on by default. A user's choice SHALL be remembered in the browser.
 
 #### Scenario: First visit
-- **WHEN** a user opens a historical plot of a `double` and one of a numeric array in Lines mode, never having used the toggle
-- **THEN** the `double` plot shows an envelope and the array plot does not
+- **WHEN** a user opens a historical plot of a `double`, never having used the toggle
+- **THEN** the plot shows an envelope
 
 #### Scenario: Remembered choice
-- **WHEN** the user switches the envelope on for an array plot and later opens another array plot
-- **THEN** the other array plot opens with the envelope on, and non-array plots keep their own setting
+- **WHEN** the user switches the envelope off and later opens another historical plot of a number
+- **THEN** that plot opens with the envelope off
 
 ### Requirement: Envelope readout
 While envelope buckets are shown, the plot's resolution label SHALL say that it shows min, mean and max per interval and name the envelope's interval width, and the tooltip SHALL give a bucket's min, mean and max.

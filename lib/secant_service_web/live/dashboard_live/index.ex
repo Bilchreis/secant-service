@@ -422,12 +422,6 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   end
 
   @impl true
-  def handle_event("purge_plots", _params, socket) do
-    Logger.info("Purging all plots...")
-    {:noreply, push_event(socket, "cleanup-charts", %{})}
-  end
-
-  @impl true
   def handle_event("validate_parameter", unsigned_params, socket) do
     send_update(SecantServiceWeb.Components.ParameterValueDisplay,
       id: "#{unsigned_params["location"]}:" <> path_from_unsigned_params(unsigned_params),
@@ -582,11 +576,6 @@ defmodule SecantServiceWeb.DashboardLive.Index do
       value_update: data_report
     )
   end
-
-  # defp remove_last_segment(topic) do
-  #  parts = String.split(topic, ":")
-  #  parts |> Enum.drop(-1) |> Enum.join(":")
-  # end
 
   defp path_from_unsigned_params(unsigned_params) do
     host = unsigned_params["host"]
