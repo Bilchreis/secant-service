@@ -1,11 +1,13 @@
 defmodule SecantServiceWeb.DashboardComponents.ModuleGrid do
   @moduledoc """
   Card grid of the live dashboard: one card per module, acquisition cards
-  for acquisition modules.
+  for acquisition modules, and a system role's custom card for a module
+  matched to one (see `SecantServiceWeb.Systems`).
   """
   use Phoenix.Component
 
   alias SecantService.Acquisition
+  alias SecantService.Systems.Binding
   alias SecantService.SecNodes.Module
   alias SecantService.Util
   alias SecantServiceWeb.ValueFormat
@@ -14,6 +16,7 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleGrid do
   alias SecantServiceWeb.Components.CommandDisplay
   alias SecantServiceWeb.Components.Sparkline
   alias SecantServiceWeb.Components.AcquisitionGoal
+  alias SecantServiceWeb.Systems
 
   import SecantServiceWeb.DashboardComponents
 
@@ -26,6 +29,10 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleGrid do
   attr :node_state, :atom,
     default: :initialized,
     doc: ":initialized, :paused or a disconnected state"
+
+  attr :matches, :map,
+    default: %{},
+    doc: "module name → system match (`SecantServiceWeb.Systems.matches/2`)"
 
   def module_grid(assigns) do
     modules = assigns.node.modules
@@ -64,14 +71,25 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleGrid do
           :if={modules != []}
           class="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-2.5"
         >
-          <.module_card
-            :for={module <- modules}
-            module={module}
-            node={@node}
-            selected={module.name == @selected}
-            node_state={@node_state}
-            status={Map.get(@status_map, module.name)}
-          />
+          <%= for module <- modules do %>
+            <.system_card
+              :if={Systems.card(@matches[module.name])}
+              match={@matches[module.name]}
+              module={module}
+              node={@node}
+              selected={module.name == @selected}
+              node_state={@node_state}
+              status={Map.get(@status_map, module.name)}
+            />
+            <.module_card
+              :if={!Systems.card(@matches[module.name])}
+              module={module}
+              node={@node}
+              selected={module.name == @selected}
+              node_state={@node_state}
+              status={Map.get(@status_map, module.name)}
+            />
+          <% end %>
         </div>
       </section>
     </div>
@@ -338,38 +356,13 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleGrid do
       |> assign(:has_status, Module.has_status?(module))
 
     ~H"""
-    <article
-      id={"card-" <> @module.name}
-      class={[
-        "relative flex min-w-0 flex-col gap-2 overflow-hidden rounded-box border p-3 transition-[color,background-color,border-color,opacity]",
-        if(@selected, do: "border-primary", else: "border-line"),
-        card_tint(@node_state == :initialized && @status),
-        @node_state != :initialized && "border-dashed opacity-75"
-      ]}
-      data-stale={to_string(@node_state != :initialized)}
-      data-status={@status}
+    <.card_shell
+      module={@module}
+      selected={@selected}
+      node_state={@node_state}
+      status={@status}
+      other_commands={@other_commands}
     >
-      <span
-        :if={@node_state == :initialized && @status in [:busy, :warning, :error]}
-        class={["absolute inset-y-0 left-0 w-1", card_edge(@status)]}
-        aria-hidden="true"
-      ></span>
-      <header class="flex items-start gap-2">
-        <button
-          phx-click="select_module"
-          phx-value-module={@module.name}
-          class="min-w-0 flex-1 text-left"
-          title={@module.description}
-        >
-          <span class="block truncate text-[14px] font-semibold hover:underline">
-            {Util.display_name(@module.name)}
-          </span>
-          <span class="block font-mono text-[11px] text-muted">
-            {class_label(@module.highest_interface_class)}
-          </span>
-        </button>
-      </header>
-
       <.live_component
         :if={@has_status}
         module={ModuleIndicator}
@@ -419,7 +412,7 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleGrid do
         target_param={Module.get_parameter(@module, "target")}
       />
 
-      <footer class="mt-auto flex flex-wrap items-center gap-1.5 border-t border-line pt-2">
+      <:actions>
         <.live_component
           :for={command <- @card_commands}
           module={CommandDisplay}
@@ -433,6 +426,122 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleGrid do
           variant={:button}
           id_str={"module_dash:" <> @node_id_str <> ":" <> @module.name <> ":" <> command.name}
         />
+      </:actions>
+    </.card_shell>
+    """
+  end
+
+  attr :match, :map, required: true, doc: "the module's system match, whose role gives a card"
+  attr :module, :map, required: true
+  attr :node, :map, required: true
+  attr :selected, :boolean, default: false
+  attr :node_state, :atom, default: :initialized
+  attr :status, :atom, default: nil
+
+  # A module matched to a system role with a custom card: the shared chrome
+  # around the role's body (see `SecantServiceWeb.SystemRole`). The card
+  # chooses which commands it shows, so the parameters button counts all.
+  defp system_card(assigns) do
+    %{binding: binding} = assigns.match
+
+    assigns =
+      assigns
+      |> assign(:body, Systems.card(assigns.match).body)
+      |> assign(:binding, binding)
+      |> assign(:reference, Binding.reference(binding))
+      |> assign(:node_id_str, node_id_str(assigns.node))
+
+    ~H"""
+    <.card_shell
+      module={@module}
+      selected={@selected}
+      node_state={@node_state}
+      status={@status}
+      other_commands={length(@module.commands)}
+      data-system={@reference}
+      data-role={@binding.role}
+    >
+      <:badge>
+        <span
+          id={"card-" <> @module.name <> "-system"}
+          class="shrink-0 rounded border border-line px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted"
+          title={"Role " <> @binding.role <> " of " <> @binding.local_name <> " (" <> @reference <> ")"}
+        >
+          {@reference} · {@binding.role}
+        </span>
+      </:badge>
+      <.role_body
+        body={@body}
+        module={@module}
+        node={@node}
+        node_id_str={@node_id_str}
+        binding={@binding}
+        node_state={@node_state}
+        status={@status}
+        location="module_dash"
+      />
+    </.card_shell>
+    """
+  end
+
+  # Renders a role's card body, a function component held in an assign.
+  defp role_body(assigns) do
+    {body, assigns} = Map.pop(assigns, :body)
+    body.(assigns)
+  end
+
+  attr :module, :map, required: true
+  attr :selected, :boolean, default: false
+  attr :node_state, :atom, default: :initialized
+  attr :status, :atom, default: nil
+  attr :other_commands, :integer, default: 0, doc: "commands not shown on the card"
+  attr :rest, :global
+  slot :badge
+  slot :inner_block
+  slot :actions
+
+  # The chrome every module card shares: selection border, status tint and
+  # edge, the stale look, the header and the parameters button.
+  defp card_shell(assigns) do
+    ~H"""
+    <article
+      id={"card-" <> @module.name}
+      class={[
+        "relative flex min-w-0 flex-col gap-2 overflow-hidden rounded-box border p-3 transition-[color,background-color,border-color,opacity]",
+        if(@selected, do: "border-primary", else: "border-line"),
+        card_tint(@node_state == :initialized && @status),
+        @node_state != :initialized && "border-dashed opacity-75"
+      ]}
+      data-stale={to_string(@node_state != :initialized)}
+      data-status={@status}
+      {@rest}
+    >
+      <span
+        :if={@node_state == :initialized && @status in [:busy, :warning, :error]}
+        class={["absolute inset-y-0 left-0 w-1", card_edge(@status)]}
+        aria-hidden="true"
+      ></span>
+      <header class="flex items-start gap-2">
+        <button
+          phx-click="select_module"
+          phx-value-module={@module.name}
+          class="min-w-0 flex-1 text-left"
+          title={@module.description}
+        >
+          <span class="block truncate text-[14px] font-semibold hover:underline">
+            {Util.display_name(@module.name)}
+          </span>
+          <span class="block font-mono text-[11px] text-muted">
+            {class_label(@module.highest_interface_class)}
+          </span>
+        </button>
+        {render_slot(@badge)}
+      </header>
+
+      {render_slot(@inner_block)}
+
+      <footer class="mt-auto flex flex-wrap items-center gap-1.5 border-t border-line pt-2">
+        {render_slot(@actions)}
         <span class="flex-1"></span>
         <button
           phx-click="select_module"

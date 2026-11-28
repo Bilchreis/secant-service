@@ -24,6 +24,7 @@ defmodule SecantServiceWeb.NodeBrowserLive.Index do
     socket =
       socket
       |> assign(:node, node)
+      |> assign(:systems, systems_for(node))
       |> assign(:selected_module, nil)
       |> assign(:plot_param, nil)
       |> assign(:page_title, if(node, do: node.equipment_id, else: "Node not found"))
@@ -75,6 +76,15 @@ defmodule SecantServiceWeb.NodeBrowserLive.Index do
   end
 
   def selected_module(%{modules: modules}, name), do: Enum.find(modules, &(&1.name == name))
+
+  # the recorded node's SECoP system bindings and matched role modules, for
+  # the module panel's membership and custom module plot
+  defp systems_for(nil), do: %{bindings: %{}, matches: %{}}
+
+  defp systems_for(node) do
+    bindings = SecantService.Systems.bindings(node)
+    %{bindings: bindings, matches: SecantServiceWeb.Systems.matches(node, bindings)}
+  end
 
   def plot_id(node, module_name, plot_param) do
     "hplot:#{node.uuid}:#{module_name}:#{plot_param || "module"}"

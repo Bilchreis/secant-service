@@ -47,6 +47,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
     socket =
       socket
       |> Model.to_socket(model)
+      |> assign_systems()
       |> assign(:show_connect_modal, false)
       |> assign(:hidden_node_ids, MapSet.new())
       |> assign(:selected_node_id, nil)
@@ -78,9 +79,38 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
     socket
     |> Model.to_socket(model)
+    |> assign_systems()
     |> assign(:status_map, status_map(model.values))
     |> assign_selected_module(socket.assigns.selected_module)
     |> drop_stale_plot_param()
+  end
+
+  # The node's SECoP system bindings and their matched role modules, worked
+  # out once per description (keyed by the session uuid) rather than on every
+  # render: `%{uuid:, bindings:, matches:, shown:}`, `shown` being the card
+  # parameters that need live updates.
+  defp assign_systems(socket) do
+    node = socket.assigns.current_node
+    uuid = node && node.uuid
+
+    case socket.assigns[:systems] do
+      %{uuid: ^uuid} -> socket
+      _ -> assign(socket, :systems, systems_for(node))
+    end
+  end
+
+  defp systems_for(nil), do: %{uuid: nil, bindings: %{}, matches: %{}, shown: MapSet.new()}
+
+  defp systems_for(node) do
+    bindings = SecantService.Systems.bindings(node)
+    matches = SecantServiceWeb.Systems.matches(node, bindings)
+
+    %{
+      uuid: node.uuid,
+      bindings: bindings,
+      matches: matches,
+      shown: SecantServiceWeb.Systems.shown_parameters(matches)
+    }
   end
 
   # The plotted parameter may be gone after a description change.
@@ -138,6 +168,7 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
         socket
         |> Model.to_socket(model)
+        |> assign_systems()
         |> assign(:status_map, status_map(model.values))
       else
         socket
@@ -343,10 +374,11 @@ defmodule SecantServiceWeb.DashboardLive.Index do
         %{node_id: ^node_id, host: host, port: port} when is_map(values) ->
           node_id_str = "#{host}:#{port}"
           selected = socket.assigns.selected_module
+          shown = socket.assigns.systems.shown
 
           Enum.reduce(batch, socket, fn {{module, accessible}, data_report}, socket ->
             if Map.has_key?(values, module) do
-              update_components(node_id_str, module, accessible, data_report, selected)
+              update_components(node_id_str, module, accessible, data_report, selected, shown)
               put_status_color(socket, module, accessible, data_report)
             else
               socket
@@ -507,13 +539,29 @@ defmodule SecantServiceWeb.DashboardLive.Index do
 
   # The module cards are rendered for every module, the inspector only for
   # the selected one: skip the inspector components of the others.
-  defp update_components(node_id_str, module, accessible, data_report, selected) do
+  defp update_components(node_id_str, module, accessible, data_report, selected, shown) do
     update_cards(node_id_str, module, accessible, data_report)
+
+    if card_route(shown, module, accessible) do
+      send_update(SecantServiceWeb.Components.ParameterValueDisplay,
+        id: "module_dash:" <> node_id_str <> ":" <> module <> ":" <> accessible,
+        value_update: data_report
+      )
+    end
 
     if module == selected do
       update_inspector(node_id_str, module, accessible, data_report)
     end
   end
+
+  @doc """
+  Whether a reading of `module`'s `param` goes to a custom system card's
+  display (`module_dash:…:<param>`): when a matched card shows it (`shown`,
+  see `SecantServiceWeb.Systems.shown_parameters/1`) and `update_cards/4`
+  doesn't already send it there, which it does for `value` and `target` only.
+  """
+  def card_route(_shown, _module, param) when param in ["value", "target"], do: false
+  def card_route(shown, module, param), do: MapSet.member?(shown, {module, param})
 
   defp update_cards(node_id_str, module, "status", data_report) do
     send_update(SecantServiceWeb.Components.ModuleIndicator,

@@ -78,6 +78,7 @@
                 selected={@selected_module}
                 node_state={conn_state(@active_nodes[@current_node.node_id])}
                 status_map={@status_map}
+                matches={@systems.matches}
               />
             </div>
           </div>
@@ -92,6 +93,8 @@
             plot_id={plot_id(@current_node, @selected_module, @plot_param)}
             chart_height={380}
             node_state={conn_state(@active_nodes[@current_node.node_id])}
+            bindings={@systems.bindings}
+            matches={@systems.matches}
           />
         </.inspector_panel>
       </div>

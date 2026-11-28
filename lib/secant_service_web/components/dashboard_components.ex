@@ -10,7 +10,10 @@ defmodule SecantServiceWeb.DashboardComponents do
 
   Everything is rendered from the node's self-description, so none of these
   components may assume a particular module or parameter beyond what SECoP
-  defines (`value`, `target`, `status`, `stop`, `go`).
+  defines (`value`, `target`, `status`, `stop`, `go`). The one exception is a
+  module bound to a role of a SECoP system with a definition in code
+  (`SecantServiceWeb.Systems`): the system's schema guarantees more, and the
+  role's card body and module plot may rely on it.
   """
   alias SecantService.Util
 

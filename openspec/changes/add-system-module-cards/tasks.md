@@ -45,15 +45,15 @@
 
 ## 3. Custom cards on the dashboard
 
-- [ ] 3.1 In `DashboardLive`, add the uuid-keyed `systems` assign (`{uuid, bindings, matches, shown}`) through an `assign_systems/1` helper piped after each `Model.to_socket/2` call (not inside `SecantService.Model`). Pass `matches` to `ModuleGrid`, and `matches` and `bindings` to `ModuleDetail`. In the node browser, compute `bindings` and `matches` once per loaded session and pass them to `ModuleDetail`. Verify that the existing dashboard and node browser LiveView tests pass unchanged.
-- [ ] 3.2 Load the `daisyui` skill. In `ModuleGrid`:
+- [x] 3.1 In `DashboardLive`, add the uuid-keyed `systems` assign (`{uuid, bindings, matches, shown}`) through an `assign_systems/1` helper piped after each `Model.to_socket/2` call (not inside `SecantService.Model`). Pass `matches` to `ModuleGrid`, and `matches` and `bindings` to `ModuleDetail`. In the node browser, compute `bindings` and `matches` once per loaded session and pass them to `ModuleDetail`. Verify that the existing dashboard and node browser LiveView tests pass unchanged.
+- [x] 3.2 Load the `daisyui` skill. In `ModuleGrid`:
   - move the chrome of `module_card/1` into a private `card_shell/1` with `:badge`, `:inner_block` and `:actions` slots, keeping the generic card's rendered markup unchanged;
   - add `system_card/1`: the shell (keeping its `data-stale` and `data-status` attributes), the `#card-<name>-system` badge, `data-system`/`data-role` on the article, the role's card body with assigns including `location: "module_dash"`, and a params button counting all of the module's commands;
   - use it for matched modules whose role gives a card, among the non-acquisition modules only.
 
   Update the `DashboardComponents` moduledoc, which says cards may assume nothing beyond SECoP's standard parameters, to explain the system-card exception. Verify that the existing dashboard and acquisition-card LiveView tests pass unchanged.
-- [ ] 3.3 In `ModuleDetail`, list the module's bindings below the header (`#system-membership`, one entry per binding with role, local system name, `Name:version` and its parents), in both modes. Verify with 3.4.
-- [ ] 3.4 Add `test/secant_service_web/live/system_card_test.exs`, with a fixture node declaring `PowerSupply:0` and `VectorMagnet:0` systems (`put_systems/2`) and the test systems registered. Cover the scenarios of `specs/system-module-cards/spec.md`, asserting on element ids and data attributes:
+- [x] 3.3 In `ModuleDetail`, list the module's bindings below the header (`#system-membership`, one entry per binding with role, local system name, `Name:version` and its parents), in both modes. Verify with 3.4.
+- [x] 3.4 Add `test/secant_service_web/live/system_card_test.exs`, with a fixture node declaring `PowerSupply:0` and `VectorMagnet:0` systems (`put_systems/2`) and the test systems registered. Cover the scenarios of `specs/system-module-cards/spec.md`, asserting on element ids and data attributes:
   - the matched module renders `#card-<name>[data-system="PowerSupply:0"][data-role="current"] #sys-body-<name>`;
   - no systems configured, an unhandled version, a role without a module, and a missing required parameter give the generic card;
   - a role with a plot and no card gives the generic card with no badge;
@@ -68,7 +68,7 @@
 
 ## 4. Live values of card parameters
 
-- [ ] 4.1 In `DashboardLive`, add the pure `card_route/3` and use it in `update_components` (now taking `shown` as a sixth argument) to route the shown pairs to `module_dash:<node>:<module>:<param>`, skipping only `value` and `target`, which `update_cards/4` already sends there (design.md Decision 4). Test:
+- [x] 4.1 In `DashboardLive`, add the pure `card_route/3` and use it in `update_components` (now taking `shown` as a sixth argument) to route the shown pairs to `module_dash:<node>:<module>:<param>`, skipping only `value` and `target`, which `update_cards/4` already sends there (design.md Decision 4). Test:
   - `card_route/3` in a unit test (a shown `control_active` and a shown `goal` are routed; `value` and `target` are not routed twice; an undeclared parameter is not routed);
   - in `system_card_test.exs`, that a pushed `control_active` value reaches the custom card's display, and that the card shows the node's current `control_active` on first render.
 
