@@ -190,7 +190,7 @@ A nil label falls back to the trace name (`value.composition[2]`), or for an ind
 
 **Building a lines plot.** `TimePlot.build_lines/3`:
 - one `Builders.fetch_param_window` per **distinct parameter** (the held fetch when it has a setpoint trace);
-- each trace's values extracted from that window by `Trace.extract/2`;
+- each trace's values extracted from that window by `Trace.extract/3`;
 - the result through the same `Scalar` series, `Bands.put/3` and `Gaps.put/3` as today.
 
 The plot map then carries three things, and every consumer keeps its current shape:
