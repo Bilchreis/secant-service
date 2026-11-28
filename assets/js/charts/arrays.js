@@ -143,7 +143,7 @@ export const Arrays = {
     if (!this._heatTip || !this._heatTip.isConnected) {
       this._heatTip = document.createElement("div");
       this._heatTip.className =
-        "pointer-events-none absolute z-10 rounded border border-line bg-base-100 px-2 py-1 font-mono text-[11px] whitespace-pre shadow-sm";
+        "pointer-events-none absolute z-10 rounded border border-line bg-base-100 px-2 py-1 font-mono text-[11px] whitespace-pre-wrap shadow-sm";
       this.el.style.position = this.el.style.position || "relative";
       this.el.appendChild(this._heatTip);
     }
@@ -156,6 +156,8 @@ export const Arrays = {
       this._heatTip.textContent = gapText(gap, Date.now(), { time: formatTime, duration: formatBucket });
     }
     this._heatTip.style.display = "";
+    // within the chart: a gap's long line wraps in a narrow panel
+    this._heatTip.style.maxWidth = `${Math.max(120, this.el.clientWidth - 8)}px`;
     const left = Math.min(p.x + 12, this.el.clientWidth - this._heatTip.offsetWidth - 4);
     this._heatTip.style.left = `${Math.max(0, left)}px`;
     this._heatTip.style.top = `${Math.max(0, p.y - 30)}px`;

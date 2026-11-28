@@ -429,6 +429,10 @@ export const Gaps = {
   // marked, plus those at the ends of the readings (see `_edgeGap`).
   _markEnd() {
     if (!this._marked) return;
+    if (this._gapList().length === 0) {
+      this._regions = [];
+      return;
+    }
     if (this._gapArray() && this._arrayMode !== "lines") {
       const cells = this._seriesData[0] || [];
       const { times, held } = this._heatRows((j) => cells[j][0], cells.length, !!this._rangeButtons);

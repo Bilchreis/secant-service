@@ -255,7 +255,8 @@ html {
 }
 
 /* Over a recording gap the chart's own readout describes the gap; the axis
-   tooltip (inline display styles, hence !important) stays hidden there. */
+   tooltip (inline styles, hence !important) stays hidden there. Hidden, not
+   undisplayed: ECharts measures it to place it once the pointer moves on. */
 .gap-hover .sc-chart-tooltip {
-  display: none !important;
+  visibility: hidden !important;
 }
