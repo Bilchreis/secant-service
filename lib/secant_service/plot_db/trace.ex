@@ -34,4 +34,60 @@ defmodule SecantService.PlotDB.Trace do
           hidden?: boolean(),
           axis: 0 | 1
         }
+
+  @doc """
+  The number at `path` (struct fields) in a reading `value`, and at `index`
+  of the array there when `index` is not nil. nil for anything that is not a
+  number. Never raises: readings come from the node, live with atom keys for
+  described struct members, stored with string keys.
+  """
+  def extract(value, path, index \\ nil)
+
+  def extract(value, [], nil), do: number(value)
+
+  def extract(value, [], index) when is_list(value) and is_integer(index) and index >= 0,
+    do: value |> Enum.at(index) |> number()
+
+  def extract(_value, [], _index), do: nil
+
+  def extract(value, [key | rest], index) when is_map(value) do
+    case field(value, key) do
+      {:ok, inner} -> extract(inner, rest, index)
+      :error -> nil
+    end
+  end
+
+  def extract(_value, _path, _index), do: nil
+
+  @doc """
+  The value at `path` (struct fields) in a reading, whatever its type, or
+  nil. Never raises.
+  """
+  def at_path(value, []), do: value
+
+  def at_path(value, [key | rest]) when is_map(value) do
+    case field(value, key) do
+      {:ok, inner} -> at_path(inner, rest)
+      :error -> nil
+    end
+  end
+
+  def at_path(_value, _path), do: nil
+
+  # the string key, or a key whose string form equals it (an atom key of a
+  # live reading), creating no atoms
+  defp field(map, key) do
+    case Map.fetch(map, key) do
+      {:ok, _} = found ->
+        found
+
+      :error ->
+        Enum.find_value(map, :error, fn {k, v} ->
+          if is_atom(k) and Atom.to_string(k) == key, do: {:ok, v}
+        end)
+    end
+  end
+
+  defp number(x) when is_number(x), do: x
+  defp number(_), do: nil
 end

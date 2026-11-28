@@ -76,12 +76,12 @@
 
 ## 5. Custom module plot
 
-- [ ] 5.1 Add the total functions of design.md Decision 5:
+- [x] 5.1 Add the total functions of design.md Decision 5:
   - `Trace.extract/3`: string-then-existing-atom keys, list indices; non-numbers give nil;
   - `LabelSource.text/2`: strings as they are, whole numbers without a fraction, other numbers in short form, the `{}` template, nil otherwise;
   - `PlotDB.drawable?/2`: declared types only, `Scalar.supported_type?/1` numbers (no enums), `History.thinnable?/1`, struct-only paths, arrays of at most 100 elements; `is_map` checked at every step, so malformed datainfo gives false; no database access;
-  - `PlotDB.latest_value/1`: the latest stored value of any type (`SecNodes.latest_reading` + `Storage.raw_value`);
-  - `PlotDB.traces/2`, in design.md Decision 5's order:
+  - `Traces.latest_value/1`: the latest stored value of any type (`SecNodes.latest_reading` + `Storage.raw_value`);
+  - `Traces.resolve/2`, in design.md Decision 5's order:
     1. drop undrawable traces;
     2. pre-check undeclared arrays with `latest_value` before any window fetch;
     3. read the other latest values once per parameter;
@@ -106,15 +106,15 @@
   Test `latest_value/1` returning a struct value.
 
   Verify the file passes.
-- [ ] 5.2 In `TimePlot`/`Scalar`, add `build_lines/3` as design.md Decision 5 describes:
+- [x] 5.2 In `TimePlot`/`Scalar`, add `build_lines/3` as design.md Decision 5 describes:
   - one window fetch per distinct parameter (the held fetch for setpoint parameters), with traces extracted;
   - `_label` on the series, and fallbacks;
   - readings with no number at a trace's path dropped, not sent as `[ts, nil]`;
   - setpoint (`_held`) and hidden (`legend.selected`) traces;
-  - `Gaps.put/3`, with `Gaps.fallback/2` matching only whole parameters (`path == [] and pick == nil`);
+  - `Gaps.put/3` (its fallback already takes only a number `value`, since #185);
   - the two-axis option, with fallback units read along each trace's path.
 
-  Give the plot `lines` (keyed by series name), `resolved` (list shape) and `traces`. Add a `trace_updates/3` clause for `traces` before the `lines` clause, and call it once per distinct parameter from `window_reply/2`. Make `PlotDB.init/3` fall back to `init/2` on `:no_traces`. Make `Scalar.series_updates/3` return `[]` for an unknown series. Test in `test/secant_service/plot_db_test.exs` with stored readings:
+  Give the plot `lines` (keyed by series name), `resolved` (one fetch line per distinct parameter) and `traces`. Add a `trace_updates/3` clause for `traces` before the `lines` clause, and call it once per distinct parameter from `window_reply/2`. Make `PlotDB.init/3` fall back to `init/2` on `:no_traces`. Make `Scalar.series_updates/3` return `[]` for an unknown series. Test in `test/secant_service/plot_db/custom_plot_test.exs` with stored readings:
   - cost by distinct parameter: the Repo statements of four element traces of one parameter equal those of one trace of it. No helper exists, so count them with an inline `:telemetry.attach` on the Repo's query event;
   - the custom plot carries `_gaps` and a gap reply, and a span-less session's estimate applies only to the whole `value` trace, not to `value.composition[2]` or `value[27]`;
   - a generic struct plot's live update still lands on the right series after the `series_updates/3` change;
@@ -126,12 +126,12 @@
   - a whole number trace gets a band and an element trace doesn't.
 
   Verify the file passes.
-- [ ] 5.3 In `PlotDB.init` with an `ArrayPlot`, follow today's array path for `value` and read the label source once with `latest_value`:
+- [x] 5.3 In `PlotDB.init` with an `ArrayPlot`, follow today's array path for `value` and read the label source once with `latest_value`:
   - a heatmap gets `_indexLabels` for the first `min(source length, 100)` entries;
   - a latest-reading plot gets `_indexLabels` only when the source has at most 4000 entries;
   - the axis name goes into the index axis's `name` on the server (`ArrayHeatmap.index_axis/1`, `ArrayLatest.option/3`).
 
-  Make `HistoryDB.rebuild_as_latest/3` pass the spec, so the rebuild reads the label source again. Test in `test/secant_service/plot_db_test.exs`:
+  Make `HistoryDB.rebuild_as_latest/3` pass the spec, so the rebuild reads the label source again. Test in `test/secant_service/plot_db/custom_plot_test.exs`:
   - the mass spec heatmap gets `m/z 1`, `m/z 2`, … and the axis name;
   - 90 `_mass` entries for 100 elements leave indexes 90–99 unlabelled;
   - a heatmap loaded at 3 elements with a 10-entry source carries 10 labels;
@@ -139,7 +139,7 @@
   - a rebuild reads the label source again.
 
   Verify the file passes.
-- [ ] 5.4 In the chart hook, show labels as design.md Decision 5 describes:
+- [x] 5.4 In the chart hook, show labels as design.md Decision 5 describes:
   - move `escHtml` into a new pure `assets/js/charts/labels.mjs` (re-exported from `common.js`), with the label helpers;
   - the legend formatter gets the raw `_label || name` (canvas);
   - a number-plot axis-tooltip formatter, installed only when some series has `_label`, escapes;
@@ -150,8 +150,8 @@
     - `ArrayLatest`'s index-axis formatter (canvas, raw) and its tooltip (escaped).
 
   Add `assets/js/charts/labels.test.mjs`: a `<b>N2</b>` label is escaped for tooltips and raw for canvas and `textContent`, and an index without a label shows its number. Add it to the `node --test` step in `.github/workflows/ci.yml`. Verify `node --test assets/js/charts/gaps.test.mjs assets/js/charts/labels.test.mjs` passes.
-- [ ] 5.5 In `HistoryDB`, accept an optional `plot_spec` assign. Check `PlotDB.drawable?/2` on mount when one is given, and pass it to `init` on mount, on reloads and on `rebuild_as_latest/3`. When a load returns `%{plottable: false}` and `tabular?/1` holds, switch to the table instead of leaving an empty chart. When the loaded plot carries `traces`, make the range, window and overview handlers and the live filter read `plot.resolved`, fetching once per distinct `param.id` and fanning out. Other plots keep today's code. Verify that the existing `HistoryDB`, plot and LiveView tests pass unchanged.
-- [ ] 5.6 In `ModuleDetail`, pass the matched role's `plot()` as `plot_spec` to the module plot only (never to a parameter plot), and only when the module has a `value`, keeping today's `@plot_parameter || @has_value` gate. In `system_card_test.exs`, test that:
+- [x] 5.5 In `HistoryDB`, accept an optional `plot_spec` assign. Check `PlotDB.drawable?/2` on mount when one is given, and pass it to `init` on mount, on reloads and on `rebuild_as_latest/3`. When a load returns `%{plottable: false}` and `tabular?/1` holds, switch to the table instead of leaving an empty chart. When the loaded plot carries `traces`, make the range, window and overview handlers and the live filter read `plot.resolved`, fetching once per distinct `param.id` and fanning out. Other plots keep today's code. Verify that the existing `HistoryDB`, plot and LiveView tests pass unchanged.
+- [x] 5.6 In `ModuleDetail`, pass the matched role's `plot()` as `plot_spec` to the module plot only (never to a parameter plot), and only when the module has a `value`, keeping today's `@plot_parameter || @has_value` gate. In `system_card_test.exs`, test that:
   - the live module plot of the matched `current` module draws the four test traces, with `power_limit` deselected in `legend.selected`;
   - a pushed `voltage_limit` reading is sent as an `extend-chart-<id>` update;
   - the `voltage` role (card, no plot) gets the generic module plot;

@@ -10,6 +10,7 @@ import {
   writeBandPref,
 } from "./common";
 import { breakRows } from "./gaps.mjs";
+import { labelOf } from "./labels.mjs";
 
 export const Bands = {
   // payloads by series index: {bucket_ms, from, until, rows}
@@ -160,7 +161,7 @@ export const Bands = {
       const band = m && this._bandParent(m) ? this._bandRowAt(m.src, p.value[0]) : null;
       seen.add(p.seriesName);
       const text = band ? `${fmt(band.mean)} <span style="opacity:.7">(${fmt(band.min)} … ${fmt(band.max)})</span>` : fmt(v);
-      rows.push(`<span style="color:${p.color}">●</span> ${esc(p.seriesName)} ${text}`);
+      rows.push(`<span style="color:${p.color}">●</span> ${esc(labelOf(this._labels, p.seriesName))} ${text}`);
     });
     return head + rows.join("<br>");
   },

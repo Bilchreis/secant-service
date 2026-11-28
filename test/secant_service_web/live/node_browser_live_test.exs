@@ -193,4 +193,142 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
       })
     end
   end
+
+  describe "system module plots" do
+    alias SecantService.SecNodes.Reading.Storage
+    alias SecantServiceWeb.TestSystems
+
+    @mfc %{
+      "type" => "struct",
+      "members" => %{
+        "composition" => %{
+          "type" => "array",
+          "maxlen" => 4,
+          "members" => %{"type" => "double", "unit" => "%"}
+        },
+        "gas_list" => %{"type" => "array", "maxlen" => 4, "members" => %{"type" => "string"}},
+        "total_flow" => %{"type" => "double", "unit" => "ml/min"}
+      }
+    }
+    @spectrum %{"type" => "array", "maxlen" => 100, "members" => %{"type" => "double"}}
+
+    setup do
+      previous = Application.get_env(:secant_service, :systems)
+      on_exit(fn -> Application.put_env(:secant_service, :systems, previous) end)
+
+      Application.put_env(:secant_service, :systems, [
+        TestSystems.MfcGroup,
+        TestSystems.MassSpec,
+        TestSystems.MissingMass
+      ])
+
+      :ok
+    end
+
+    # a recorded node whose module `name` has `params` and is bound as role
+    # `role` of a `system` entry; `readings` per parameter, a second apart
+    defp recorded(name, system, role, params, readings) do
+      systems = %{"sys" => %{"system" => system, "modules" => %{role => name}}}
+
+      node =
+        generate(
+          sec_node(equipment_id: "sys #{name}", custom_properties: %{"systems" => systems})
+        )
+
+      module =
+        generate(sec_module(sec_node_id: node.uuid, name: name, interface_classes: ["Readable"]))
+
+      params =
+        Map.new(params, fn {pname, datainfo} ->
+          {pname, generate(parameter(name: pname, datainfo: datainfo, module_id: module.id))}
+        end)
+
+      t = fn s -> DateTime.from_unix!(1_000_000 + s, :second) end
+
+      rows =
+        for {pname, values} <- readings,
+            {value, i} <- Enum.with_index(values),
+            do: Storage.to_row(value, params[pname], t.(i), %{})
+
+      if rows != [],
+        do: %Ash.BulkResult{status: :success} = SecantService.SecNodes.insert_readings(rows)
+
+      {:ok, view, _html} = live(build_conn(), "/browse/node/#{node.uuid}?module=#{name}")
+      render_async(view, @async_timeout)
+      id = "hplot:#{node.uuid}:#{name}:module"
+      {view, id, with_target(view, ~s([id="history-#{id}"]))}
+    end
+
+    defp mfc(gases),
+      do: %{"composition" => [10.0, 20.0, 30.0, 40.0], "gas_list" => gases, "total_flow" => 2.0}
+
+    test "the stored session's module plot draws the role's traces, through every fetch" do
+      {view, id, chart} =
+        recorded("mfc", "MfcGroup:0", "group", [{"value", @mfc}], %{
+          "value" => [mfc(["N2", "H2", "CO", "O2"]), mfc(["N2", "H2", "CO", "O2"])]
+        })
+
+      assert has_element?(view, "#system-membership-sys", "group")
+
+      assert_push_event(view, "echarts-data-" <> ^id, %{option: option})
+      assert Enum.map(option.series, & &1.name) |> length() == 5
+      assert Enum.map(option.series, &Map.get(&1, :_label)) == ["N2", "H2", "CO", "O2", nil]
+
+      window = %{"from" => 1_000_000_000, "to" => 1_000_010_000, "req" => 1, "gen" => 1}
+      render_hook(chart, "fetch-chart-window", Map.put(window, "envelope", false))
+      render_async(view, @async_timeout)
+      assert_push_event(view, "window-chart-data-" <> ^id, %{seriesUpdates: updates})
+      assert Enum.map(updates, & &1.seriesIndex) == [0, 1, 2, 3, 4]
+
+      render_hook(chart, "fetch-chart-overview", %{"gen" => 2, "envelope" => false})
+      render_async(view, @async_timeout)
+      assert_push_event(view, "overview-chart-data-" <> ^id, %{seriesUpdates: updates})
+      assert length(updates) == 5
+
+      render_hook(chart, "fetch-chart-range", %{"from" => nil, "to" => 1_000_010_000, "req" => 3})
+      render_async(view, @async_timeout)
+      assert_push_event(view, "prepend-chart-data-" <> ^id, %{seriesUpdates: updates})
+      assert length(updates) == 5
+    end
+
+    test "a mass spectrum's heatmap index is labelled by mass" do
+      {view, id, _chart} =
+        recorded(
+          "ms",
+          "MassSpec:0",
+          "spectrometer",
+          [{"value", @spectrum}, {"_mass", @spectrum}],
+          %{
+            "value" => [[0.1, 0.2, 0.3]],
+            "_mass" => [[1.0, 2.0, 28.0]]
+          }
+        )
+
+      assert_push_event(view, "echarts-data-" <> ^id, %{option: option})
+      assert option._indexLabels == ["m/z 1", "m/z 2", "m/z 28"]
+    end
+
+    test "a module whose value can't be plotted shows its table, with or without a role" do
+      string = %{"type" => "string"}
+
+      {view, id, _chart} =
+        recorded(
+          "strmod",
+          "MissingMass:0",
+          "spectrometer",
+          [{"value", string}, {"spectrum", @spectrum}, {"_mass", @spectrum}],
+          %{"_mass" => [[1.0, 2.0]], "value" => ["a"]}
+        )
+
+      # the role's only trace picks a mass that isn't there: the table,
+      # loaded after the plot came back empty
+      render_async(view, @async_timeout)
+      assert has_element?(view, ~s([id="#{id}-table-wrap"]))
+
+      {view, id, _chart} =
+        recorded("plain", "Unknown:0", "x", [{"value", string}], %{"value" => ["a"]})
+
+      assert has_element?(view, ~s([id="#{id}-table-wrap"]))
+    end
+  end
 end

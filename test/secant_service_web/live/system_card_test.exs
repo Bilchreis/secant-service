@@ -79,6 +79,12 @@ defmodule SecantServiceWeb.SystemCardTest do
   defp open(ctx, raw \\ nil),
     do: connect_and_open(ctx.conn, ctx.node_id, ctx.path, raw || description(ctx.node_id))
 
+  # the session uuid of the connected node, for plot ids
+  defp with_uuid(ctx) do
+    {:ok, {node, _values}} = SecantService.NodeValues.get_snapshot(ctx.node_id)
+    Map.put(ctx, :uuid, node.uuid)
+  end
+
   test "a matched module gets its role's card body inside the shared chrome", ctx do
     view = open(ctx)
 
@@ -184,6 +190,63 @@ defmodule SecantServiceWeb.SystemCardTest do
       {:ok, fresh, _html} = live(ctx.conn, ctx.path)
       render_async(fresh)
       assert has_element?(fresh, "#sys-body-magcur_x", "true")
+    end
+  end
+
+  describe "module plot" do
+    defp plot_id(ctx, module, param \\ "module"),
+      do: "plot:#{with_uuid(ctx).uuid}:#{topic(ctx.node_id)}:#{module}:#{param}"
+
+    defp open_module(ctx, module) do
+      state_view = open(ctx)
+      state_view |> element("#rail-#{module}") |> render_click()
+      render_async(state_view)
+      state_view
+    end
+
+    defp option_series(option), do: Enum.map(option.series, & &1.name)
+
+    test "the matched role's lines replace the module plot", ctx do
+      view = open_module(ctx, "magcur_x")
+      id = plot_id(ctx, "magcur_x")
+
+      assert_push_event(view, "echarts-data-" <> ^id, %{option: option})
+      assert option_series(option) == ~w(value target voltage_limit power_limit)
+      assert option.legend.selected == %{"power_limit" => false}
+      assert [_left, %{position: "right"}] = option.yAxis
+    end
+
+    test "a reading of a custom trace extends it live", ctx do
+      view = open_module(ctx, "magcur_x")
+      id = plot_id(ctx, "magcur_x")
+      assert_push_event(view, "echarts-data-" <> ^id, %{option: _})
+
+      send_value_update(ctx.node_id, "magcur_x", "voltage_limit", [12.0, %{t: @t}])
+      # the broadcast is in the cache's mailbox before this call
+      _ = SecantService.PlotCache.flush(ctx.node_id)
+      render(view)
+
+      assert_push_event(view, "extend-chart-" <> ^id, %{
+        seriesUpdates: [%{seriesIndex: 2} = update]
+      })
+
+      assert [[_, 12.0]] = update.data
+    end
+
+    test "a role without a plot, and a parameter's own plot, stay generic", ctx do
+      view = open_module(ctx, "magvolt_x")
+      id = plot_id(ctx, "magvolt_x")
+      assert_push_event(view, "echarts-data-" <> ^id, %{option: option})
+      assert option_series(option) == ["value"]
+
+      view |> element("#rail-magcur_x") |> render_click()
+      render_async(view)
+      render_click(view, "plot_parameter", %{"param" => "voltage_limit"})
+      render_async(view)
+
+      id = plot_id(ctx, "magcur_x", "voltage_limit")
+      assert_push_event(view, "echarts-data-" <> ^id, %{option: option})
+      assert option_series(option) == ["value"]
     end
   end
 

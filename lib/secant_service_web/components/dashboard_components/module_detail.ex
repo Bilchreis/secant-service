@@ -7,6 +7,7 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
 
   alias SecantService.Acquisition
   alias SecantService.Systems.Binding
+  alias SecantServiceWeb.Systems
   alias SecantService.SecNodes.Module
   alias SecantService.Util
   alias SecantServiceWeb.ValueFormat
@@ -51,6 +52,7 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
       |> assign(:acq_channels, acq_channels(module, assigns.node.modules))
       |> assign(:acq_controller, Acquisition.controller_of(module, assigns.node.modules))
       |> assign(:module_bindings, Map.get(assigns.bindings, module.name, []))
+      |> assign(:plot_spec, plot_spec(module, plot_parameter, assigns.matches))
 
     ~H"""
     <div class="flex flex-col gap-4" id={"module-detail-" <> @module.name}>
@@ -160,6 +162,7 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
             module={HistoryDB}
             id={@plot_id}
             secop_obj={@plot_obj}
+            plot_spec={@plot_spec}
             plot_mode={@mode}
             height={@chart_height}
             class=""
@@ -367,6 +370,16 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
     order = %{"value" => 0, "target" => 1, "status" => 2}
     Enum.sort_by(parameters, fn p -> Map.get(order, p.name, 3) end)
   end
+
+  # a matched system role's custom plot replaces the module plot (never a
+  # parameter's own plot), for a module with a `value`: the plot's table and
+  # export use `value`
+  defp plot_spec(module, nil, matches) do
+    if Module.get_parameter(module, "value"),
+      do: Systems.plot(Map.get(matches, module.name))
+  end
+
+  defp plot_spec(_module, _plot_parameter, _matches), do: nil
 
   defp acq_channels(module, modules) do
     if Acquisition.controller?(module), do: Acquisition.channels(module, modules), else: []

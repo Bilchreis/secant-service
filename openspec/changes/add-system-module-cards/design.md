@@ -168,9 +168,9 @@ A role's `plot()` returns a `LinesPlot`, an `ArrayPlot` or nil.
   - that array's declared length (`Channels.declared_length/1`) is at most `TimePlot.max_array_len/0` (100), or undeclared.
 - An `ArrayPlot` is drawable when the module's `value` is a numeric array (`ArrayLatest.numeric_array?/1`).
 
-**Latest values** come from a small helper, `PlotDB.latest_value(param)`: `SecNodes.latest_reading` and `Storage.raw_value`, for any value. `ArrayLatest.fetch_latest/1` returns nil for anything that isn't a list (`array_latest.ex:33-36`), so it can't serve a struct `value`.
+**Latest values** come from a small helper, `Traces.latest_value(param)`: `SecNodes.latest_reading` and `Storage.raw_value`, for any value. `ArrayLatest.fetch_latest/1` returns nil for anything that isn't a list (`array_latest.ex:33-36`), so it can't serve a struct `value`.
 
-**Resolving a lines plot** (`PlotDB.traces(module, spec)`, inside the first load's async task):
+**Resolving a lines plot** (`Traces.resolve(module, spec)` in `SecantService.PlotDB.Traces`, inside the first load's async task):
 1. Drop traces that are not drawable.
 2. **Before any window fetch**, read `latest_value` once for each parameter that has an element trace into an array with no declared length, and drop those traces when the array is longer than 100. The generic path does the same check first (`long_array`, `plot_db.ex:113-121`). SECoP makes `maxlen` mandatory, so only nonconforming nodes pay this query.
 3. Read `latest_value` once for each parameter the remaining traces need for labels, `:each` lengths or `:match` lookups. A trace's own parameter reuses the value from step 2 if it has one.
@@ -200,12 +200,12 @@ A reading with no number where a trace reads gives that trace **no point**: it i
 
 The plot map then carries:
 - `lines`: a map keyed by **series name**, `%{series => %{series:, dtype: Scalar}}`. A custom plot can have several traces of one parameter, so it can't be keyed by parameter like `TimePlot.plot/4`'s. Its consumers (`Gaps.put/3`, `reply/4`) only match on the key's presence.
-- `resolved`: the list shape of `PlotDB.lines/1`, one entry `%{param:, series:, path:, pick: {:index, k} | nil, setpoint?:, hidden?:, axis:}` per trace. It is passed where `Gaps` and `Bands` take plot lines, and the `HistoryDB` handlers read it.
+- `resolved`: the list shape of `PlotDB.lines/1`, one line `%{param:, series:, setpoint?:, hidden?:}` per **distinct parameter**, its series the parameter's name and `setpoint?` true when any of its traces is one. The `HistoryDB` handlers fetch these, so a window costs one fetch per parameter however many traces read it; `Gaps` and `Bands` take them as plot lines. Each trace entry keeps its resolved element as a concrete index.
 - `traces: %{param_name => [entry]}`. `trace_updates/3` matches it in a clause before its `lines` clause, fanning a parameter's readings out by extraction.
 
 The handlers' `window_reply/2` calls `trace_updates/3` once per **distinct parameter** (not once per trace, which would send N² updates), and builds envelopes per trace.
 
-The span-less gap estimate (`Gaps.fallback/2`, `gaps.ex:157`) applies only to a whole parameter: `path == [] and pick == nil`. So `value.composition[2]` and `value[27]` never get it. `Bands.eligible?/1` needs no change, because a trace into a struct or array belongs to a parameter it already rejects (`bands.ex:15-16`), and a band is built only for a whole-parameter trace.
+The span-less gap estimate (`Gaps.fallback/2`) applies only to a whole parameter. Since #185 it matches a line whose parameter is named `value` and is a number (`Scalar.supported_type?/1`); the fetch line of a struct or array `value` fails that check, so `value.composition[2]` and `value[27]` never get it, with no change to `Gaps`. `Bands.eligible?/1` needs no change, because a trace into a struct or array belongs to a parameter it already rejects (`bands.ex:15-16`), and a band is built only for a whole-parameter trace.
 
 **Falling back.** `PlotDB.init(module, mode, spec)` returns `PlotDB.init(module, mode)` when a lines plot resolves to `:no_traces`. When the result is `%{plottable: false}` (e.g. a string `value`), `HistoryDB.handle_async(:load_plot, …)` switches to the table when `tabular?/1` holds, instead of leaving an empty chart (`historyDB.ex:597`, `816-836`).
 

@@ -3,11 +3,14 @@ import {
   CHART_PALETTE,
   ChartFlushDriver,
   ChartVisibilityObserver,
+  escHtml,
   formatAxisNumber,
+  formatTime,
   isDarkTheme,
   readArrayMode,
   ThemeWatch,
 } from "./common";
+import { indexTick, labelMap, labelOf } from "./labels.mjs";
 import { HistoryWindow } from "./history_window";
 import { Bands } from "./bands";
 import { Arrays } from "./arrays";
@@ -384,9 +387,11 @@ export const EChartsChart = {
     const heatAxes = new Set(
       (option.series || []).filter((s) => s && s._arrayHeat).map((s) => s.yAxisIndex || 0),
     );
+    // a system plot's labelled index (canvas text: the raw label)
+    const indexLabels = option._indexLabels;
     const intLabels = (ax, i) =>
       heatAxes.has(i || 0)
-        ? { ...ax, axisLabel: { ...(ax.axisLabel || {}), formatter: (v) => (Number.isInteger(v) ? String(v) : "") } }
+        ? { ...ax, axisLabel: { ...(ax.axisLabel || {}), formatter: (v) => indexTick(indexLabels, v) } }
         : ax;
     const yAxis = Array.isArray(option.yAxis)
       ? option.yAxis.map((ax, i) => tint(intLabels(ax, i)))
@@ -405,10 +410,19 @@ export const EChartsChart = {
       }
       return s;
     });
+    // a system plot's display labels (e.g. gas names): the legend shows
+    // them (canvas text: raw), and tooltips escape them. Series keep their
+    // names, so updates and hidden lines stay with the right line.
+    this._labels = labelMap(option.series);
+    const labelled = (l) => (this._labels ? { formatter: (name) => labelOf(this._labels, name), ...l } : l);
     const legend = mapAxes(
       option.legend,
-      (l) => l && { inactiveColor: inactive, ...l, textStyle: { color: muted, ...(l.textStyle || {}) } },
+      (l) => l && labelled({ inactiveColor: inactive, ...l, textStyle: { color: muted, ...(l.textStyle || {}) } }),
     );
+    const tooltip =
+      this._labels && option.tooltip && !option.tooltip.formatter
+        ? { ...option.tooltip, formatter: (ps) => this._labelTooltip(ps) }
+        : option.tooltip;
     // colour scale labels for array heatmaps
     const visualMap =
       heatAxes.size > 0 && option.visualMap
@@ -421,12 +435,30 @@ export const EChartsChart = {
       ...(xAxis ? { xAxis } : {}),
       ...(yAxis ? { yAxis } : {}),
       ...(legend ? { legend } : {}),
+      ...(tooltip ? { tooltip } : {}),
       series,
       // no tweening: on every update the points would slide into place
       animation: false,
       backgroundColor: "transparent",
       textStyle: { fontFamily: "JetBrains Mono, ui-monospace, monospace", color: muted, ...(option.textStyle || {}) },
     };
+  },
+
+  // Axis tooltip of a number plot with display labels: each line once, by
+  // its label (escaped: it comes from a reading).
+  _labelTooltip(ps) {
+    if (!ps || ps.length === 0) return "";
+    const t = ps[0].value && ps[0].value[0];
+    const seen = new Set();
+    const rows = [];
+    ps.forEach((p) => {
+      if (p.seriesName == null || seen.has(p.seriesName) || !Array.isArray(p.value)) return;
+      seen.add(p.seriesName);
+      const v = p.value[1];
+      const text = typeof v === "number" ? formatAxisNumber(v) : escHtml(String(v));
+      rows.push(`<span style="color:${p.color}">●</span> ${escHtml(labelOf(this._labels, p.seriesName))} ${text}`);
+    });
+    return `<div>${escHtml(formatTime(t))}</div>${rows.join("<br>")}`;
   },
 
   // Enum states as continuous bands: each reading holds until the next one
