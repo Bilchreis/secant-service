@@ -18,14 +18,14 @@
 
 ## 2. Behaviours, plot specs, registry, card helpers, test systems
 
-- [ ] 2.1 Add the `SecantServiceWeb.SystemDefinition` (`system/0`, `versions/0`, `roles/1`) and `SecantServiceWeb.SystemRole` (`required_parameters/0`, `card/0`, `plot/0`, all required, nil for none) behaviours, as in design.md Decision 2. The moduledocs say:
+- [x] 2.1 Add the `SecantServiceWeb.SystemDefinition` (`system/0`, `versions/0`, `roles/1`) and `SecantServiceWeb.SystemRole` (`required_parameters/0`, `card/0`, `plot/0`, all required, nil for none) behaviours, as in design.md Decision 2. The moduledocs say:
   - a shown parameter must be listed in `shown_parameters` to update live, and a body shows each parameter at most once;
   - bodies use the `location` assign and must not assume the dashboard (system views will reuse them).
 
   Add the `LinesPlot`, `ArrayPlot`, `Trace` and `LabelSource` structs (Decision 5), each in its own file under `lib/secant_service/plot_db/`, with typespecs. Verify `mix compile --warnings-as-errors`.
-- [ ] 2.2 Add `SecantServiceWeb.Systems` with `matches/1` and `shown_parameters/1`, reading `Application.get_env(:secant_service, :systems, [])` at call time and following the order rules of `specs/system-module-cards/spec.md`. Document `config :secant_service, :systems, []` in `config/config.exs`. Verify `mix compile --warnings-as-errors`.
-- [ ] 2.3 Add `SecantServiceWeb.Systems.Components` (`card_param`, `card_status`, `card_sparkline`, `card_command`), building ids from `node`, `module` and `location` as design.md Decision 3 describes. Verify `mix compile --warnings-as-errors`.
-- [ ] 2.4 Add test systems in `test/support/systems/`, each module in its own file:
+- [x] 2.2 Add `SecantServiceWeb.Systems` with `matches/1` and `shown_parameters/1`, reading `Application.get_env(:secant_service, :systems, [])` at call time and following the order rules of `specs/system-module-cards/spec.md`. Document `config :secant_service, :systems, []` in `config/config.exs`. Verify `mix compile --warnings-as-errors`.
+- [x] 2.3 Add `SecantServiceWeb.Systems.Components` (`card_param`, `card_status`, `card_sparkline`, `card_command`), building ids from `node`, `module` and `location` as design.md Decision 3 describes. Verify `mix compile --warnings-as-errors`.
+- [x] 2.4 Add test systems in `test/support/systems/`, each module in its own file:
   - `TestPowerSupply` (system `PowerSupply`, versions `[0]`):
     - role `current`: requires and shows `control_active`; a card body with a `#sys-body-<module>` element rendering `value` and `control_active` through the 2.3 helpers; a lines plot of `value`, `target` (setpoint), `voltage_limit` (axis 1) and `power_limit` (hidden);
     - role `voltage`: card only, no plot.
