@@ -69,6 +69,21 @@ A pair whose value names neither a module of the node nor another entry SHALL gi
 - **WHEN** an entry has `"system": "PowerSupply:0"` and no `modules`
 - **THEN** that entry gives no bindings and the dashboard renders as usual
 
+### Requirement: Reading never fails
+Reading bindings SHALL never fail, whatever shape the node gives its `systems` property. A `systems` value that is not an object SHALL give no bindings. An entry that is not an object, and a role whose key or value is not a string, SHALL be skipped without affecting the rest.
+
+#### Scenario: Systems not an object
+- **WHEN** a node declares `"systems": ["PowerSupply"]`
+- **THEN** none of its modules has a binding and the dashboard renders as usual
+
+#### Scenario: Entry and role values of the wrong type
+- **WHEN** one entry is the number 5, and another maps role `current` to `{"name": "magcur_x"}` and role `voltage` to `magvolt_x`
+- **THEN** the first entry and role `current` give nothing, and `magvolt_x` is bound as role `voltage`
+
+#### Scenario: Version with a trailing newline
+- **WHEN** a systems entry has `"system": "PowerSupply:1\n"`
+- **THEN** that entry gives no bindings
+
 ### Requirement: A module in several systems
 A module named in several systems entries SHALL have one binding per entry, ordered by local system name.
 

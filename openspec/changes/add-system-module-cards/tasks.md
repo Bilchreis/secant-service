@@ -2,32 +2,36 @@
 
 ## 1. Bindings
 
-- [ ] 1.1 Add `SecantService.Systems` with the `Binding` struct (including `parents`), `bindings/1`, `bindings_for/2` and `parse_reference/1`, following design.md Decision 1:
-  - read `custom_properties` `"systems"` or `:systems`, normalising keys with `to_string/1` and creating no atoms;
-  - parse references (no `:` is version 0, digits-only suffix, non-empty name) and drop malformed entries and entries without a `modules` map;
+- [ ] 1.1 Add `SecantService.Systems` (`bindings/1`, `bindings_for/2`, `parse_reference/1`), with the `Binding` struct (including `parents`) in its own file, `lib/secant_service/systems/binding.ex`. Follow design.md Decision 1:
+  - make it total: a non-map `systems`, non-map entries, and role keys or values that are neither strings nor atoms are skipped, never raised on;
+  - read `custom_properties` `"systems"` or `:systems`, normalising atom keys and creating no atoms;
+  - parse references (no `:` is version 0; the suffix must match `~r/\A\d+\z/` and parse to `{n, ""}`; the name must be non-empty), and drop malformed entries and entries without a `modules` map;
   - bind module names (module names win over local names); record subsystem containment and resolve parents outwards with a visited set, following the containing entry first by local system name;
   - sort each module's bindings by local system name.
 
   Verify `mix compile --warnings-as-errors`.
-- [ ] 1.2 Add a `put_systems/2` helper to `test/support/node_fixtures.ex` that sets the node-level `systems` property of a raw description. In `test/secant_service/systems_test.exs`, test every scenario of `specs/system-bindings/spec.md`:
+- [ ] 1.2 Add a `put_systems/2` helper to `test/support/node_fixtures.ex` that sets the node-level `systems` property of a raw description. In `test/secant_service/systems_test.exs`, test every scenario of `specs/system-bindings/spec.md`, including the malformed shapes and `"PowerSupply:1\n"`:
   - on custom properties with string keys (a node stored through `NodeManager`/`upsert_sec_node` and loaded back, as the dashboard and data browser get it);
   - on the atom-key output of `DescribeMessageTransformer.transform/1`, giving equal bindings.
 
   Verify the file passes.
 
-## 2. System and role behaviours, registry
+## 2. Behaviours, plot specs, registry, card helpers, test systems
 
 - [ ] 2.1 Add the `SecantServiceWeb.SystemDefinition` (`system/0`, `versions/0`, `roles/1`) and `SecantServiceWeb.SystemRole` (`required_parameters/0`, `card/0`, `plot/0`, all required, nil for none) behaviours, as in design.md Decision 2. The moduledocs say:
   - a shown parameter must be listed in `shown_parameters` to update live, and a body shows each parameter at most once;
   - bodies use the `location` assign and must not assume the dashboard (system views will reuse them).
 
-  Add `SecantService.PlotDB.PlotSpec` and `Trace` structs (Decision 5) with typespecs. Verify `mix compile --warnings-as-errors`.
+  Add the `LinesPlot`, `ArrayPlot`, `Trace` and `LabelSource` structs (Decision 5), each in its own file under `lib/secant_service/plot_db/`, with typespecs. Verify `mix compile --warnings-as-errors`.
 - [ ] 2.2 Add `SecantServiceWeb.Systems` with `matches/1` and `shown_parameters/1`, reading `Application.get_env(:secant_service, :systems, [])` at call time and following the order rules of `specs/system-module-cards/spec.md`. Document `config :secant_service, :systems, []` in `config/config.exs`. Verify `mix compile --warnings-as-errors`.
-- [ ] 2.3 Add test systems in `test/support/systems/`:
-  - `TestPowerSupply` (system `PowerSupply`, versions `[0]`), with role modules:
-    - `current`: requires and shows `control_active`; its card body has a `#sys-body-<module>` element rendering `value` and `control_active` through the 3.1 helpers; plot traces `value`, `target` (setpoint) and `voltage_limit` (axis 1);
-    - `voltage`: card only, no plot;
-  - `TestMfcGroup`: one role, plot only. Its traces draw `value.composition` per element, with labels read from `value.gas_list` (`{:path, ["gas_list"]}`), and `value.total_flow` on axis 1.
+- [ ] 2.3 Add `SecantServiceWeb.Systems.Components` (`card_param`, `card_status`, `card_sparkline`, `card_command`), building ids from `node`, `module` and `location` as design.md Decision 3 describes. Verify `mix compile --warnings-as-errors`.
+- [ ] 2.4 Add test systems in `test/support/systems/`, each module in its own file:
+  - `TestPowerSupply` (system `PowerSupply`, versions `[0]`):
+    - role `current`: requires and shows `control_active`; a card body with a `#sys-body-<module>` element rendering `value` and `control_active` through the 2.3 helpers; a lines plot of `value`, `target` (setpoint), `voltage_limit` (axis 1) and `power_limit` (hidden);
+    - role `voltage`: card only, no plot.
+  - `TestMfcGroup`: one role, lines plot only. It draws `value.composition` per element, labelled from `value.gas_list`, and `value.total_flow` on axis 1.
+  - `TestMassSpec`: one role, an array plot of `value` labelled from `_mass` with template `m/z {}` and axis name `m/z`.
+  - `TestMassTrend`: one role, a lines plot of the `value` elements picked by `_mass` 28 and 44, labelled from `_mass` with template `m/z {}`.
 
   Unit-test the registry in `test/secant_service_web/systems_test.exs`:
   - no config gives no matches;
@@ -41,16 +45,15 @@
 
 ## 3. Custom cards on the dashboard
 
-- [ ] 3.1 Add `SecantServiceWeb.Systems.Components` (`card_param`, `card_status`, `card_sparkline`, `card_command`), building ids from `node`, `module` and `location` as design.md Decision 3 describes. Verify `mix compile --warnings-as-errors`.
-- [ ] 3.2 In `DashboardLive`, add the uuid-keyed `systems` assign (`{uuid, matches, shown}`) through an `assign_systems/1` helper piped after each `Model.to_socket/2` call (not inside `SecantService.Model`), and pass `matches` to `ModuleGrid` and `ModuleDetail`. In the node browser, compute `matches` once per loaded session and pass it to `ModuleDetail`. Verify that the existing dashboard and node browser LiveView tests pass unchanged.
-- [ ] 3.3 Load the `daisyui` skill. In `ModuleGrid`:
+- [ ] 3.1 In `DashboardLive`, add the uuid-keyed `systems` assign (`{uuid, bindings, matches, shown}`) through an `assign_systems/1` helper piped after each `Model.to_socket/2` call (not inside `SecantService.Model`). Pass `matches` to `ModuleGrid`, and `matches` and `bindings` to `ModuleDetail`. In the node browser, compute `bindings` and `matches` once per loaded session and pass them to `ModuleDetail`. Verify that the existing dashboard and node browser LiveView tests pass unchanged.
+- [ ] 3.2 Load the `daisyui` skill. In `ModuleGrid`:
   - move the chrome of `module_card/1` into a private `card_shell/1` with `:badge`, `:inner_block` and `:actions` slots, keeping the generic card's rendered markup unchanged;
   - add `system_card/1`: the shell (keeping its `data-stale` and `data-status` attributes), the `#card-<name>-system` badge, `data-system`/`data-role` on the article, the role's card body with assigns including `location: "module_dash"`, and a params button counting all of the module's commands;
   - use it for matched modules whose role gives a card, among the non-acquisition modules only.
 
   Update the `DashboardComponents` moduledoc, which says cards may assume nothing beyond SECoP's standard parameters, to explain the system-card exception. Verify that the existing dashboard and acquisition-card LiveView tests pass unchanged.
-- [ ] 3.4 In `ModuleDetail`, list the module's bindings below the header (`#system-membership`, one entry per binding with role, local system name, `Name:version` and its parents), in both modes. Verify with 3.5.
-- [ ] 3.5 Add `test/secant_service_web/live/system_card_test.exs`, with a fixture node declaring `PowerSupply:0` and `VectorMagnet:0` systems (`put_systems/2`) and the test systems registered. Cover the scenarios of `specs/system-module-cards/spec.md`, asserting on element ids and data attributes:
+- [ ] 3.3 In `ModuleDetail`, list the module's bindings below the header (`#system-membership`, one entry per binding with role, local system name, `Name:version` and its parents), in both modes. Verify with 3.4.
+- [ ] 3.4 Add `test/secant_service_web/live/system_card_test.exs`, with a fixture node declaring `PowerSupply:0` and `VectorMagnet:0` systems (`put_systems/2`) and the test systems registered. Cover the scenarios of `specs/system-module-cards/spec.md`, asserting on element ids and data attributes:
   - the matched module renders `#card-<name>[data-system="PowerSupply:0"][data-role="current"] #sys-body-<name>`;
   - no systems configured, an unhandled version, a role without a module, and a missing required parameter give the generic card;
   - a role with a plot and no card gives the generic card with no badge;
@@ -58,6 +61,7 @@
   - an acquisition channel bound in the system stays inside `#acq-<ctrl>`;
   - selecting the custom card gives it the selection border, and pausing the node gives it the stale look;
   - a new description that adds the system switches the module to the custom card;
+  - a node with a malformed `systems` property renders every module with the generic card;
   - `#system-membership` lists role, system and parents for a bound module, and is absent for an unbound one, on the dashboard and in the node browser.
 
   Verify the file passes.
@@ -72,59 +76,74 @@
 
 ## 5. Custom module plot
 
-- [ ] 5.1 Add:
-  - `Trace.extract/2`: never raises; string-then-existing-atom keys, array indices; non-numbers give nil;
-  - `PlotDB.drawable?/2`: declared types only, no database access;
-  - `PlotDB.traces/3`: find the parameter, keep it if `drawable?` holds, expand `each` from `Channels.declared_length(…, max: 16)` or the latest reading without ever building more than the slots left under the cap, cut to 16, give stable series names, dedupe by series name, and fall back to the generic lines when empty.
+- [ ] 5.1 Add the total functions of design.md Decision 5:
+  - `Trace.extract/3`: string-then-existing-atom keys, list indices; non-numbers give nil;
+  - `LabelSource.text/2`: strings as they are, whole numbers without a fraction, other numbers in short form, the `{}` template, nil otherwise;
+  - `PlotDB.drawable?/2`: declared types only, `History.thinnable?/1`, struct-only paths, arrays of at most 100 elements; malformed `members` give false; no database access;
+  - `PlotDB.traces/3`: drop undrawable traces and arrays read longer than 100; expand `:each` to `min(declared || latest length, slots left)`; resolve `{:match, …}` by number compare; cut to 16; give stable names; dedupe; fall back to the generic lines when empty.
 
   Unit-test in `test/secant_service/plot_db/traces_test.exs`:
-  - `extract/2` on atom- and string-key structs, short arrays, nil and error values;
-  - traces: a missing parameter, a path to a string, an all-undrawable spec, a 350 000-element `maxlen` giving 16 traces without building more, a duplicate trace, and stable names (`value`, `value.composition[2]`);
-  - `drawable?/2` making no Repo query.
+  - `extract/3` on atom- and string-key structs, short arrays, nil and error values;
+  - `text/2` on `28.0`, `28.5`, a string, a map, nil and a template;
+  - `drawable?/2` on a missing parameter, a path to a string, an array-of-struct path, a 350 000-element `maxlen`, and malformed `members`, and that it makes no Repo query;
+  - `traces/3` on `:each` with and without a declared length, a match found and not found (28 against 28.0), a duplicate trace, stable names (`value`, `value.composition[2]`), and the 16 cap.
 
   Verify the file passes.
-- [ ] 5.2 In `TimePlot`/`Scalar`, add `build_custom/3`:
-  - one window fetch per distinct parameter (the held fetch for setpoint parameters), with traces extracted from it;
-  - labels from the latest reading of the trace's own parameter in the first window (`_label` on the series), fallback labels;
+- [ ] 5.2 In `TimePlot`/`Scalar`, add `build_lines/3` as design.md Decision 5 describes:
+  - one window fetch per distinct parameter (the held fetch for setpoint parameters), with traces extracted;
+  - latest readings from the first window, else one latest-reading query per parameter;
+  - `_label` on the series, and fallbacks;
   - setpoint (`_held`) and hidden (`legend.selected`) traces;
-  - bands only for whole-parameter, non-setpoint traces (`Bands.eligible?/1` requires an empty path);
   - `Gaps.put/3`, with `Gaps.fallback/2` requiring an empty path;
   - the two-axis option.
 
-  Give the plot both a line-shaped `lines` list (one entry per resolved trace) and the `traces` fan-out map (design.md Decision 5). Make `trace_updates/3` fan a parameter's readings out by parameter name, each trace taking the value at its path. Make `Scalar.series_updates/3` return `[]` for an unknown series instead of series 0. Test in `test/secant_service/plot_db_test.exs` with stored readings:
-  - query count: one window query per distinct parameter, counted through the Repo's query telemetry;
+  Give the plot `lines` (map shape), `resolved` (list shape) and `traces`, and add a `trace_updates/3` clause for `traces` before the `lines` clause. Make `Scalar.series_updates/3` return `[]` for an unknown series. Test in `test/secant_service/plot_db_test.exs` with stored readings:
+  - cost by distinct parameter: the Repo statements of four element traces of one parameter equal those of one trace of it (counted through query telemetry);
   - the custom plot carries `_gaps` and a gap reply, and a span-less session's estimate applies only to the whole `value` trace;
-  - the MFC group gives four labelled composition traces plus `total_flow` on axis 1, with `yAxisIndex: 1` and the axis labels;
+  - the MFC group gives four gas-labelled composition traces plus `total_flow` with `yAxisIndex: 1` and the axis labels; equal gas names still give four series;
+  - the mass trend picks the elements of masses 28 and 44 and labels them `m/z 28` and `m/z 44`, with `_mass` read by one latest-reading query;
   - a missing label falls back;
   - live `trace_updates/3` fans out by stable name, and a gas-list change keeps the labels;
-  - the band and gap rules.
+  - a whole number trace gets a band and an element trace doesn't.
 
   Verify the file passes.
-- [ ] 5.3 Show `_label || name`, escaped with `escHtml` from `common.js`, in three places:
-  - the legend formatter in `echarts_chart.js`;
-  - a new axis-tooltip formatter for number plots (today ECharts' default);
-  - `bands.js` `_envelopeTooltip`.
+- [ ] 5.3 In `PlotDB.init` with an `ArrayPlot`, follow today's array path and add `_indexLabels` (one per index for a heatmap; for `ArrayLatest`, an index → label map for the drawn indexes only) and `_indexAxisName`. Make `HistoryDB.rebuild_as_latest/3` carry them into `ArrayLatest.plot`. Test in `test/secant_service/plot_db_test.exs`:
+  - the mass spec heatmap gets `m/z 1`, `m/z 2`, … and the axis name;
+  - 90 `_mass` entries for 100 elements leave indexes 90–99 unlabelled;
+  - a 350 000-element latest-reading plot sends at most its drawn indexes' labels;
+  - a rebuilt latest-reading plot keeps the labels.
 
-  Put the label/escape logic in a pure `.mjs` helper and test it with `node --test` alongside `assets/js/charts/gaps.test.mjs`, including a `<b>N2</b>` label shown literally. Verify both tests pass.
-- [ ] 5.4 In `HistoryDB`, accept an optional `plot_spec` assign. Use `PlotDB.drawable?/2` on mount when a spec is given, and pass the spec to `init` on mount and reloads. When the loaded plot carries `traces`, make the range, window and overview handlers fetch once per distinct `line.param.id` and fan out, and make the live filter read the plot's `lines`. Plots without `traces` keep today's code. Verify that the existing `HistoryDB`, plot and LiveView tests pass unchanged.
-- [ ] 5.5 In `ModuleDetail`, pass the matched role's `plot()` as `plot_spec` to the module plot only (never to a parameter plot), and gate it on `@plot_parameter || @has_value || PlotDB.drawable?(module, spec)`. In `system_card_test.exs`, test that:
-  - the live module plot of the matched `current` module draws the three test traces;
+  Verify the file passes.
+- [ ] 5.4 In the chart hook, show labels as design.md Decision 5 describes:
+  - move `escHtml` into a new pure `assets/js/charts/labels.mjs` (re-exported from `common.js`), with the label helpers;
+  - the legend formatter gets the raw `_label || name` (canvas);
+  - a number-plot axis-tooltip formatter, installed only when some series has `_label`, escapes;
+  - `bands.js` `_envelopeTooltip` uses the escaped label;
+  - with `_indexLabels`: the heatmap index-axis formatter (raw) and hover readout (escaped), the lines-mode series labels and `_linesTooltip` (escaped), and `ArrayLatest`'s index-axis formatter and tooltip (escaped); `_indexAxisName` names the index axis.
+
+  Add `assets/js/charts/labels.test.mjs`: a `<b>N2</b>` label is escaped for tooltips and raw for canvas, and an index without a label shows its number. Add it to the `node --test` step in `.github/workflows/ci.yml`. Verify `node --test assets/js/charts/gaps.test.mjs assets/js/charts/labels.test.mjs` passes.
+- [ ] 5.5 In `HistoryDB`, accept an optional `plot_spec` assign. Check `PlotDB.drawable?/2` on mount when one is given, and pass it to `init` on mount and reloads. When the loaded plot carries `traces`, make the range, window and overview handlers and the live filter read `plot.resolved`, fetching once per distinct `param.id` and fanning out. Other plots keep today's code. Verify that the existing `HistoryDB`, plot and LiveView tests pass unchanged.
+- [ ] 5.6 In `ModuleDetail`, pass the matched role's `plot()` as `plot_spec` to the module plot only (never to a parameter plot), and only when the module has a `value`, keeping today's `@plot_parameter || @has_value` gate. In `system_card_test.exs`, test that:
+  - the live module plot of the matched `current` module draws the four test traces, with `power_limit` deselected in `legend.selected`;
   - a pushed `voltage_limit` reading is sent as an `extend-chart-<id>` update;
+  - the `voltage` role (card, no plot) gets the generic module plot;
   - a parameter plot opened from a row stays generic;
-  - a module with a string `value` and no match still shows the table.
+  - a module with a string `value` and no match still shows the table;
+  - the mass spec module's plot carries `_indexLabels`.
 
-  In `test/secant_service_web/live/node_browser_live_test.exs`, test that the stored session's module plot draws the same traces. Verify both files pass.
+  In `test/secant_service_web/live/node_browser_live_test.exs`, test that the stored session's custom lines plot draws the same traces, and drive `fetch-chart-window`, `fetch-chart-overview` and `fetch-chart-range` on it with `render_hook` (as the existing tests there do), asserting the replies carry the custom traces. Verify both files pass.
 
 ## 6. Integration
 
 - [ ] 6.1 Load the `run-app` skill. `test/support` is not compiled in dev, so ask the user before a temporary, uncommitted setup:
   - copies of the test systems under `lib/` and a `:systems` entry in `config/dev.exs` (the user restarts the dev server; never start or stop it yourself);
-  - a node that declares a `PowerSupply:0` system and an MFC-group-like module, e.g. a frappy sim config with a `systems` property.
+  - nodes that declare the systems: e.g. a frappy sim config with a `systems` property for a power supply and an MFC group, and the ROCK-IT `gas_analysis` sim's `mass_spec` bound to the mass spec test systems.
 
   In headless Chrome, check:
   - the custom card;
-  - the two-axis module plot extending live, zooming in the data browser, and breaking at a recording gap (pause and resume the node);
-  - the gas-name labels in the legend, the live tooltip and the banded historical tooltip.
+  - the two-axis lines plot extending live, zooming in the data browser, and breaking at a recording gap (pause and resume the node);
+  - gas-name labels in the legend, the live tooltip and the banded historical tooltip;
+  - the mass spec heatmap's `m/z` axis, its lines mode and the mass-picked traces.
 
   Report what was seen. Afterwards remove the temporary systems and config, and verify that `git status` shows neither.
 - [ ] 6.2 Run `mix precommit` and fix everything it reports. Verify it exits cleanly.
