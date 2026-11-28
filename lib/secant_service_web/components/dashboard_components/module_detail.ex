@@ -6,6 +6,8 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
   use Phoenix.Component
 
   alias SecantService.Acquisition
+  alias SecantService.Systems.Binding
+  alias SecantServiceWeb.Systems
   alias SecantService.SecNodes.Module
   alias SecantService.Util
   alias SecantServiceWeb.ValueFormat
@@ -25,6 +27,8 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
   attr :plot_id, :string, required: true
   attr :chart_height, :integer, default: 260
   attr :node_state, :atom, default: :initialized
+  attr :bindings, :map, default: %{}, doc: "module name → SECoP system bindings"
+  attr :matches, :map, default: %{}, doc: "module name → system match"
 
   def module_detail(assigns) do
     module = assigns.module
@@ -47,6 +51,8 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
       |> assign(:module_json, module_json && Jason.encode!(module_json, pretty: true))
       |> assign(:acq_channels, acq_channels(module, assigns.node.modules))
       |> assign(:acq_controller, Acquisition.controller_of(module, assigns.node.modules))
+      |> assign(:module_bindings, Map.get(assigns.bindings, module.name, []))
+      |> assign(:plot_spec, plot_spec(module, plot_parameter, assigns.matches))
 
     ~H"""
     <div class="flex flex-col gap-4" id={"module-detail-" <> @module.name}>
@@ -85,6 +91,27 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
             {Util.display_name(elem(@acq_controller, 0).name)}
           </button>
         </p>
+        <ul
+          :if={@module_bindings != []}
+          id="system-membership"
+          class="mt-1 flex flex-col gap-0.5 text-xs text-muted"
+          aria-label="Systems"
+        >
+          <li
+            :for={binding <- @module_bindings}
+            id={"system-membership-" <> binding.local_name}
+            title={binding.description}
+          >
+            <span class="font-mono font-semibold text-base-content">{binding.role}</span>
+            in <span class="font-semibold text-base-content">{binding.local_name}</span>
+            <span class="font-mono">· {Binding.reference(binding)}</span>
+            <span :for={parent <- binding.parents}>
+              · <span class="font-mono font-semibold text-base-content">{parent.role}</span>
+              of <span class="font-semibold text-base-content">{parent.local_name}</span>
+              <span class="font-mono">· {parent.system}:{parent.version}</span>
+            </span>
+          </li>
+        </ul>
       </header>
 
       <section :if={@acq_channels != []} id="acq-channel-links" aria-label="Acquisition channels">
@@ -135,6 +162,7 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
             module={HistoryDB}
             id={@plot_id}
             secop_obj={@plot_obj}
+            plot_spec={@plot_spec}
             plot_mode={@mode}
             height={@chart_height}
             class=""
@@ -342,6 +370,16 @@ defmodule SecantServiceWeb.DashboardComponents.ModuleDetail do
     order = %{"value" => 0, "target" => 1, "status" => 2}
     Enum.sort_by(parameters, fn p -> Map.get(order, p.name, 3) end)
   end
+
+  # a matched system role's custom plot replaces the module plot (never a
+  # parameter's own plot), for a module with a `value`: the plot's table and
+  # export use `value`
+  defp plot_spec(module, nil, matches) do
+    if Module.get_parameter(module, "value"),
+      do: Systems.plot(Map.get(matches, module.name))
+  end
+
+  defp plot_spec(_module, _plot_parameter, _matches), do: nil
 
   defp acq_channels(module, modules) do
     if Acquisition.controller?(module), do: Acquisition.channels(module, modules), else: []

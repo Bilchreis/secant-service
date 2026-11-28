@@ -56,6 +56,12 @@ defmodule SecantService.NodeFixtures do
     }
   end
 
+  @doc """
+  Sets the node-level `systems` property (SECoP RFC-104) of a raw
+  description, e.g. `%{mag5t_x: %{system: "PowerSupply:0", modules: %{current: "magcur_x"}}}`.
+  """
+  def put_systems(raw_description, systems), do: Map.put(raw_description, :systems, systems)
+
   @doc "The state a `SecantClient.NodeStatem` holds after a successful handshake."
   def node_state(node_id, raw_description, uuid \\ Ecto.UUID.generate()) do
     {host, port} = node_id

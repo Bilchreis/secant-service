@@ -96,10 +96,15 @@ defmodule SecantService.PlotDB.DTypes.Scalar do
   end
 
   @impl true
+  # an unknown series gets nothing: its readings must not land on series 0
   def series_updates(option, datapoints, series_name) do
-    idx = Enum.find_index(option.series, fn s -> Map.get(s, :name) == series_name end) || 0
-    {vals, tss} = Enum.unzip(datapoints)
-    data = Enum.zip_with(tss, vals, &[&1, &2])
-    [%{seriesIndex: idx, data: data}]
+    case Enum.find_index(option.series, fn s -> Map.get(s, :name) == series_name end) do
+      nil ->
+        []
+
+      idx ->
+        {vals, tss} = Enum.unzip(datapoints)
+        [%{seriesIndex: idx, data: Enum.zip_with(tss, vals, &[&1, &2])}]
+    end
   end
 end

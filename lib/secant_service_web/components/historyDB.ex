@@ -87,13 +87,19 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   # meanwhile (`:rebuilding_plot` holds back updates into it); a newer
   # rebuild replaces a running one.
   defp rebuild_as_latest(socket, param, latest_fun) do
+    secop_obj = socket.assigns.secop_obj
+    spec = socket.assigns[:plot_spec]
+
     socket
     |> assign(:rebuilding_plot, true)
     |> assign(:rebuild_param, param)
     |> cancel_async(:load_plot)
     # heatmap history still loading would only go into the replaced chart
     |> cancel_async(:fetch_chart_range)
-    |> start_async(:load_plot, fn -> ArrayLatest.plot(param, latest_fun.()) end)
+    |> start_async(:load_plot, fn ->
+      # a rebuild is a reload: a labelled array reads its labels again
+      param |> ArrayLatest.plot(latest_fun.()) |> PlotDB.put_index_labels(secop_obj, spec)
+    end)
   end
 
   def tabular?(%SecantService.SecNodes.Module{} = module) do
@@ -123,6 +129,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
           |> assign(:calibration_plot, nil)
 
         plot_mode = assigns[:plot_mode] || :live
+        # a system role's custom module plot (see SecantServiceWeb.SystemRole)
+        plot_spec = assigns[:plot_spec]
 
         ifclass =
           case secop_obj do
@@ -132,12 +140,13 @@ defmodule SecantServiceWeb.Components.HistoryDB do
 
         socket =
           cond do
-            PlotDB.plottable?(secop_obj) ->
+            PlotDB.plottable?(secop_obj) or
+                (plot_spec != nil and PlotDB.drawable?(secop_obj, plot_spec)) ->
               assign(socket, :display_mode, :graph)
               |> assign(:plottable, true)
               |> assign(:plot_mode, plot_mode)
               |> assign(:plot, AsyncResult.loading())
-              |> start_async(:load_plot, fn -> PlotDB.init(secop_obj, plot_mode) end)
+              |> start_async(:load_plot, fn -> PlotDB.init(secop_obj, plot_mode, plot_spec) end)
 
             tabular?(secop_obj) ->
               assign(socket, :display_mode, :table)
@@ -159,6 +168,7 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         |> assign(:class, assigns.class)
         |> assign(:parameter, get_parameter(secop_obj))
         |> assign(:secop_obj, secop_obj)
+        |> assign(:plot_spec, plot_spec)
         |> assign(:interface_class, ifclass)
       end
 
@@ -201,7 +211,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
     # a historical plot draws what is stored; it takes no live readings
     socket =
       if socket.assigns.plottable and socket.assigns.plot_mode == :live and
-           socket.assigns.plot.ok? and parameter in PlotDB.param_list(socket.assigns.secop_obj) do
+           socket.assigns.plot.ok? and
+           parameter in PlotDB.drawn_params(socket.assigns.plot.result, socket.assigns.secop_obj) do
         datapoints =
           for [value, %{t: timestamp}] <- value_update_list, do: {value, trunc(timestamp * 1000)}
 
@@ -541,11 +552,12 @@ defmodule SecantServiceWeb.Components.HistoryDB do
         # was shown went into a chart that is gone.
         :graph when socket.assigns.plot == nil or socket.assigns.plot_mode == :live ->
           plot_mode = socket.assigns.plot_mode
+          plot_spec = socket.assigns.plot_spec
 
           socket
           |> assign(:plot, AsyncResult.loading())
           |> cancel_async(:fetch_chart_range)
-          |> start_async(:load_plot, fn -> PlotDB.init(secop_obj, plot_mode) end)
+          |> start_async(:load_plot, fn -> PlotDB.init(secop_obj, plot_mode, plot_spec) end)
 
         # Eagerly push already-loaded plot data so it is batched with the DOM
         # diff. LiveView guarantees push_events fire only after the diff is
@@ -586,6 +598,29 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   def handle_event("set-display-mode", _params, socket), do: {:noreply, socket}
 
   @impl true
+  # nothing to plot after all (a custom plot whose traces all dropped, on a
+  # module whose value isn't plottable): its table, not an empty chart
+  def handle_async(:load_plot, {:ok, %{plottable: false} = plot}, socket) do
+    secop_obj = socket.assigns.secop_obj
+
+    socket =
+      socket
+      |> assign(:plot, AsyncResult.ok(socket.assigns.plot, plot))
+      |> assign(:rebuilding_plot, false)
+
+    socket =
+      if socket.assigns.display_mode == :graph and tabular?(secop_obj) do
+        socket
+        |> assign(:display_mode, :table)
+        |> assign(:plottable, false)
+        |> assign_async(:table_data, fn -> get_tabledata(secop_obj) end)
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
   def handle_async(:load_plot, {:ok, plot}, socket) do
     height = chart_height(plot, socket.assigns.base_height)
     plot = SecantService.PlotDB.DTypes.Struct.fit_height(plot, height)
@@ -1002,6 +1037,8 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   # value, so an undrawn target must not set the resolution of a reply (nor
   # the width its gaps are judged at). Plots without `lines` (the
   # latest-reading plot) use all of them.
+  defp drawn_lines(_secop_obj, %{resolved: lines}), do: lines
+
   defp drawn_lines(secop_obj, plot) do
     lines = PlotDB.lines(secop_obj)
 

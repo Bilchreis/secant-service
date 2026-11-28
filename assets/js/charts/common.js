@@ -41,9 +41,7 @@ export const ARRAY_LINE_STOPS = [
   [244, 63, 94],
 ];
 // Text from the node's description (units, names) going into tooltip HTML.
-export function escHtml(v) {
-  return String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-}
+export { escHtml } from "./labels.mjs";
 
 // Axis and scale labels that stay readable for tiny or huge values
 // (e.g. partial pressures of 1e-13 mbar): exponent form outside 1e-3 … 1e6.

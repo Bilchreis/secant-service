@@ -9,7 +9,11 @@ defmodule SecantService.PlotDB do
   alias SecantService.Util
   alias SecantService.PlotDB.Builders
   alias SecantService.PlotDB.History
+  alias SecantService.PlotDB.ArrayPlot
+  alias SecantService.PlotDB.LinesPlot
   alias SecantService.PlotDB.TimePlot
+  alias SecantService.PlotDB.Trace
+  alias SecantService.PlotDB.Traces
   alias SecantService.PlotDB.DTypes.ArrayHeatmap
   alias SecantService.PlotDB.DTypes.ArrayLatest
   alias SecantService.PlotDB.DTypes.Scalar
@@ -91,12 +95,70 @@ defmodule SecantService.PlotDB do
   # Building
   # ---------------------------------------------------------------------------
 
+  @doc """
+  The plot of `secop_obj`. With a role's custom plot `spec` (see
+  `SecantServiceWeb.SystemRole`) a module gets that plot instead: a lines
+  plot falls back to the generic plot when none of its traces resolves; an
+  array plot is the generic array plot of `value` with its index labelled.
+  """
+  def init(secop_obj, mode, spec)
+
+  def init(%Module{} = module, mode, %LinesPlot{} = spec) do
+    case Traces.resolve(module, spec) do
+      :no_traces -> init(module, mode)
+      entries -> TimePlot.build_lines(entries, spec, mode)
+    end
+  end
+
+  def init(%Module{} = module, mode, %ArrayPlot{} = spec),
+    do: module |> init(mode) |> put_index_labels(module, spec)
+
+  def init(secop_obj, mode, _spec), do: init(secop_obj, mode)
+
   def init(secop_obj, mode \\ :live) do
     lines = lines(secop_obj)
 
     case long_array(lines) do
       {param, latest} -> ArrayLatest.plot(param, latest)
       nil -> build(lines, mode)
+    end
+  end
+
+  @doc """
+  Whether a role's custom plot `spec` can draw anything on `module`, from
+  the description alone (see `SecantService.PlotDB.Traces.drawable?/2`).
+  """
+  def drawable?(module, spec), do: Traces.drawable?(module, spec)
+
+  @doc """
+  Labels the index of an array plot of `module`'s `value` with the custom
+  array plot `spec`'s label source (`_indexLabels`), and names its index
+  axis. A heatmap takes the first 100 labels; a latest-reading plot takes
+  them only when the source has at most 4000 entries, since above that its
+  drawn indexes change from reading to reading. Other plots are returned as
+  they are.
+  """
+  def put_index_labels(%{plot_type: :array_heatmap, option: option} = plot, module, spec) do
+    labels = Traces.index_labels(module, spec, TimePlot.max_array_len())
+    %{plot | option: label_index(option, :yAxis, labels, spec.axis_name)}
+  end
+
+  def put_index_labels(%{plot_type: :array_latest, option: option} = plot, module, spec) do
+    labels = Traces.index_labels(module, spec, ArrayLatest.max_points())
+    %{plot | option: label_index(option, :xAxis, labels, spec.axis_name)}
+  end
+
+  def put_index_labels(plot, _module, _spec), do: plot
+
+  defp label_index(option, axis, labels, axis_name) do
+    option = if labels == [], do: option, else: Map.put(option, :_indexLabels, labels)
+
+    case {axis_name, option[axis]} do
+      {name, %{} = index_axis} when is_binary(name) ->
+        Map.put(option, axis, Map.put(index_axis, :name, name))
+
+      _ ->
+        option
     end
   end
 
@@ -181,6 +243,25 @@ defmodule SecantService.PlotDB do
   def trace_updates(%{plot_type: :array_latest} = plot, datapoints, name),
     do: ArrayLatest.trace_updates(plot, datapoints, name)
 
+  # a custom lines plot: the readings of `name` fan out to its traces, each
+  # taking the number at its path; readings without one give no point
+  def trace_updates(%{traces: traces, option: option}, datapoints, name) do
+    updates =
+      for entry <- Map.get(traces, name, []),
+          index = series_index(option, entry.series),
+          index != nil do
+        data =
+          for {value, ts} <- datapoints,
+              x = Trace.extract(value, entry.path, entry.index),
+              x != nil,
+              do: [ts, x]
+
+        %{seriesIndex: index, data: data}
+      end
+
+    %{seriesUpdates: updates}
+  end
+
   def trace_updates(%{lines: lines, option: option}, datapoints, name) do
     case Map.get(lines, name) do
       nil ->
@@ -198,6 +279,13 @@ defmodule SecantService.PlotDB do
   end
 
   def trace_updates(_plot, _datapoints, _name), do: %{seriesUpdates: []}
+
+  defp series_index(%{series: series}, name),
+    do: Enum.find_index(series, &(Map.get(&1, :name) == name))
+
+  @doc "The parameters whose readings a loaded plot of `secop_obj` draws."
+  def drawn_params(%{traces: traces}, _secop_obj), do: Map.keys(traces)
+  def drawn_params(_plot, secop_obj), do: param_list(secop_obj)
 
   # ---------------------------------------------------------------------------
   # Calibration plot (standalone — uses NodeTable directly, not DB values)

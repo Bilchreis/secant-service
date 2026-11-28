@@ -11,6 +11,7 @@ import {
   formatTime,
 } from "./common";
 import { gapAt, gapText } from "./gaps.mjs";
+import { indexText, indexTick } from "./labels.mjs";
 
 export const Arrays = {
   // the array is wider than the chart has room for
@@ -151,7 +152,9 @@ export const Arrays = {
       const time = formatTime(hit.t);
       const unit = this._arrayUnit ? ` ${this._arrayUnit}` : "";
       const value = typeof hit.v === "number" ? formatAxisNumber(hit.v) : hit.v;
-      this._heatTip.textContent = `${time}  [${hit.i}]  ${value}${unit}${hit.label ? `  ${hit.label}` : ""}`;
+      // textContent: a system plot's index label goes in as it is
+      const index = indexText(this._indexLabels, hit.i);
+      this._heatTip.textContent = `${time}  ${index}  ${value}${unit}${hit.label ? `  ${hit.label}` : ""}`;
     } else {
       this._heatTip.textContent = gapText(gap, Date.now(), { time: formatTime, duration: formatBucket });
     }
@@ -211,7 +214,10 @@ export const Arrays = {
   _composeBase(option) {
     // which buffer each drawn series shows; null = one series per buffer
     this._seriesMap = null;
+    // a system plot's labelled array index (e.g. "m/z 28" per element)
+    this._indexLabels = option._indexLabels || null;
     if (this._arrayLatest) {
+      const labels = this._indexLabels;
       const css = getComputedStyle(document.documentElement);
       const unit = this._arrayLatest.unit ? ` ${escHtml(this._arrayLatest.unit)}` : "";
       return {
@@ -229,11 +235,13 @@ export const Arrays = {
           },
         },
         yAxis: { ...option.yAxis, axisLabel: { formatter: formatAxisNumber } },
+        // the index axis's labels are canvas text: raw
+        ...(labels ? { xAxis: { ...option.xAxis, axisLabel: { formatter: (v) => indexTick(labels, v) } } } : {}),
         tooltip: {
           ...option.tooltip,
           formatter: (ps) => {
             const p = ps && ps[0];
-            return p ? `[${p.value[0]}]  ${formatAxisNumber(p.value[1])}${unit}` : "";
+            return p ? `${escHtml(indexText(labels, p.value[0]))}  ${formatAxisNumber(p.value[1])}${unit}` : "";
           },
         },
       };
@@ -374,18 +382,24 @@ export const Arrays = {
     const fmt = (v) => (typeof v === "number" ? formatAxisNumber(v) : esc(v));
     const val = (p) => fmt(p.value[1]);
     // pointer on a line: only that element
+    // the element's name: a system plot's index label, by the element the
+    // line draws (series keep their "[i]" names)
+    const name = (p) => {
+      const m = this._seriesMap && this._seriesMap[p.seriesIndex];
+      return m && m.elem != null && this._indexLabels ? indexText(this._indexLabels, m.elem) : p.seriesName;
+    };
     const hit = this._hoverSeries != null && ps.find((p) => p.seriesIndex === this._hoverSeries);
     if (hit) {
       return (
         `<div>${time}</div>` +
         `<div style="font-size:13px;font-weight:600"><span style="color:${hit.color}">●</span> ` +
-        `${esc(hit.seriesName)} ${val(hit)}${unit}</div>`
+        `${esc(name(hit))} ${val(hit)}${unit}</div>`
       );
     }
     const seen = new Set();
     const rows = ps
       .filter((p) => !seen.has(p.seriesName) && seen.add(p.seriesName))
-      .map((p) => `<span style="color:${p.color}">●</span> ${esc(p.seriesName)} ${val(p)}`)
+      .map((p) => `<span style="color:${p.color}">●</span> ${esc(name(p))} ${val(p)}`)
       .join("<br>");
     const cols = ps.length > 16 ? `columns:${ps.length > 48 ? 4 : 2};column-gap:12px;` : "";
     return `<div>${time}${unit ? ` ·${unit}` : ""}</div><div style="${cols}font-size:11px;line-height:1.35">${rows}</div>`;

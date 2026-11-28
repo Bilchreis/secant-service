@@ -14,6 +14,9 @@ defmodule SecantService.PlotDB.DTypes.ArrayLatest do
   alias SecantService.SecNodes.Reading.Storage
 
   @max_points 4000
+
+  @doc "Most points a latest-reading plot draws of one reading."
+  def max_points, do: @max_points
   # how many readings the time slider can step through (the most recent ones)
   @max_times 20_000
 

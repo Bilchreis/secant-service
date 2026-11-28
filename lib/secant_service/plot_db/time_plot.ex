@@ -27,6 +27,7 @@ defmodule SecantService.PlotDB.TimePlot do
   alias SecantService.PlotDB.DTypes.Enum, as: EnumDType
   alias SecantService.PlotDB.DTypes.Scalar
   alias SecantService.PlotDB.DTypes.Struct, as: StructDType
+  alias SecantService.PlotDB.Trace
 
   # longest array the heatmap carries; longer ones are plotted as their
   # latest reading
@@ -126,6 +127,127 @@ defmodule SecantService.PlotDB.TimePlot do
     |> plot(lines, Scalar, Enum.map(fetched, fn {_line, {_v, _t, res}} -> res end))
     |> Bands.put(fetched, mode)
     |> Gaps.put(lines, gap_window(mode))
+  end
+
+  @doc """
+  A custom lines plot (`SecantService.PlotDB.LinesPlot`) of resolved trace
+  entries (`SecantService.PlotDB.Traces.resolve/2`): one window per distinct
+  parameter, each trace's numbers extracted from it, drawn as number lines on
+  one or two y-axes, with recording gaps and, in the data browser, bands on
+  whole number parameters.
+
+  Besides `option` the plot carries `lines` (by series name, as plots do),
+  `resolved` (one line per distinct parameter, `%{param:, series:,
+  setpoint?:, hidden?:}`, which the window handlers fetch and gaps and bands
+  read) and `traces` (parameter name → its trace entries, which live
+  readings fan out to, see `SecantService.PlotDB.trace_updates/3`).
+  """
+  def build_lines(entries, %{axes: axes}, mode) do
+    fetch_lines =
+      entries
+      |> Enum.group_by(& &1.param.name)
+      |> Enum.map(fn {_name, [first | _] = group} ->
+        %{
+          param: first.param,
+          series: first.param.name,
+          setpoint?: Enum.any?(group, & &1.setpoint?),
+          hidden?: false
+        }
+      end)
+
+    fetched = Enum.map(fetch_lines, &{&1, fetch(&1, mode)})
+    windows = Map.new(fetched, fn {line, window} -> {line.param.name, window} end)
+
+    series =
+      for entry <- entries do
+        {vals, ts, _res} = Map.fetch!(windows, entry.param.name)
+        {ts, vals} = extract_points(ts, vals, entry)
+
+        entry.series
+        |> Scalar.scalar_line_series(ts, vals,
+          held: entry.setpoint?,
+          setpoint: entry.series == "target"
+        )
+        |> put_label(entry.label)
+        |> put_axis(entry.axis)
+      end
+
+    legend_selected = for e <- entries, e.hidden?, into: %{}, do: {e.series, false}
+
+    series
+    |> Scalar.timeseries_option(axis_unit(entries, axes, 0), mode, legend_selected)
+    |> put_second_axis(entries, axes)
+    |> custom_plot(entries, fetch_lines, fetched)
+    |> Bands.put(fetched, mode)
+    |> Gaps.put(fetch_lines, gap_window(mode))
+  end
+
+  # a reading without a number where the trace reads gives no point (not a
+  # break): a transient error reading doesn't cut the line
+  defp extract_points(ts, vals, entry) do
+    ts
+    |> Enum.zip(vals)
+    |> Enum.flat_map(fn {t, v} ->
+      case Trace.extract(v, entry.path, entry.index) do
+        nil -> []
+        x -> [{t, x}]
+      end
+    end)
+    |> Enum.unzip()
+  end
+
+  defp put_label(series, nil), do: series
+  defp put_label(series, label), do: Map.put(series, :_label, label)
+
+  defp put_axis(series, 1), do: Map.put(series, :yAxisIndex, 1)
+  defp put_axis(series, _axis), do: series
+
+  # an axis's label: the plot's name and unit for it, else the unit of its
+  # first trace
+  defp axis_unit(entries, axes, index) do
+    spec = Enum.at(axes || [], index) || %{}
+    name = spec[:name]
+    unit = spec[:unit] || Enum.find_value(entries, &(&1.axis == index && &1.unit))
+
+    case {name, unit} do
+      {nil, unit} -> unit
+      {name, nil} -> name
+      {name, unit} -> "#{name} (#{unit})"
+    end
+  end
+
+  defp put_second_axis(option, entries, axes) do
+    if Enum.any?(entries, &(&1.axis == 1)) do
+      right = %{
+        type: "value",
+        name: axis_unit(entries, axes, 1) || "",
+        nameLocation: "end",
+        nameGap: 12,
+        nameTextStyle: %{align: "right"},
+        position: "right",
+        scale: true,
+        splitLine: %{show: false}
+      }
+
+      # the right axis's name sits in the top right corner, where the zoom
+      # tools are: the plot starts lower, so both axis names clear them
+      option
+      |> Map.update!(:yAxis, &[&1, right])
+      |> Map.update!(:grid, &(&1 |> Map.put(:right, 64) |> Map.put(:top, 64)))
+    else
+      option
+    end
+  end
+
+  defp custom_plot(option, entries, fetch_lines, fetched) do
+    %{
+      plottable: true,
+      option: option,
+      lines: Map.new(entries, &{&1.series, %{series: &1.series, dtype: Scalar}}),
+      resolved: fetch_lines,
+      traces: Enum.group_by(entries, & &1.param.name)
+    }
+    |> Builders.put_resolution(Enum.map(fetched, fn {_line, {_v, _t, res}} -> res end))
   end
 
   # a numeric array gets its session's gaps, unless it is a setpoint (held
