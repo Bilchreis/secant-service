@@ -1,16 +1,33 @@
 defmodule SecantServiceWeb.Systems do
   @moduledoc """
-  Matches a node's modules to the system definitions listed in
-  `config :secant_service, :systems` (`SecantServiceWeb.SystemDefinition`).
+  Finds the system definitions (`SecantServiceWeb.SystemDefinition`) and
+  matches a node's modules to them.
+
+  ## Finding them
+
+  A system definition is found when its module sits under
+  `SecantServiceWeb.Systems.` and declares
+  `@behaviour SecantServiceWeb.SystemDefinition`; no registration is needed.
+  They are tried by module name. Two optional settings override that:
+
+    * `config :secant_service, :systems, [Mod, …]` uses exactly that list,
+      in that order (tests register their test systems this way);
+    * `config :secant_service, :disabled_systems, [Mod, …]` leaves those out.
+
+  The module list is the application's, read when it is loaded: a running
+  dev server finds a newly added system module after a restart (edits to an
+  existing one reload as usual).
+
+  ## Matching
 
   A module matches when one of its bindings (`SecantService.Systems`) has a
   configured system's name and one of its versions, that version has a role
   module (`SecantServiceWeb.SystemRole`) for the binding's role, and the
   module has every parameter the role requires. Bindings are tried in their
-  order (by local system name), and system definitions in configuration
-  order; the first full match wins.
+  order (by local system name), and system definitions in the order above;
+  the first full match wins.
 
-  The config is read at call time, so tests can register systems with
+  The settings are read at call time, so tests can change them with
   `Application.put_env/3`.
   """
 
@@ -18,8 +35,39 @@ defmodule SecantServiceWeb.Systems do
 
   @type match :: %{system: module(), role: module(), binding: SecantService.Systems.Binding.t()}
 
-  @doc "The configured system modules."
-  def configured, do: Application.get_env(:secant_service, :systems, [])
+  @namespace "Elixir.SecantServiceWeb.Systems."
+
+  @doc "The system definitions in use: found or listed, without the disabled ones."
+  def configured do
+    disabled = Application.get_env(:secant_service, :disabled_systems, [])
+
+    systems =
+      case Application.get_env(:secant_service, :systems) do
+        listed when is_list(listed) -> listed
+        _ -> discovered()
+      end
+
+    Enum.reject(systems, &(&1 in disabled))
+  end
+
+  @doc """
+  The system definitions under `SecantServiceWeb.Systems.`, by module name:
+  the application's modules there that declare the
+  `SecantServiceWeb.SystemDefinition` behaviour.
+  """
+  def discovered do
+    (Application.spec(:secant_service, :modules) || [])
+    |> Enum.filter(&(String.starts_with?(Atom.to_string(&1), @namespace) and definition?(&1)))
+    |> Enum.sort()
+  end
+
+  defp definition?(module) do
+    Code.ensure_loaded?(module) and
+      module.module_info(:attributes)
+      |> Keyword.get_values(:behaviour)
+      |> List.flatten()
+      |> Enum.member?(SecantServiceWeb.SystemDefinition)
+  end
 
   @doc """
   The matched modules of `node`, as `%{module_name => match}`. `bindings`

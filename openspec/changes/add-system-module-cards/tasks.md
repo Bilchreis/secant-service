@@ -23,7 +23,7 @@
   - bodies use the `location` assign and must not assume the dashboard (system views will reuse them).
 
   Add the `LinesPlot`, `ArrayPlot`, `Trace` and `LabelSource` structs (Decision 5), each in its own file under `lib/secant_service/plot_db/`, with typespecs. Verify `mix compile --warnings-as-errors`.
-- [x] 2.2 Add `SecantServiceWeb.Systems` with `matches/1` and `shown_parameters/1`, reading `Application.get_env(:secant_service, :systems, [])` at call time and following the order rules of `specs/system-module-cards/spec.md`. Document `config :secant_service, :systems, []` in `config/config.exs`. Verify `mix compile --warnings-as-errors`.
+- [x] 2.2 Add `SecantServiceWeb.Systems` with `matches/1` and `shown_parameters/1`, finding the system modules under its namespace (`discovered/0`) unless `:systems` lists them, without those in `:disabled_systems`, read at call time, and following the order rules of `specs/system-module-cards/spec.md`. Document the settings in `config/config.exs`. Verify `mix compile --warnings-as-errors`.
 - [x] 2.3 Add `SecantServiceWeb.Systems.Components` (`card_param`, `card_status`, `card_sparkline`, `card_command`), building ids from `node`, `module` and `location` as design.md Decision 3 describes. Verify `mix compile --warnings-as-errors`.
 - [x] 2.4 Add test systems in `test/support/systems/`, each module in its own file:
   - `TestPowerSupply` (system `PowerSupply`, versions `[0]`):
@@ -34,7 +34,8 @@
   - `TestMassTrend`: one role, a lines plot of the `value` elements picked by `_mass` 28 and 44, labelled from `_mass` with template `m/z {}`.
 
   Unit-test the registry in `test/secant_service_web/systems_test.exs`:
-  - no config gives no matches;
+  - discovery finds the probe under the namespace and nothing else; a disabled definition is left out; an explicit list replaces discovery;
+  - no systems gives no matches;
   - matching version and role;
   - an unhandled version, a role without a module, and a missing required parameter fall back;
   - a module bound twice resolves in binding order, and two system modules for one name in config order;

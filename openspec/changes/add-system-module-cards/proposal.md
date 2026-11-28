@@ -10,7 +10,7 @@ Everything on the live dashboard is built generically from a module's self-descr
   - The role is the module name the system definition gives it (`current` in `PowerSupply`), so the key of a binding is `SystemName:version` + role, e.g. `PowerSupply:0.current`.
   - A reference without a version (`"PowerSupply"`) is read as version 0. RFC-104 defines no version syntax, so this is the app's convention, borrowed from the schemas' `Name:version` references.
   - **Subsystems.** A subsystem is its own `systems` entry, so its modules are bound under the subsystem's own `Name:version` and role. When another entry names it as one of its roles (`mag5t` → `X` → `mag5t_x`), that outer system is recorded on the binding as a parent; no second binding is made. Entries that name no module and no local system are skipped.
-- **System definitions in code.** A *system module* (one Elixir module per system schema, e.g. `PowerSupply`) names the schema, the versions it handles, and a *role module* for each role it customises (`current` → `PowerSupply.Current`). Config lists the system modules. This change ships no production system, only the mechanism and test systems. A role module declares:
+- **System definitions in code.** A *system module* (one Elixir module per system schema, e.g. `PowerSupply`) names the schema, the versions it handles, and a *role module* for each role it customises (`current` → `PowerSupply.Current`). System modules under `SecantServiceWeb.Systems` are found without registration; config can list them explicitly or switch one off. This change ships no production system, only the mechanism and test systems. A role module declares:
   - the parameters the module must have;
   - an optional custom card: its body and the parameters it shows;
   - an optional custom plot.
@@ -53,7 +53,7 @@ None. `openspec/specs/` holds no archived capabilities yet, and no in-flight cha
 - **New pure module** `SecantService.Systems`: bindings from a node's custom properties, accepting string keys (the stored record, which the dashboard and data browser both use) and atom keys, as `SecantService.Acquisition` does.
 - **New web modules**:
   - the system-module and role-module behaviours;
-  - a registry (`SecantServiceWeb.Systems`) reading `config :secant_service, :systems`;
+  - a registry (`SecantServiceWeb.Systems`) that finds the system modules under its namespace, with the optional settings `:systems` (an explicit list) and `:disabled_systems`;
   - small helper components for card bodies that build the routed component ids.
 - **Dashboard**:
   - `DashboardLive` matches once per description and routes the shown parameters to their value displays;

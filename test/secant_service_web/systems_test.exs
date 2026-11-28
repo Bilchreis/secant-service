@@ -12,8 +12,17 @@ defmodule SecantServiceWeb.SystemsTest do
   alias SecantServiceWeb.TestSystems.PowerSupplyAlt
 
   setup do
-    previous = Application.get_env(:secant_service, :systems)
-    on_exit(fn -> Application.put_env(:secant_service, :systems, previous) end)
+    for key <- [:systems, :disabled_systems] do
+      previous = Application.fetch_env(:secant_service, key)
+
+      on_exit(fn ->
+        case previous do
+          {:ok, value} -> Application.put_env(:secant_service, key, value)
+          :error -> Application.delete_env(:secant_service, key)
+        end
+      end)
+    end
+
     :ok
   end
 
@@ -32,6 +41,48 @@ defmodule SecantServiceWeb.SystemsTest do
     %{name: "cur", parameters: [%{name: "value"}, %{name: "target"}, %{name: "control_active"}]},
     %{name: "volt", parameters: [%{name: "value"}]}
   ]
+
+  describe "finding system definitions" do
+    alias SecantServiceWeb.Systems.DiscoveryProbe
+
+    setup do
+      Application.delete_env(:secant_service, :systems)
+      Application.delete_env(:secant_service, :disabled_systems)
+      :ok
+    end
+
+    test "finds definitions under SecantServiceWeb.Systems without registration" do
+      found = Systems.discovered()
+
+      assert DiscoveryProbe in found
+      # other modules there, and definitions elsewhere, are not systems
+      refute SecantServiceWeb.Systems.Components in found
+      refute PowerSupply in found
+      assert found == Enum.sort(found)
+      assert Systems.configured() == found
+
+      node =
+        sys_node(
+          %{"p" => %{"system" => "DiscoveryProbe:0", "modules" => %{"probe" => "cur"}}},
+          @modules
+        )
+
+      assert %{system: DiscoveryProbe, role: PlotOnly} = Systems.matches(node)["cur"]
+    end
+
+    test "a disabled definition is left out" do
+      Application.put_env(:secant_service, :disabled_systems, [DiscoveryProbe])
+      refute DiscoveryProbe in Systems.configured()
+    end
+
+    test "an explicit list replaces discovery" do
+      configure([PowerSupply])
+      assert Systems.configured() == [PowerSupply]
+
+      Application.put_env(:secant_service, :disabled_systems, [PowerSupply])
+      assert Systems.configured() == []
+    end
+  end
 
   test "no systems configured gives no matches" do
     configure([])

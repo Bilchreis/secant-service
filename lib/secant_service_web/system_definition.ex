@@ -8,15 +8,16 @@ defmodule SecantServiceWeb.SystemDefinition do
   `SecantService.Systems`) can get a custom dashboard card and module plot.
   Roles without a role module, and versions not listed, stay generic.
 
-  System modules are listed in `config :secant_service, :systems` and found
-  by `SecantServiceWeb.Systems`.
+  Put a system module under `SecantServiceWeb.Systems.` and
+  `SecantServiceWeb.Systems` finds it; no registration is needed (see there
+  for the settings that list or disable systems explicitly).
 
-      defmodule MyApp.Systems.PowerSupply do
+      defmodule SecantServiceWeb.Systems.PowerSupply do
         @behaviour SecantServiceWeb.SystemDefinition
 
         def system, do: "PowerSupply"
         def versions, do: [0]
-        def roles(0), do: %{"current" => MyApp.Systems.PowerSupply.Current}
+        def roles(0), do: %{"current" => SecantServiceWeb.Systems.PowerSupply.Current}
       end
   """
 

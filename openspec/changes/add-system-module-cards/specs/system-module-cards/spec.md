@@ -7,14 +7,25 @@ Lets the live dashboard show a tailored card for a module that plays a known rol
 ## ADDED Requirements
 
 ### Requirement: System and role definitions
-A system definition SHALL name a system schema, the versions it handles and, per version, a role definition for each role it customises. A role definition SHALL name the parameters a module must have, and MAY give a card (a body and the parameters it shows) and a module plot, each independently. The available system definitions SHALL come from the application's configuration; with none configured, every module SHALL get the generic card and plot.
+A system definition SHALL name a system schema, the versions it handles and, per version, a role definition for each role it customises. A role definition SHALL name the parameters a module must have, and MAY give a card (a body and the parameters it shows) and a module plot, each independently. With no definitions available, every module SHALL get the generic card and plot.
 
 #### Scenario: No systems configured
-- **WHEN** no system definitions are configured and a node binds `magcur_x` as `PowerSupply:0` role `current`
+- **WHEN** no system definitions are available and a node binds `magcur_x` as `PowerSupply:0` role `current`
 - **THEN** `magcur_x` is shown with the generic card and the generic module plot
 
+### Requirement: Finding system definitions
+The available system definitions SHALL be those the application defines in its system namespace, without registration, unless configuration lists them explicitly. Configuration MAY switch single definitions off.
+
+#### Scenario: A definition found without registration
+- **WHEN** a `PowerSupply` system definition is added to the system namespace and nothing is configured
+- **THEN** modules bound as `PowerSupply:0` match it
+
+#### Scenario: A definition switched off
+- **WHEN** configuration switches the `PowerSupply` definition off
+- **THEN** modules bound as `PowerSupply:0` get the generic card and plot
+
 ### Requirement: Matching a role definition to a module
-A module SHALL match a role definition when one of its bindings has a configured system definition's system name and one of its versions, that version has a role definition for the binding's role, and the module has every parameter the role definition requires. Names and roles SHALL be compared exactly. With several matching bindings, the first in binding order SHALL be used; with several system definitions for one name, the first in configuration order.
+A module SHALL match a role definition when one of its bindings has an available system definition's system name and one of its versions, that version has a role definition for the binding's role, and the module has every parameter the role definition requires. Names and roles SHALL be compared exactly. With several matching bindings, the first in binding order SHALL be used; with several system definitions for one name, the first in their order (by module name, or as configuration lists them).
 
 #### Scenario: Matching role
 - **WHEN** a `PowerSupply` system definition handles version 0 with a role definition for `current` requiring `control_active`, and `magcur_x` is bound as `PowerSupply:0` role `current` and has `control_active`

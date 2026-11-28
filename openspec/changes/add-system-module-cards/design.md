@@ -50,7 +50,7 @@ Readings come in two shapes. Live struct readings have atom keys for members nam
 - Nothing about a custom plot can make the dashboard's LiveView raise on a reading.
 
 **Non-Goals:**
-- A plug-in or hot-loading mechanism. System modules are compiled and named in config.
+- A plug-in or hot-loading mechanism. System modules are compiled into the app.
 - Isolating a raising card body from the rest of the node's dashboard (see Risks). A `rescue` around a function component cannot do it, because the rendered dynamic parts are evaluated after the call returns.
 - Changing `PlotCache`, `NodeValues` or what gets recorded.
 
@@ -79,7 +79,7 @@ A new module, with a `Binding` struct in its own file (`lib/secant_service/syste
 - Storing bindings as Ash attributes or a table: rejected. They can be derived from the stored description and need no query.
 - Adding a binding per containing system, e.g. `VectorMagnet:0.X.current`: rejected. The module's guarantees come from the inner schema, outer-keyed definitions would multiply with nesting depth, and a `PowerSupply` definition would stop matching inside a magnet.
 
-### 2. System module + role modules, registered by config
+### 2. System module + role modules, found by namespace
 
 Two behaviours, both callbacks required, returning nil for "none", so no `function_exported?/3` checks are needed. That check is false for a module not yet loaded in dev.
 
@@ -96,10 +96,17 @@ Two behaviours, both callbacks required, returning nil for "none", so no `functi
 - `plot() :: SecantService.PlotDB.LinesPlot.t() | SecantService.PlotDB.ArrayPlot.t() | nil`.
 
 `SecantServiceWeb.Systems`, the registry, reads `Application.get_env(:secant_service, :systems, [])` at call time and offers:
-- `matches(node) :: %{module_name => %{system: mod, role: mod, binding: Binding}}`. Matching follows the module's bindings in order: system name → the first configured system module with that `system()` whose `versions()` include the version → `roles(version)[role]` → `required_parameters()` ⊆ the module's parameter names. The first full match wins.
+- `matches(node) :: %{module_name => %{system: mod, role: mod, binding: Binding}}`. Matching follows the module's bindings in order: system name → the first system module in use with that `system()` whose `versions()` include the version → `roles(version)[role]` → `required_parameters()` ⊆ the module's parameter names. The first full match wins.
 - `shown_parameters(matches)`: a `MapSet` of `{module, param}`, built from the matched roles' cards.
 
-`config/config.exs` documents `:systems` with an empty list. Tests register a test system from `test/support` with `Application.put_env/3`, restored in `on_exit`, and run `async: false`, as `AcquisitionCardTest` does.
+**Finding system modules.** `configured/0` returns the system modules in use:
+- by default, `discovered/0`: the application's modules (`Application.spec(:secant_service, :modules)`) whose name starts with `SecantServiceWeb.Systems.` and that declare `@behaviour SecantServiceWeb.SystemDefinition`, sorted by module name. The registry itself and the card helper components share the prefix but don't declare the behaviour;
+- `config :secant_service, :systems, [...]` replaces that with an exact list, in its order;
+- `config :secant_service, :disabled_systems, [...]` removes modules from either.
+
+The module list is the one loaded with the application, so a running dev server finds a newly added system module after a restart. Edits to an existing one reload as usual.
+
+The test systems live under `SecantServiceWeb.TestSystems`, outside the namespace, so they are never found by accident. Tests register them with `Application.put_env(:secant_service, :systems, ...)`, restored in `on_exit`, and run `async: false`, as `AcquisitionCardTest` does. One probe under the namespace (`test/support/systems/discovery_probe.ex`) lets the tests see discovery work.
 
 **Matching once per description.**
 - `DashboardLive` keeps an assign `systems` of `{uuid, bindings, matches, shown}`. A DashboardLive helper, `assign_systems/1`, recomputes it when `current_node.uuid` differs, piped after each `Model.to_socket/2` call (`index.ex:49`, `80`, `140`). `SecantService.Model` is core and must not call the web registry.
@@ -108,6 +115,7 @@ Two behaviours, both callbacks required, returning nil for "none", so no `functi
 - The system views of #123 can call the same `matches/1`.
 
 *Alternatives:*
+- Registration in config (the first implementation): replaced at the owner's request. It meant every new system needed a config line too. Discovery keeps config for what it is good at: an explicit order in tests, and switching a system off.
 - Role modules declaring their own system and role, with config listing them: rejected. It duplicates the schema in every child, allows two children to claim a role, and gives the system views no role map.
 - A `use` macro: rejected by the project rules.
 

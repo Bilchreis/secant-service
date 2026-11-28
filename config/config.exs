@@ -113,10 +113,15 @@ config :secant_service, :plot_db,
   ],
   default_active_range_index: 1
 
-# SECoP system definitions (`SecantServiceWeb.SystemDefinition` modules):
-# modules bound to one of their roles get the role's custom dashboard card
-# and module plot. None ship yet; see `SecantServiceWeb.Systems`.
-config :secant_service, :systems, []
+# SECoP system definitions (`SecantServiceWeb.SystemDefinition` modules under
+# `SecantServiceWeb.Systems.`) are found without registration: modules bound
+# to one of their roles get the role's custom dashboard card and module plot.
+# To switch one off:
+#
+#     config :secant_service, :disabled_systems, [SecantServiceWeb.Systems.PowerSupply]
+#
+# `config :secant_service, :systems, [...]` uses exactly that list instead.
+# See `SecantServiceWeb.Systems`.
 
 # How long historical recordings are thinned out, per SECoP type of the
 # plotted values (an array's elements, a struct's fields): which readings
