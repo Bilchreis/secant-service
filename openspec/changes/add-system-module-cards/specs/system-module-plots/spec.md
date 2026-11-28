@@ -7,7 +7,7 @@ Lets a role definition of a SECoP system give the module plot of a matched modul
 ## ADDED Requirements
 
 ### Requirement: Plot of a role definition
-A role definition's plot SHALL be either a lines plot or an array plot. A lines plot SHALL be one panel with an ordered list of traces and up to two y-axes, each axis with an optional name and unit. An array plot SHALL name one array parameter of the module, a source for its index labels and an optional index axis name.
+A role definition's plot SHALL be either a lines plot or an array plot. A lines plot SHALL be one panel with an ordered list of traces and up to two y-axes, each axis with an optional name and unit. An array plot SHALL draw the module's `value`, which must be a numeric array, and SHALL name a parameter of the module as the source of its index labels, and an optional index axis name. A role whose array plot cannot be drawn SHALL get the generic module plot.
 
 #### Scenario: Role definition without a plot
 - **WHEN** a module matches a role definition that gives no plot
@@ -29,7 +29,7 @@ When the selected module matches a role definition with a plot and has a `value`
 - **THEN** only `voltage_limit` is plotted, as today
 
 ### Requirement: Traces
-A trace SHALL name one of the module's parameters and optionally a path through struct fields to a number, or to a numeric array of at most 100 elements. A trace into such an array SHALL pick one element: by index, one trace per element, or the element whose index-label value equals a given number. A trace SHALL say whether it is a setpoint, starts hidden, and goes on the second axis.
+A trace SHALL name one of the module's parameters and optionally a path through struct fields to a number (`double`, `int` or `scaled`; enums are not traces), or to a numeric array of at most 100 elements. A trace into such an array SHALL pick one element: by index, one trace per element, or the element whose index-label value equals a given number. A trace SHALL say whether it is a setpoint, starts hidden, and goes on the second axis.
 
 #### Scenario: Element picked by mass
 - **WHEN** a trace picks the element of the mass spectrometer's `value` whose `_mass` value is 28, and the latest `_mass` reading has 28.0 at index 27
@@ -106,19 +106,30 @@ Labels, and elements picked by label value, SHALL stay as loaded until the plot 
 - **THEN** the plot keeps its labels and picked elements and keeps extending, and the new ones apply once the plot loads again
 
 ### Requirement: Array plot with index labels
-An array plot SHALL draw its parameter as the generic array plot does (a time × index heatmap with its lines mode, or the latest reading for arrays too long for the heatmap), with each index shown by its label on the index axis, in the lines-mode legend and tooltip, and on the latest-reading plot's index axis. The index axis SHALL carry the plot's index axis name, if given.
+An array plot SHALL draw `value` as the generic array plot does (a time × index heatmap with its lines mode, or the latest reading for arrays too long for the heatmap). Each index SHALL be shown by its label on the heatmap's index axis and hover readout, and in the lines-mode tooltip, for as many indexes as the label source has entries, up to 100. The index axis SHALL carry the plot's index axis name, if given.
 
 #### Scenario: Mass spectrum heatmap
-- **WHEN** the mass spectrometer's role plot is an array plot of `value` labelled from `_mass` with the template `m/z {}` and the axis name `m/z`
-- **THEN** the heatmap's index axis shows `m/z 1`, `m/z 2`, … in place of 0, 1, …, and in lines mode each element's line is labelled with its mass
-
-#### Scenario: Array grows past the heatmap
-- **WHEN** a labelled heatmap is rebuilt as a latest-reading plot because a reading got too long
-- **THEN** the latest-reading plot keeps the index labels
+- **WHEN** the mass spectrometer's role plot is an array plot labelled from `_mass` with the template `m/z {}` and the axis name `m/z`
+- **THEN** the heatmap's index axis shows `m/z 1`, `m/z 2`, … in place of 0, 1, …, and in lines mode the tooltip names each element's mass
 
 #### Scenario: Fewer labels than elements
 - **WHEN** `_mass` has 90 entries and `value` 100
 - **THEN** indexes 90 to 99 are shown by their numbers
+
+#### Scenario: Array grows live
+- **WHEN** a labelled heatmap loads with 3 elements and `_mass` has 10 entries, and later readings have 10 elements
+- **THEN** the new rows are labelled too
+
+### Requirement: Latest-reading plot with index labels
+When `value` is too long for the heatmap, its latest-reading plot SHALL show index labels on its index axis and in its tooltip when the label source has at most 4000 entries, and index numbers otherwise. When a labelled heatmap is rebuilt as a latest-reading plot because a reading got too long, the label source SHALL be read again.
+
+#### Scenario: Spectrum that fills up
+- **WHEN** a labelled heatmap of 3 elements is rebuilt as a latest-reading plot because a reading has 3000 elements, and the label source now has 3000 entries
+- **THEN** the latest-reading plot shows all 3000 labels
+
+#### Scenario: Very long spectrum
+- **WHEN** the latest-reading plot draws a reading of 10 000 elements and the label source has 10 000 entries
+- **THEN** the plot shows index numbers
 
 ### Requirement: Setpoint and hidden traces
 A trace marked as a setpoint SHALL be drawn and held like a module's `target` is today: a step line held from its last reading before the window, ending and resuming at recording gaps. A trace marked hidden SHALL start deselected in the legend.
@@ -146,7 +157,7 @@ Every trace of a lines plot SHALL break at the session's recording gaps as the n
 - **THEN** every trace of the lines plot is broken there
 
 #### Scenario: Session without spans
-- **WHEN** a session recorded before recording spans existed is plotted with a whole `value` trace and a `value.composition[2]` trace
+- **WHEN** a session recorded before recording spans existed is plotted with a whole `value` trace, a `value.composition[2]` trace and a `value[27]` trace
 - **THEN** only the whole `value` trace gets the estimated gaps
 
 #### Scenario: Band on a whole parameter only
@@ -163,6 +174,13 @@ A live custom plot SHALL extend each trace with the readings of its parameter as
 #### Scenario: Zoom into a custom plot
 - **WHEN** the user zooms into a historical custom lines plot
 - **THEN** the zoomed window shows the same traces at finer detail
+
+### Requirement: Falling back when nothing resolves
+When a lines plot passes the description check but no trace is left once the plot loads (a mass not found, an array read longer than 100 elements), the module plot SHALL be the generic one, and a module whose `value` cannot be plotted SHALL show its table, never an empty chart.
+
+#### Scenario: Every trace dropped at load
+- **WHEN** the only trace of a role's lines plot picks the element of `spectrum` whose `_mass` is 29, the latest `_mass` has no 29, and `value` is a string
+- **THEN** the module panel shows the readings table, as for a module with no custom plot
 
 ### Requirement: Modules without a custom plot
 A module that matches no role definition with a plot SHALL get the module panel's plot or table exactly as today, including the table for a module whose `value` cannot be plotted.

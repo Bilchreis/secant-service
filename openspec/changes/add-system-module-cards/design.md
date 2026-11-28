@@ -149,7 +149,7 @@ The set and the skip rule live in a small pure function, `card_route/3`, which i
 
 **Data shape.** Plain structs, each in its own file under `lib/secant_service/plot_db/`:
 - `%LinesPlot{axes: [%{name: nil | String.t(), unit: nil | String.t()}] (0–2), traces: [%Trace{}]}`;
-- `%ArrayPlot{param: String.t(), labels: %LabelSource{} | nil, axis_name: nil | String.t()}`;
+- `%ArrayPlot{labels: %LabelSource{} | nil, axis_name: nil | String.t()}`. It always draws the module's `value`; its label source must name a parameter;
 - `%Trace{param: String.t(), path: [String.t()], pick: nil | {:index, non_neg_integer()} | :each | {:match, %LabelSource{}, number()}, label: nil | String.t() | %LabelSource{}, setpoint?: boolean(), hidden?: boolean(), axis: 0 | 1}`:
   - `path` runs through struct fields only;
   - `pick` chooses an element when the path ends at a numeric array;
@@ -157,28 +157,31 @@ The set and the skip rule live in a small pure function, `card_route/3`, which i
 
 A role's `plot()` returns a `LinesPlot`, an `ArrayPlot` or nil.
 
-**What can be drawn** (`PlotDB.drawable?(module, spec)`) reads the description only and never raises: malformed `members` give false. `ModuleDetail` and `HistoryDB.update/2` therefore call it while rendering. A trace is drawable when:
-- its parameter exists and `History.thinnable?/1` holds for it, so `History` can always thin it (no array-of-struct paths);
-- its path walks struct `members` to a number, or to a numeric array, with a `pick`, whose declared length (`Channels.declared_length/1`) is at most `TimePlot.max_array_len/0` (100) or undeclared.
+**Why array plots draw only `value`.** Today's array path, the live filter (`historyDB.ex:201`, `PlotDB.param_list/1`) and the range, window and overview handlers (`historyDB.ex:306`, `380`, `427`, `PlotDB.lines/1`) all work from the module's generic lines, which start with `value` (`plot_db.ex:65-85`). Drawing another parameter would need a second code path through all of them. Custom plots already apply only to modules with a `value`, and the motivating mass spectrum is the `value`.
 
-An `ArrayPlot` is drawable when its parameter is a numeric array (`ArrayLatest.numeric_array?/1`).
+**Numbers.** A trace draws what `Scalar.supported_type?/1` accepts (`double`, `int`, `scaled`), at its path. Enums are not number traces; the generic plot draws them as bands. An axis's fallback unit is read along the trace's path: the struct member's `unit`, or for an array element the array's `members.unit`, as `ArrayHeatmap.unit/1` does.
 
-**Resolving a lines plot** (`PlotDB.traces(module, spec, latest)`, inside the first load's async task, where `latest` holds the latest readings it needs):
-1. Drop traces that are not drawable, and array traces whose latest reading is longer than 100 elements.
-2. Expand `:each` to `min(declared length || latest length, slots left under 16)`.
-3. Resolve `{:match, source, x}` to the first index whose source value equals `x` (a number compare, so 28 matches 28.0); none drops the trace.
-4. Cut the list to 16.
-5. Name each trace stably. A whole parameter keeps its name (`value`, `target`), so the `target` style keeps working; otherwise `param.path[i]`, e.g. `value.composition[2]`.
-6. Deduplicate by name, the first wins.
-7. No trace left means the generic `PlotDB.lines/1`.
+**What can be drawn** (`PlotDB.drawable?(module, spec)`) reads the description only and never raises: it checks `is_map` at every step of the path before reading `members` or `maxlen`, so malformed datainfo gives false. `ModuleDetail` and `HistoryDB.update/2` therefore call it while rendering.
+- A trace is drawable when:
+  - its parameter exists and `History.thinnable?/1` holds for it (no array-of-struct paths);
+  - its path walks struct `members` to a number, or to a numeric array, with a `pick`;
+  - that array's declared length (`Channels.declared_length/1`) is at most `TimePlot.max_array_len/0` (100), or undeclared.
+- An `ArrayPlot` is drawable when the module's `value` is a numeric array (`ArrayLatest.numeric_array?/1`).
 
-The bound in step 1 is what keeps per-element traces off long arrays. The generic path checks `long_array` before loading any history (`plot_db.ex:110-123`). The custom path never fetches an array parameter for element traces when the array is declared, or found, longer than 100 elements. Arrays wider than 16 elements are thinned by whole-array extremes (`Channels`), so zoomed-out element traces can miss short spikes, as the generic heatmap does.
+**Latest values** come from a small helper, `PlotDB.latest_value(param)`: `SecNodes.latest_reading` and `Storage.raw_value`, for any value. `ArrayLatest.fetch_latest/1` returns nil for anything that isn't a list (`array_latest.ex:33-36`), so it can't serve a struct `value`.
 
-**Latest readings** for labels, `:each` lengths and `:match` lookups:
-- for a trace's own parameter, the last reading of its first window when that window has one;
-- otherwise one `ArrayLatest.fetch_latest/1` query per parameter: other label parameters such as `_mass`, and own parameters whose first window is empty.
+**Resolving a lines plot** (`PlotDB.traces(module, spec)`, inside the first load's async task):
+1. Drop traces that are not drawable.
+2. **Before any window fetch**, read `latest_value` once for each parameter that has an element trace into an array with no declared length, and drop those traces when the array is longer than 100. The generic path does the same check first (`long_array`, `plot_db.ex:113-121`). SECoP makes `maxlen` mandatory, so only nonconforming nodes pay this query.
+3. Read `latest_value` once for each parameter the remaining traces need for labels, `:each` lengths or `:match` lookups. A trace's own parameter reuses the value from step 2 if it has one.
+4. Expand `:each` to `min(declared length || latest length, 100)` traces.
+5. Resolve `{:match, source, x}` with `==` (so 28 matches 28.0) to the first matching index; none drops the trace. **Every resolved pick is a concrete `{:index, k}`**, so no later window or zoom can re-resolve it.
+6. Name each trace stably. A whole parameter keeps its name (`value`, `target`), so the `target` style keeps working. A struct path gives `value.composition`, and a picked element appends `[k]`, e.g. `value.composition[2]` or `value[27]`.
+7. Deduplicate by name, the first wins.
+8. Cut the list to 16.
+9. If no trace is left, return `:no_traces`; `init` then falls back (below).
 
-Everything is read once, in the first load's async task. A label, a picked index and an element count stay fixed for the plot's lifetime.
+Arrays wider than 16 elements are thinned by whole-array extremes (`Channels`), so zoomed-out element traces can miss short spikes, as the generic heatmap does.
 
 **Label text** (`LabelSource.text/2`, pure, never raises):
 - a string is used as it is;
@@ -186,58 +189,70 @@ Everything is read once, in the first load's async task. A label, a picked index
 - a template replaces `{}` with that text;
 - anything else gives nil.
 
-A nil label falls back to the trace name (`value.composition[2]`), or for an index to its number.
+A nil label falls back to the trace name, or for an index to its number. Labels, picked indexes and element counts are read once and stay fixed until the plot loads again.
 
 **Building a lines plot.** `TimePlot.build_lines/3`:
 - one `Builders.fetch_param_window` per **distinct parameter** (the held fetch when it has a setpoint trace);
 - each trace's values extracted from that window by `Trace.extract/3`;
 - the result through the same `Scalar` series, `Bands.put/3` and `Gaps.put/3` as today.
 
-The plot map then carries three things, and every consumer keeps its current shape:
-- `lines`: today's map shape (`TimePlot.plot/4`, keyed by name). `Gaps.put/3` and `reply/4` match on the presence of `lines`.
-- `resolved`: the list shape of `PlotDB.lines/1`, one entry `%{param:, series:, path:, pick:, setpoint?:, hidden?:, axis:}` per trace. It is passed where `Gaps` and `Bands` take plot lines, and the `HistoryDB` handlers read it.
-- `traces: %{param_name => [entry]}`, which `trace_updates/3` matches in a clause before its `lines` clause, fanning a parameter's readings out by extraction.
+A reading with no number where a trace reads gives that trace **no point**: it is dropped, not sent as `[ts, nil]`, so a transient error reading doesn't break the line.
 
-`Gaps.fallback/2` matches a line whose `param` is named `value` (`gaps.ex:157`). It gains an empty-path check, so `value.composition[2]` never gets the poll-interval estimate. `Bands.eligible?/1` needs no change: a trace with a path belongs to a struct or array parameter, which it already rejects (`bands.ex:15-16`).
+The plot map then carries:
+- `lines`: a map keyed by **series name**, `%{series => %{series:, dtype: Scalar}}`. A custom plot can have several traces of one parameter, so it can't be keyed by parameter like `TimePlot.plot/4`'s. Its consumers (`Gaps.put/3`, `reply/4`) only match on the key's presence.
+- `resolved`: the list shape of `PlotDB.lines/1`, one entry `%{param:, series:, path:, pick: {:index, k} | nil, setpoint?:, hidden?:, axis:}` per trace. It is passed where `Gaps` and `Bands` take plot lines, and the `HistoryDB` handlers read it.
+- `traces: %{param_name => [entry]}`. `trace_updates/3` matches it in a clause before its `lines` clause, fanning a parameter's readings out by extraction.
 
-**Building an array plot.** `PlotDB.init` with an `ArrayPlot` follows today's array path for that parameter (`long_array`, then `ArrayHeatmap` or `ArrayLatest`) and adds:
-- `_indexLabels`: the label strings from the label source, one per index for a heatmap; for a latest-reading plot, one per index it draws, as an index → label map;
-- `_indexAxisName`, when the plot gives one.
+The handlers' `window_reply/2` calls `trace_updates/3` once per **distinct parameter** (not once per trace, which would send N² updates), and builds envelopes per trace.
 
-`HistoryDB` keeps both from the first load. `rebuild_as_latest/3` passes them to `ArrayLatest.plot`, so a heatmap that outgrows itself keeps its labels.
+The span-less gap estimate (`Gaps.fallback/2`, `gaps.ex:157`) applies only to a whole parameter: `path == [] and pick == nil`. So `value.composition[2]` and `value[27]` never get it. `Bands.eligible?/1` needs no change, because a trace into a struct or array belongs to a parameter it already rejects (`bands.ex:15-16`), and a band is built only for a whole-parameter trace.
 
-**Extraction** (`Trace.extract(value, path, index)`) never raises:
-- each step looks the key up as a string, then as an existing atom (the `Struct.series_updates` lookup), or indexes a list;
-- anything that is not a number gives nil, i.e. no point.
+**Falling back.** `PlotDB.init(module, mode, spec)` returns `PlotDB.init(module, mode)` when a lines plot resolves to `:no_traces`. When the result is `%{plottable: false}` (e.g. a string `value`), `HistoryDB.handle_async(:load_plot, …)` switches to the table when `tabular?/1` holds, instead of leaving an empty chart (`historyDB.ex:597`, `816-836`).
 
-The first load, windows and live updates all use it. `Scalar.series_updates/3` returns `[]` instead of falling back to series 0 when a name is missing. That also applies to generic struct plots through `struct.ex:56`, and is intended: a missing series must not overwrite series 0.
+**Building an array plot.** `PlotDB.init` with an `ArrayPlot` follows today's array path for `value` (`long_array`, then `ArrayHeatmap` or `ArrayLatest`). It reads the label source once with `latest_value` and adds:
+- for a heatmap, `_indexLabels`: the texts of the first `min(length of the source, 100)` entries. They're taken from the source, not from the array's length at load, so rows added as the array grows live keep their labels;
+- for a latest-reading plot, `_indexLabels` only when the source has at most 4000 entries (`@max_points`, `array_latest.ex:16`), where every index is drawn. Above that, `ArrayLatest.points/1` keeps per-chunk extremes whose indexes change from reading to reading (`array_latest.ex:174-190`), and the axis ticks need arbitrary indexes, so those plots show index numbers;
+- the axis name, set on the server in the index axis's `name` (`ArrayHeatmap.index_axis/1`, `ArrayLatest.option/3`), with no new hook key.
+
+`HistoryDB` keeps the `ArrayPlot` spec. `rebuild_as_latest/3`, which already runs in `start_async` (`historyDB.ex:96`), reads the label source again (one query) and applies the rule above. A rebuild is a reload, so this is consistent with labels staying fixed until the plot loads again. The FTIR-like case, which starts at 3 points and fills to 10 000, gets its labels on the rebuild, if they fit.
+
+**Extraction** (`Trace.extract(value, path, index)`, where `index` is nil for traces without a pick) never raises:
+- each step takes the string key, or the key whose `to_string/1` equals it (the scan `Struct.series_updates` does, `struct.ex:39-46`, creating no atoms), or indexes a list;
+- anything that is not a number gives nil.
+
+The first load, windows and live updates all use it. `Scalar.series_updates/3` returns `[]` instead of falling back to series 0 when a name is missing. That also applies to generic struct plots through `struct.ex:56`, and is intended: a missing series must not overwrite series 0. A regression test covers generic struct plots.
 
 **Labels in the browser.** Labels come from node readings, so they are untrusted.
-- Canvas text (the legend, axis labels) gets the raw label. ECharts draws legend text on canvas (`LegendView.js:326`), where HTML escaping would show `&lt;`.
+- Canvas text and `textContent` get the raw label. ECharts draws the legend and axis labels on canvas (`LegendView.js:326`), where HTML escaping would show `&lt;`.
 - HTML tooltips escape it.
 - `escHtml` moves from `common.js` into a new pure `assets/js/charts/labels.mjs`, which `common.js` re-exports. `common.js` creates observers at load time (lines 103, 115, 135), so a test can't import it.
 
 The places that show labels:
-- the legend formatter (canvas, raw);
-- a new axis-tooltip formatter for number plots, installed only when some series has `_label`, so generic plots keep ECharts' default tooltip;
-- `bands.js` `_envelopeTooltip` (escaped);
-- for array plots with `_indexLabels`:
-  - the heatmap's index-axis label formatter (canvas, raw) and its hover readout (escaped);
-  - the lines-mode series labels and `_linesTooltip` (escaped);
-  - `ArrayLatest`'s index-axis formatter and tooltip (escaped).
+- **Lines plots:**
+  - the legend formatter (canvas, raw);
+  - a new axis-tooltip formatter for number plots, installed only when some series has `_label`, so generic plots keep ECharts' default tooltip (escaped);
+  - `bands.js` `_envelopeTooltip` (escaped).
+- **Array plots with `_indexLabels`:**
+  - the heatmap index-axis formatter (canvas, raw);
+  - the heatmap hover readout (`textContent`, `arrays.js:137`, raw);
+  - lines mode, which has no legend: its series keep the `[i]` names, and `_linesTooltip` looks the label up by element index (escaped). Renaming the series would merge equal labels through its `seen` set (`arrays.js:356`) and double-escape them;
+  - `ArrayLatest`'s index-axis formatter (canvas, raw) and its tooltip (`arrays.js:203-206`, escaped).
+
+ECharts' canvas text still interprets its own rich-text syntax (`{style|text}`) in formatter output. That is accepted: it can restyle a label, but cannot inject HTML or script.
 
 The series `name` stays the stable key for updates, bands and `legend.selected`.
 
 **Resolve once, use everywhere.**
-- `HistoryDB` takes an optional `plot_spec` assign, checks `drawable?` on mount when it is given, and passes it to `init` on mount and reloads.
+- `HistoryDB` takes an optional `plot_spec` assign, checks `drawable?` on mount when it is given, and passes it to `init` on mount, on reloads and on `rebuild_as_latest`.
 - After a custom lines plot's first load, the range, window and overview handlers and the live filter read `plot.resolved`, not `PlotDB.lines/1`. They fetch once per distinct `param.id` and fan out, so the first load, windows and live updates agree on traces, labels and picked elements.
-- Plots without a spec, and array plots apart from their labels, keep today's code path. The handlers branch once on whether the loaded plot carries `traces`.
+- Array plots draw `value`, so they keep today's handlers.
+- The handlers branch once on whether the loaded plot carries `traces`.
 
 **Gate.** `ModuleDetail` keeps today's `@plot_parameter || @has_value`, and passes the role's plot only when the module has a `value`. A module without `value` keeps today's panel. That avoids a module plot with no table parameter: `HistoryDB`'s Table tab and CSV link use `value` (`historyDB.ex:47-55`, `735-738`).
 
 **Second y-axis.** When a lines plot has a trace with `axis: 1`, `Scalar.timeseries_option` builds `yAxis` as a two-element list:
-- left: the spec's axis-0 name and unit, else the first axis-0 trace's unit;
-- right: likewise, with `position: "right"` and the name aligned right;
+- left: the spec's axis-0 name and unit, else the unit of the first axis-0 trace (read along its path);
+- right: likewise, from axis 1, with `position: "right"` and the name aligned right;
 - `yAxisIndex: 1` on its series, and a wider `grid.right`.
 
 Without such a trace the option is the same map as today.
@@ -246,19 +261,22 @@ Without such a trace the option is the same map as today.
 - **Re-resolving lines at every call site** (an earlier draft): rejected. It costs a `find_param` per reading per batch, and windows could disagree with the first load.
 - **Labels as series names:** rejected. Duplicate or changing labels would misroute updates and lose the legend's hidden state.
 - **A new heatmap builder for labelled arrays:** rejected. Labelling today's array plot reuses its thinning, lines mode and long-array handling.
+- **Array plots of any parameter:** rejected for now. It would need a second code path through the live filter and every window handler.
 - **Several panels:** deferred (proposal). They would merge the struct multi-grid builder with the gap- and band-aware number-line builder that #181 just separated.
 
 ### Query count and payload on a long recording
 
-Each "window fetch" below is today's per-parameter fetch, several SQL statements: a count, the thinning or aggregate query with its head and tail, and, historically, the plot start (`builders.ex:173-199`). The cost grows with **distinct parameters**, not traces. A lines plot drawing p distinct parameters (s with a setpoint trace), with l extra label parameters, costs:
-- **First load:** p window fetches, the s held fetches' "last reading before the window", l latest-reading queries (plus one per own parameter whose first window was empty), and 1 gaps query (2 for a session without spans).
+Each "window fetch" below is today's per-parameter fetch: several SQL statements, a count and the thinning or aggregate query with its head and tail. A historical fetch also always runs the plot start and the hold (`builders.ex:173-206`), for every parameter. The cost grows with **distinct parameters**, not traces.
+
+A lines plot drawing p distinct parameters (s with a setpoint trace), needing latest values for q parameters (label sources, `:each` lengths, `:match` lookups, and the pre-check of undeclared arrays), costs:
+- **First load:** q latest-value queries, then p window fetches (plus the s live holds' "last reading before the window"), and 1 gaps query (2 for a session without spans).
 - **Zoom, pan, range or overview:** p window fetches and the reply's gaps query. N element traces of one array cost the same as one trace of it.
 - **Payload:** at most 16 traces, each bounded by its parameter's point budget.
   - Historical windows are thinned by `History.window`.
   - A live window reads the raw readings of its range (`builders.ex:78-89`), as today's live plots do. Element traces only read arrays of at most 100 elements, so a live load is never larger than today's live heatmap of the same parameter.
   - Struct and array readings are thinned by picking readings; only the extracted numbers are sent.
 
-An array plot costs what today's array plot of its parameter costs, plus l latest-reading queries for its labels. The payload grows by at most 100 short strings for a heatmap; a latest-reading plot sends labels only for the indexes it draws, which are bounded by its 4000-point budget (`array_latest.ex:16`), never one per element of a 350 000-element array. Cards add no queries: matching reads the in-memory description, and card values come from `NodeTable`.
+An array plot costs what today's array plot of `value` costs, plus one latest-value query for its label source on load and on a rebuild. The payload grows by at most 100 short strings for a heatmap, and at most 4000 for a latest-reading plot. Cards add no queries: matching reads the in-memory description, and card values come from `NodeTable`.
 
 ### Database
 
@@ -272,6 +290,7 @@ No migration. Readings, aggregates and hypertables are untouched.
   - each production system must ship with a LiveView test that renders its cards against a fixture;
   - plot building runs in `start_async` (a raise fails only the plot);
   - the code that runs in the LiveView process on node-controlled data is total by construction and tested on malformed input: `bindings/1`, `drawable?/2`, `Trace.extract/3` and `LabelSource.text/2`.
+- [A latest-reading plot of an array longer than 4000 elements shows index numbers, not labels.] → Accepted and specified: its drawn indexes change from reading to reading. A label source of a different length than the array labels what it covers.
 - [A card shows a parameter it did not list in `shown_parameters`; that value then doesn't update live.] → The behaviour docs say so, and the test system's tests assert a live update for each shown parameter.
 - [Labels and elements picked by label value go stale when, e.g., the gas list or the mass table changes during a long live session.] → Accepted and specified: they refresh when the plot loads again. A changed `_mass` can make a trace picked "by mass 28" show another mass until then. Lines stay keyed by stable names, so updates are never misrouted.
 - [Hook code written for one y-axis (the gap pass, the live range, `_setSlider`).] → The hook maps `yAxis` lists and bands copy `yAxisIndex`. Task 6.1 checks a two-axis plot in the browser for live extension, zoom and gaps.

@@ -30,7 +30,7 @@
     - role `current`: requires and shows `control_active`; a card body with a `#sys-body-<module>` element rendering `value` and `control_active` through the 2.3 helpers; a lines plot of `value`, `target` (setpoint), `voltage_limit` (axis 1) and `power_limit` (hidden);
     - role `voltage`: card only, no plot.
   - `TestMfcGroup`: one role, lines plot only. It draws `value.composition` per element, labelled from `value.gas_list`, and `value.total_flow` on axis 1.
-  - `TestMassSpec`: one role, an array plot of `value` labelled from `_mass` with template `m/z {}` and axis name `m/z`.
+  - `TestMassSpec`: one role, an array plot (of `value`) labelled from `_mass` with template `m/z {}` and axis name `m/z`.
   - `TestMassTrend`: one role, a lines plot of the `value` elements picked by `_mass` 28 and 44, labelled from `_mass` with template `m/z {}`.
 
   Unit-test the registry in `test/secant_service_web/systems_test.exs`:
@@ -79,27 +79,46 @@
 - [ ] 5.1 Add the total functions of design.md Decision 5:
   - `Trace.extract/3`: string-then-existing-atom keys, list indices; non-numbers give nil;
   - `LabelSource.text/2`: strings as they are, whole numbers without a fraction, other numbers in short form, the `{}` template, nil otherwise;
-  - `PlotDB.drawable?/2`: declared types only, `History.thinnable?/1`, struct-only paths, arrays of at most 100 elements; malformed `members` give false; no database access;
-  - `PlotDB.traces/3`: drop undrawable traces and arrays read longer than 100; expand `:each` to `min(declared || latest length, slots left)`; resolve `{:match, …}` by number compare; cut to 16; give stable names; dedupe; fall back to the generic lines when empty.
+  - `PlotDB.drawable?/2`: declared types only, `Scalar.supported_type?/1` numbers (no enums), `History.thinnable?/1`, struct-only paths, arrays of at most 100 elements; `is_map` checked at every step, so malformed datainfo gives false; no database access;
+  - `PlotDB.latest_value/1`: the latest stored value of any type (`SecNodes.latest_reading` + `Storage.raw_value`);
+  - `PlotDB.traces/2`, in design.md Decision 5's order:
+    1. drop undrawable traces;
+    2. pre-check undeclared arrays with `latest_value` before any window fetch;
+    3. read the other latest values once per parameter;
+    4. expand `:each` to `min(declared || latest length, 100)`;
+    5. resolve `{:match, …}` with `==` to a concrete `{:index, k}`;
+    6. give stable names (`value`, `value.composition[2]`, `value[27]`);
+    7. dedupe, then cut to 16;
+    8. return `:no_traces` when empty.
 
   Unit-test in `test/secant_service/plot_db/traces_test.exs`:
   - `extract/3` on atom- and string-key structs, short arrays, nil and error values;
   - `text/2` on `28.0`, `28.5`, a string, a map, nil and a template;
-  - `drawable?/2` on a missing parameter, a path to a string, an array-of-struct path, a 350 000-element `maxlen`, and malformed `members`, and that it makes no Repo query;
-  - `traces/3` on `:each` with and without a declared length, a match found and not found (28 against 28.0), a duplicate trace, stable names (`value`, `value.composition[2]`), and the 16 cap.
+  - `drawable?/2` on a missing parameter, an enum, a path to a string, an array-of-struct path, a 350 000-element `maxlen`, and malformed datainfo (a list where a map belongs), and that it makes no Repo query;
+  - `traces/2` on:
+    - `:each` with and without a declared length;
+    - an undeclared array whose latest reading has 200 elements (dropped before any window query);
+    - a match found and not found (28.0 against 28, and 28 against 28.0), resolved to `{:index, k}`;
+    - duplicates (removed before the cut);
+    - stable names;
+    - the 16 cap.
+
+  Test `latest_value/1` returning a struct value.
 
   Verify the file passes.
 - [ ] 5.2 In `TimePlot`/`Scalar`, add `build_lines/3` as design.md Decision 5 describes:
   - one window fetch per distinct parameter (the held fetch for setpoint parameters), with traces extracted;
-  - latest readings from the first window, else one latest-reading query per parameter;
   - `_label` on the series, and fallbacks;
+  - readings with no number at a trace's path dropped, not sent as `[ts, nil]`;
   - setpoint (`_held`) and hidden (`legend.selected`) traces;
-  - `Gaps.put/3`, with `Gaps.fallback/2` requiring an empty path;
-  - the two-axis option.
+  - `Gaps.put/3`, with `Gaps.fallback/2` matching only whole parameters (`path == [] and pick == nil`);
+  - the two-axis option, with fallback units read along each trace's path.
 
-  Give the plot `lines` (map shape), `resolved` (list shape) and `traces`, and add a `trace_updates/3` clause for `traces` before the `lines` clause. Make `Scalar.series_updates/3` return `[]` for an unknown series. Test in `test/secant_service/plot_db_test.exs` with stored readings:
-  - cost by distinct parameter: the Repo statements of four element traces of one parameter equal those of one trace of it (counted through query telemetry);
-  - the custom plot carries `_gaps` and a gap reply, and a span-less session's estimate applies only to the whole `value` trace;
+  Give the plot `lines` (keyed by series name), `resolved` (list shape) and `traces`. Add a `trace_updates/3` clause for `traces` before the `lines` clause, and call it once per distinct parameter from `window_reply/2`. Make `PlotDB.init/3` fall back to `init/2` on `:no_traces`. Make `Scalar.series_updates/3` return `[]` for an unknown series. Test in `test/secant_service/plot_db_test.exs` with stored readings:
+  - cost by distinct parameter: the Repo statements of four element traces of one parameter equal those of one trace of it. No helper exists, so count them with an inline `:telemetry.attach` on the Repo's query event;
+  - the custom plot carries `_gaps` and a gap reply, and a span-less session's estimate applies only to the whole `value` trace, not to `value.composition[2]` or `value[27]`;
+  - a generic struct plot's live update still lands on the right series after the `series_updates/3` change;
+  - an error reading gives no point and no break;
   - the MFC group gives four gas-labelled composition traces plus `total_flow` with `yAxisIndex: 1` and the axis labels; equal gas names still give four series;
   - the mass trend picks the elements of masses 28 and 44 and labels them `m/z 28` and `m/z 44`, with `_mass` read by one latest-reading query;
   - a missing label falls back;
@@ -107,11 +126,17 @@
   - a whole number trace gets a band and an element trace doesn't.
 
   Verify the file passes.
-- [ ] 5.3 In `PlotDB.init` with an `ArrayPlot`, follow today's array path and add `_indexLabels` (one per index for a heatmap; for `ArrayLatest`, an index → label map for the drawn indexes only) and `_indexAxisName`. Make `HistoryDB.rebuild_as_latest/3` carry them into `ArrayLatest.plot`. Test in `test/secant_service/plot_db_test.exs`:
+- [ ] 5.3 In `PlotDB.init` with an `ArrayPlot`, follow today's array path for `value` and read the label source once with `latest_value`:
+  - a heatmap gets `_indexLabels` for the first `min(source length, 100)` entries;
+  - a latest-reading plot gets `_indexLabels` only when the source has at most 4000 entries;
+  - the axis name goes into the index axis's `name` on the server (`ArrayHeatmap.index_axis/1`, `ArrayLatest.option/3`).
+
+  Make `HistoryDB.rebuild_as_latest/3` pass the spec, so the rebuild reads the label source again. Test in `test/secant_service/plot_db_test.exs`:
   - the mass spec heatmap gets `m/z 1`, `m/z 2`, … and the axis name;
   - 90 `_mass` entries for 100 elements leave indexes 90–99 unlabelled;
-  - a 350 000-element latest-reading plot sends at most its drawn indexes' labels;
-  - a rebuilt latest-reading plot keeps the labels.
+  - a heatmap loaded at 3 elements with a 10-entry source carries 10 labels;
+  - a latest-reading plot with a 3000-entry source carries 3000 labels, and with a 10 000-entry source none;
+  - a rebuild reads the label source again.
 
   Verify the file passes.
 - [ ] 5.4 In the chart hook, show labels as design.md Decision 5 describes:
@@ -119,16 +144,20 @@
   - the legend formatter gets the raw `_label || name` (canvas);
   - a number-plot axis-tooltip formatter, installed only when some series has `_label`, escapes;
   - `bands.js` `_envelopeTooltip` uses the escaped label;
-  - with `_indexLabels`: the heatmap index-axis formatter (raw) and hover readout (escaped), the lines-mode series labels and `_linesTooltip` (escaped), and `ArrayLatest`'s index-axis formatter and tooltip (escaped); `_indexAxisName` names the index axis.
+  - with `_indexLabels`:
+    - the heatmap index-axis formatter (canvas, raw) and hover readout (`textContent`, raw);
+    - in lines mode, `_linesTooltip` looking labels up by element index (escaped), keeping the `[i]` series names;
+    - `ArrayLatest`'s index-axis formatter (canvas, raw) and its tooltip (escaped).
 
-  Add `assets/js/charts/labels.test.mjs`: a `<b>N2</b>` label is escaped for tooltips and raw for canvas, and an index without a label shows its number. Add it to the `node --test` step in `.github/workflows/ci.yml`. Verify `node --test assets/js/charts/gaps.test.mjs assets/js/charts/labels.test.mjs` passes.
-- [ ] 5.5 In `HistoryDB`, accept an optional `plot_spec` assign. Check `PlotDB.drawable?/2` on mount when one is given, and pass it to `init` on mount and reloads. When the loaded plot carries `traces`, make the range, window and overview handlers and the live filter read `plot.resolved`, fetching once per distinct `param.id` and fanning out. Other plots keep today's code. Verify that the existing `HistoryDB`, plot and LiveView tests pass unchanged.
+  Add `assets/js/charts/labels.test.mjs`: a `<b>N2</b>` label is escaped for tooltips and raw for canvas and `textContent`, and an index without a label shows its number. Add it to the `node --test` step in `.github/workflows/ci.yml`. Verify `node --test assets/js/charts/gaps.test.mjs assets/js/charts/labels.test.mjs` passes.
+- [ ] 5.5 In `HistoryDB`, accept an optional `plot_spec` assign. Check `PlotDB.drawable?/2` on mount when one is given, and pass it to `init` on mount, on reloads and on `rebuild_as_latest/3`. When a load returns `%{plottable: false}` and `tabular?/1` holds, switch to the table instead of leaving an empty chart. When the loaded plot carries `traces`, make the range, window and overview handlers and the live filter read `plot.resolved`, fetching once per distinct `param.id` and fanning out. Other plots keep today's code. Verify that the existing `HistoryDB`, plot and LiveView tests pass unchanged.
 - [ ] 5.6 In `ModuleDetail`, pass the matched role's `plot()` as `plot_spec` to the module plot only (never to a parameter plot), and only when the module has a `value`, keeping today's `@plot_parameter || @has_value` gate. In `system_card_test.exs`, test that:
   - the live module plot of the matched `current` module draws the four test traces, with `power_limit` deselected in `legend.selected`;
   - a pushed `voltage_limit` reading is sent as an `extend-chart-<id>` update;
   - the `voltage` role (card, no plot) gets the generic module plot;
   - a parameter plot opened from a row stays generic;
   - a module with a string `value` and no match still shows the table;
+  - a role whose only trace picks a mass not in `_mass`, on a module with a string `value`, shows the table;
   - the mass spec module's plot carries `_indexLabels`.
 
   In `test/secant_service_web/live/node_browser_live_test.exs`, test that the stored session's custom lines plot draws the same traces, and drive `fetch-chart-window`, `fetch-chart-overview` and `fetch-chart-range` on it with `render_hook` (as the existing tests there do), asserting the replies carry the custom traces. Verify both files pass.
