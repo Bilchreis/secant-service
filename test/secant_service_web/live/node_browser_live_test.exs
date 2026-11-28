@@ -6,6 +6,10 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
 
   @endpoint SecantServiceWeb.Endpoint
 
+  # A plot loads in an async task that queries the database; the default
+  # 100 ms isn't enough on a busy machine.
+  @async_timeout 2_000
+
   test "the node header links to the NeXus export of the node" do
     node = generate(sec_node(equipment_id: "test cryo", description: "test cryostat"))
 
@@ -30,7 +34,7 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
           do: generate(parameter(name: name, datainfo: @double, module_id: module.id))
 
       {:ok, view, _html} = live(build_conn(), "/browse/node/#{node.uuid}?module=temp")
-      render_async(view)
+      render_async(view, @async_timeout)
 
       id = "hplot:#{node.uuid}:temp:module"
       {view, id, with_target(view, ~s([id="history-#{id}"]))}
@@ -52,7 +56,7 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
         "envelope" => true
       })
 
-      render_async(view)
+      render_async(view, @async_timeout)
 
       assert_push_event(view, "window-chart-data-" <> ^id, %{
         gen: 3,
@@ -68,7 +72,7 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
         "envelope" => "yes"
       })
 
-      render_async(view)
+      render_async(view, @async_timeout)
       assert_push_event(view, "window-chart-data-" <> ^id, %{gen: 4, envelope: false})
     end
 
@@ -85,7 +89,7 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
         "envelope" => true
       })
 
-      render_async(view)
+      render_async(view, @async_timeout)
 
       assert_push_event(view, "overview-chart-data-" <> ^id, %{
         gen: 5,
@@ -123,14 +127,14 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
         "envelope" => false
       })
 
-      render_async(view)
+      render_async(view, @async_timeout)
 
       assert_push_event(view, "window-chart-data-" <> ^id, %{
         gaps: [^gap, [_, nil, "disconnected"]]
       })
 
       render_hook(chart, "fetch-chart-overview", %{"gen" => 2, "envelope" => false})
-      render_async(view)
+      render_async(view, @async_timeout)
 
       assert_push_event(view, "overview-chart-data-" <> ^id, %{
         gaps: [^gap, [_, nil, "disconnected"]]
@@ -169,7 +173,7 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
       })
 
       {:ok, view, _html} = live(build_conn(), "/browse/node/#{node.uuid}?module=spec")
-      render_async(view)
+      render_async(view, @async_timeout)
       id = "hplot:#{node.uuid}:spec:module"
       chart = with_target(view, ~s([id="history-#{id}"]))
 
@@ -181,7 +185,7 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
         "envelope" => false
       })
 
-      render_async(view)
+      render_async(view, @async_timeout)
 
       assert_push_event(view, "window-chart-data-" <> ^id, %{
         aggregated: false,
