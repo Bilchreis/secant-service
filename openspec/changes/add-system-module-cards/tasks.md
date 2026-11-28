@@ -2,7 +2,7 @@
 
 ## 1. Bindings
 
-- [ ] 1.1 Add `SecantService.Systems` (`bindings/1`, `bindings_for/2`, `parse_reference/1`), with the `Binding` struct (including `parents`) in its own file, `lib/secant_service/systems/binding.ex`. Follow design.md Decision 1:
+- [x] 1.1 Add `SecantService.Systems` (`bindings/1`, `bindings_for/2`, `parse_reference/1`), with the `Binding` struct (including `parents`) in its own file, `lib/secant_service/systems/binding.ex`. Follow design.md Decision 1:
   - make it total: a non-map `systems`, non-map entries, and role keys or values that are neither strings nor atoms are skipped, never raised on;
   - read `custom_properties` `"systems"` or `:systems`, normalising atom keys and creating no atoms;
   - parse references (no `:` is version 0; the suffix must match `~r/\A\d+\z/` and parse to `{n, ""}`; the name must be non-empty), and drop malformed entries and entries without a `modules` map;
@@ -10,7 +10,7 @@
   - sort each module's bindings by local system name.
 
   Verify `mix compile --warnings-as-errors`.
-- [ ] 1.2 Add a `put_systems/2` helper to `test/support/node_fixtures.ex` that sets the node-level `systems` property of a raw description. In `test/secant_service/systems_test.exs`, test every scenario of `specs/system-bindings/spec.md`, including the malformed shapes and `"PowerSupply:1\n"`:
+- [x] 1.2 Add a `put_systems/2` helper to `test/support/node_fixtures.ex` that sets the node-level `systems` property of a raw description. In `test/secant_service/systems_test.exs`, test every scenario of `specs/system-bindings/spec.md`, including the malformed shapes and `"PowerSupply:1\n"`:
   - on custom properties with string keys (a node stored through `NodeManager`/`upsert_sec_node` and loaded back, as the dashboard and data browser get it);
   - on the atom-key output of `DescribeMessageTransformer.transform/1`, giving equal bindings.
 
