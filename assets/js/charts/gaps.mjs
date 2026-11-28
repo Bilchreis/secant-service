@@ -1,12 +1,14 @@
 // Gaps: time in which a session was not recorded. The server sends them as
-// intervals [g0, g1] (ms; g1 null when no recording followed) with every
+// intervals [g0, g1] or [g0, g1, reason] (ms; g1 null when no recording
+// followed; reason: why recording stopped) with every
 // load of a number-line or numeric array plot (`_gaps` on the option, `gaps`
 // on window, overview and range replies), and live plots get
 // `gap-chart-<id>` events when recording stops or resumes. The lines break
 // there, and heatmap rows end there, once, on the data as drawn: after the
 // overview, the zoomed detail, live backfill and live readings are merged,
-// so no seam between them can erase or invent a break.
-// See SecantService.PlotDB.Gaps.
+// so no seam between them can erase or invent a break. Each gap the plot
+// shows that way is marked with a shaded region, which the pointer readout
+// describes. See SecantService.PlotDB.Gaps.
 //
 // The functions below are pure (tested with `node --test`); `Gaps` is the
 // part of the EChartsChart hook (see ./echarts_chart.js) that feeds them.
@@ -21,31 +23,42 @@ const GAP_MARKER_SIZE = 5;
 
 const end = (g) => (g[1] == null ? Infinity : g[1]);
 
+// a gap, with its reason when there is one
+const gapOf = (g0, g1, reason) => (reason == null ? [g0, g1] : [g0, g1, reason]);
+
 // The gaps to draw: every gap ever received, with the live transitions on
 // top. An open gap ends at a finite gap with the same start (a later load
 // knows how it ended) or at a live close at or after its start; gaps that
-// overlap are joined, never clipped.
+// overlap are joined, never clipped. A gap keeps its reason; joined gaps
+// keep the earliest one known.
 export function mergeGaps(sets, liveEvents = []) {
   let gaps = [];
-  sets.forEach((set) => (set || []).forEach(([g0, g1]) => gaps.push([g0, g1 == null ? null : g1])));
+  sets.forEach((set) => (set || []).forEach(([g0, g1, r]) => gaps.push(gapOf(g0, g1 == null ? null : g1, r))));
 
   [...liveEvents]
     .sort((a, b) => a.ms - b.ms || (a.at || 0) - (b.at || 0))
     .forEach((ev) => {
       if (ev.kind === "open") {
-        gaps.push([ev.ms, null]);
+        gaps.push(gapOf(ev.ms, null, ev.reason));
       } else {
         // the latest open gap that started at or before it
         let best = -1;
         gaps.forEach((g, k) => {
           if (g[1] == null && g[0] <= ev.ms && (best < 0 || g[0] > gaps[best][0])) best = k;
         });
-        if (best >= 0) gaps[best] = [gaps[best][0], Math.max(ev.ms, gaps[best][0])];
+        if (best >= 0) gaps[best] = gapOf(gaps[best][0], Math.max(ev.ms, gaps[best][0]), gaps[best][2]);
       }
     });
 
-  const finiteStarts = new Set(gaps.filter((g) => g[1] != null).map((g) => g[0]));
-  gaps = gaps.filter((g) => g[1] != null || !finiteStarts.has(g[0]));
+  // an open gap gives way to a finite one with the same start, which takes
+  // its reason when it has none
+  const finite = new Map();
+  gaps.forEach((g) => g[1] != null && !finite.has(g[0]) && finite.set(g[0], g));
+  gaps.forEach((g) => {
+    const f = g[1] == null && finite.get(g[0]);
+    if (f && f[2] == null && g[2] != null) f[2] = g[2];
+  });
+  gaps = gaps.filter((g) => g[1] != null || !finite.has(g[0]));
 
   gaps.sort((a, b) => a[0] - b[0]);
   const out = [];
@@ -53,8 +66,9 @@ export function mergeGaps(sets, liveEvents = []) {
     const last = out[out.length - 1];
     if (last && g[0] <= end(last)) {
       if (end(g) > end(last)) last[1] = g[1];
+      if (last[2] == null && g[2] != null) last[2] = g[2];
     } else {
-      out.push([g[0], g[1]]);
+      out.push(gapOf(g[0], g[1], g[2]));
     }
   });
   return out;
@@ -80,8 +94,10 @@ const overlap = (a, b, g) => Math.min(b, end(g)) - Math.max(a, g[0]);
 // most, if that overlap is at least the width the gap is judged at (2 s, or
 // the bucket width of the part it lies in). The line holds the last value
 // up to the gap start, then breaks. A pair breaks once, at its earliest gap.
-// Returns {data, breaks}: the times of the breaks, for the band.
-export function breakLine(data, gaps, { widthAt = () => 0 } = {}) {
+// Returns {data, breaks}: the times of the breaks, for the band. `used`
+// collects every gap that qualifies at a pair, also one whose pair already
+// broke at an earlier gap: the line shows them all.
+export function breakLine(data, gaps, { widthAt = () => 0, used } = {}) {
   if (gaps.length === 0 || data.length < 2) return { data, breaks: [] };
   const breakAt = new Map(); // pair index -> gap
   gaps.forEach((g) => {
@@ -101,7 +117,10 @@ export function breakLine(data, gaps, { widthAt = () => 0 } = {}) {
         bestOverlap = o;
       }
     }
-    if (best >= 0 && bestOverlap >= min && !breakAt.has(best)) breakAt.set(best, g);
+    if (best >= 0 && bestOverlap >= min) {
+      if (used) used.add(g);
+      if (!breakAt.has(best)) breakAt.set(best, g);
+    }
   });
   if (breakAt.size === 0) return { data, breaks: [] };
 
@@ -136,8 +155,9 @@ function firstPairFrom(data, t) {
 // A setpoint (step line) breaks at every gap: it ends at the gap start with
 // the value in force, draws nothing inside the gap (a reading stamped
 // inside takes effect at its end) and resumes at the gap end with the value
-// in force there. A gap without an end ends the line.
-export function breakHeld(data, gaps, { widthAt = () => 0 } = {}) {
+// in force there. A gap without an end ends the line. `used` collects the
+// gaps it ended the line at (a value was in force).
+export function breakHeld(data, gaps, { widthAt = () => 0, used } = {}) {
   const qualifying = gaps.filter((g) => end(g) - g[0] >= Math.max(MIN_GAP_MS, widthAt(g[0], end(g))));
   if (qualifying.length === 0 || data.length === 0) return data;
   const out = [];
@@ -151,6 +171,7 @@ export function breakHeld(data, gaps, { widthAt = () => 0 } = {}) {
     }
     if (value !== undefined) {
       out.push([g[0], value], [g[0], null]);
+      if (used) used.add(g);
     }
     const stop = end(g);
     while (i < data.length && data[i][0] < stop) {
@@ -186,8 +207,9 @@ export function breakRows(rows, breaks) {
 // ended at the start of the earliest gap its hold overlaps by at least the
 // width the gap is judged at (2 s, or the bucket width), or of an open gap
 // it reaches (recording stopped). A row never ends before its reading and
-// is never longer than before. Rows and gaps are in time order.
-export function clipRowEnds(times, ends, gaps, { widthAt = () => 0 } = {}) {
+// is never longer than before. Rows and gaps are in time order. `used`
+// collects each gap that ends a row or qualifies inside a row's hold.
+export function clipRowEnds(times, ends, gaps, { widthAt = () => 0, used } = {}) {
   if (gaps.length === 0) return ends;
   const out = ends.slice();
   let first = 0;
@@ -199,13 +221,55 @@ export function clipRowEnds(times, ends, gaps, { widthAt = () => 0 } = {}) {
       const g = gaps[j];
       const ge = end(g);
       const reaches = g[1] == null || Math.min(e, ge) - Math.max(t, g[0]) >= Math.max(MIN_GAP_MS, widthAt(g[0], ge));
-      if (reaches) {
-        out[k] = Math.min(e, Math.max(t, g[0]));
-        break;
-      }
+      if (!reaches) continue;
+      if (out[k] === e) out[k] = Math.min(e, Math.max(t, g[0]));
+      if (!used) break;
+      used.add(g);
     }
   }
   return out;
+}
+
+// The marked gap under time t: regions in time order, not overlapping
+export function gapAt(t, regions) {
+  let lo = 0;
+  let hi = regions.length - 1;
+  if (hi < 0 || t < regions[0][0]) return null;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (regions[mid][0] <= t) lo = mid;
+    else hi = mid - 1;
+  }
+  return t < end(regions[lo]) ? regions[lo] : null;
+}
+
+const REASONS = {
+  disconnected: "Node disconnected",
+  deactivated: "Node deactivated",
+  stopped: "Recording stopped",
+  interrupted: "Recording interrupted",
+};
+
+// The readout of a gap, one line each: what, why, when. `time` and
+// `duration` format ms (passed in: their module needs a browser).
+export function gapText(g, now, { time, duration }) {
+  const lines = ["Not recorded"];
+  if (REASONS[g[2]]) lines.push(REASONS[g[2]]);
+  lines.push(
+    g[1] == null
+      ? `since ${time(g[0])} · ${duration(Math.max(0, now - g[0]))}, ongoing`
+      : `${time(g[0])} → ${time(g[1])} · ${duration(g[1] - g[0])}`,
+  );
+  return lines.join("\n");
+}
+
+// The marks of the regions: a shaded area each (an open one to the right
+// edge), and a dashed line at each start and end
+export function regionMarks(regions) {
+  return {
+    areas: regions.map((g) => [{ xAxis: g[0] }, { xAxis: end(g) }]),
+    lines: regions.flatMap((g) => (g[1] == null ? [{ xAxis: g[0] }] : [{ xAxis: g[0] }, { xAxis: g[1] }])),
+  };
 }
 
 export const hasNull = (data) => data.some((p) => Array.isArray(p) && p[1] == null);
@@ -302,8 +366,11 @@ export const Gaps = {
     if (poll && !this._rangeButtons)
       gaps = [...gaps, ...spacingGaps(d, poll, widthAt)].sort((a, b) => a[0] - b[0]);
     if (gaps.length === 0) return { data: d, breaks: [] };
-    if (this._isHeldSeries(idx)) return { data: breakHeld(d, gaps, { widthAt }), breaks: [] };
-    return breakLine(d, gaps, { widthAt });
+    // the gaps behind the breaks are marked (inferred ones are not in
+    // `_gapList()`, so they never are)
+    const used = this._marked;
+    if (this._isHeldSeries(idx)) return { data: breakHeld(d, gaps, { widthAt, used }), breaks: [] };
+    return breakLine(d, gaps, { widthAt, used });
   },
 
   // What series `idx` draws: its breaks, then a setpoint's hold to the end
@@ -320,13 +387,86 @@ export const Gaps = {
   // An array element line with its breaks (Lines mode)
   _elementLine(data) {
     if (!this._gapsOn || this._gapList().length === 0) return data;
-    return breakLine(data, this._gapList(), { widthAt: (a, b) => this._gapWidth(a, b) }).data;
+    const widthAt = (a, b) => this._gapWidth(a, b);
+    return breakLine(data, this._gapList(), { widthAt, used: this._marked }).data;
   },
 
   // The ends of a heatmap's rows, ended at gaps
-  _heatRowEnds(times, ends) {
+  _heatRowEnds(times, ends, used) {
     if (!this._gapsOn || this._gapList().length === 0) return ends;
-    return clipRowEnds(times, ends, this._gapList(), { widthAt: (a, b) => this._gapWidth(a, b) });
+    return clipRowEnds(times, ends, this._gapList(), { widthAt: (a, b) => this._gapWidth(a, b), used });
+  },
+
+  // A heatmap's rows from its cells [t, index, value] in time order: the
+  // reading times, and how long each holds (to the next reading; the last
+  // to now when live, else for one typical interval)
+  _heatRows(timeAt, n, live) {
+    const starts = [];
+    const times = [];
+    for (let j = 0; j < n; j++) {
+      const t = timeAt(j);
+      if (j === 0 || t !== times[times.length - 1]) {
+        starts.push(j);
+        times.push(t);
+      }
+    }
+    const g = times.length;
+    const lastSpan = g > 1 ? times[g - 1] - times[g - 2] : 1000;
+    const held = times.map((t, k) => (k + 1 < g ? times[k + 1] : live ? Math.max(Date.now(), t) : t + lastSpan));
+    return { starts, times, held };
+  },
+
+  // --- Marking the gaps the plot shows --------------------------------------
+
+  // Before the series data is computed: collect anew. The breaks add the
+  // gaps they used (`_broken`, `_elementLine`).
+  _markBegin() {
+    this._marked = this._gapsOn ? new Set() : null;
+    this._regions = null;
+  },
+
+  // After it: a heatmap's rows add theirs, then the regions are the gaps
+  // marked, plus those at the ends of the readings (see `_edgeGap`).
+  _markEnd() {
+    if (!this._marked) return;
+    if (this._gapList().length === 0) {
+      this._regions = [];
+      return;
+    }
+    if (this._gapArray() && this._arrayMode !== "lines") {
+      const cells = this._seriesData[0] || [];
+      const { times, held } = this._heatRows((j) => cells[j][0], cells.length, !!this._rangeButtons);
+      this._heatRowEnds(times, held, this._marked);
+    }
+    const span = this._readingSpan();
+    const marked = this._marked;
+    this._regions = this._gapList().filter((g) => marked.has(g) || this._edgeGap(g, span));
+  },
+
+  // The first and last reading in the buffers (recorded readings, not the
+  // points added to draw them), or null without any
+  _readingSpan() {
+    let first = Infinity;
+    let last = -Infinity;
+    Object.values(this._seriesData || {}).forEach((d) => {
+      if (!d || d.length === 0) return;
+      first = Math.min(first, this._pointTs(d[0]));
+      last = Math.max(last, this._pointTs(d[d.length - 1]));
+    });
+    return first === Infinity ? null : { first, last };
+  },
+
+  // A gap at an end of the readings shows though no line breaks there: no
+  // reading after it yet (an open gap always), or none before it (a live
+  // range trimmed it, or the plot was opened during the gap)
+  _edgeGap(g, span) {
+    if (!span) return true;
+    return end(g) > span.last || g[0] < span.first;
+  },
+
+  // The marked regions, in time order (computed with the series data)
+  _gapRegions() {
+    return this._regions || [];
   },
 
   // The data patch of drawn series `j` with gaps in play, or null for the

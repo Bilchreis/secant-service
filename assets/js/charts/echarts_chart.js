@@ -14,7 +14,10 @@ import { Arrays } from "./arrays";
 import { ArrayLatest } from "./array_latest";
 import { Live } from "./live";
 import { Setpoints } from "./setpoints";
-import { Gaps } from "./gaps.mjs";
+import { Gaps, regionMarks } from "./gaps.mjs";
+
+// the id of the series that draws the gap regions
+const GAP_REGIONS = "gap-regions";
 
 // The chart hook of every plot (live and history; numbers, enums, arrays,
 // structs). Its methods are split by concern over the modules imported
@@ -184,13 +187,54 @@ export const EChartsChart = {
   // while it shows bucket means (each one counts), as today otherwise.
   _seriesPatch() {
     const data = this._chartSeriesData();
-    if (!this._envActive()) return data.map((d, j) => this._dataPatch(d, j));
+    if (!this._envActive()) return this._withRegions(data.map((d, j) => this._dataPatch(d, j)));
     const map = this._seriesMap || [];
-    return data.map((d, j) => {
-      const m = map[j];
-      if (!m || m.band || !this._bandParent(m)) return this._dataPatch(d, j);
-      return { ...this._dataPatch(d, j), sampling: this._sampling(d, this._hasBand(m.src)) };
-    });
+    return this._withRegions(
+      data.map((d, j) => {
+        const m = map[j];
+        if (!m || m.band || !this._bandParent(m)) return this._dataPatch(d, j);
+        return { ...this._dataPatch(d, j), sampling: this._sampling(d, this._hasBand(m.src)) };
+      }),
+    );
+  },
+
+  // A series patch with the gap regions' patch after it (by id)
+  _withRegions(patches) {
+    if (!this._gapsOn) return patches;
+    const { areas, lines } = regionMarks(this._gapRegions());
+    return [...patches, { id: GAP_REGIONS, markArea: { data: areas }, markLine: { data: lines } }];
+  },
+
+  // The series that holds the gap regions: no data of its own, no name (no
+  // legend entry), its marks behind every line and heatmap cell
+  _regionSeries() {
+    const css = getComputedStyle(document.documentElement);
+    const muted = css.getPropertyValue("--sc-muted").trim() || "#888";
+    const fill = { color: muted, opacity: isDarkTheme() ? 0.12 : 0.08 };
+    const edge = { color: muted, opacity: 0.6, width: 1, type: "dashed" };
+    // the same in every state: a blurred series' marks would fade
+    const area = { itemStyle: fill, emphasis: { itemStyle: fill }, blur: { itemStyle: fill } };
+    const line = { lineStyle: edge, emphasis: { lineStyle: edge }, blur: { lineStyle: edge } };
+    const { areas, lines } = regionMarks(this._gapRegions());
+    return {
+      id: GAP_REGIONS,
+      type: "line",
+      data: [],
+      silent: true,
+      animation: false,
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      markArea: { silent: true, z: 0, animation: false, label: { show: false }, ...area, data: areas },
+      markLine: {
+        silent: true,
+        z: 1,
+        animation: false,
+        symbol: "none",
+        label: { show: false },
+        ...line,
+        data: lines,
+      },
+    };
   },
 
   // exactly one reading with a value (a gap in an array is a null)
@@ -414,24 +458,49 @@ export const EChartsChart = {
     };
   },
 
-  // The option to draw, with envelope bands where they are on.
+  // The option to draw, with envelope bands where they are on, and the gap
+  // regions after every other series (./gaps.mjs).
   _composeOption(option) {
-    return this._withBands(this._composeBase(option));
+    const composed = this._withBands(this._composeBase(option));
+    if (!this._gapsOn) return composed;
+    // the heatmap's colour scale covers its own series only
+    const scoped = (vm) => (vm && vm.seriesIndex == null ? { ...vm, seriesIndex: 0 } : vm);
+    const visualMap = Array.isArray(composed.visualMap)
+      ? composed.visualMap.map(scoped)
+      : composed.visualMap && scoped(composed.visualMap);
+    // a class to hide the axis tooltip by while the gap readout shows
+    const tooltip = composed.tooltip && { ...composed.tooltip, className: "sc-chart-tooltip" };
+    return {
+      ...composed,
+      ...(visualMap ? { visualMap } : {}),
+      ...(tooltip ? { tooltip } : {}),
+      series: [...(composed.series || []), this._regionSeries()],
+    };
   },
 
   // The data of each drawn series, from the buffers: as buffered, or one
   // element of an array buffer (lines mode).
+  // Also collects the gaps the plot shows, for their regions (./gaps.mjs).
   _chartSeriesData() {
+    this._markBegin();
+    // a heatmap's cells as drawn next; until then the readout finds none
+    this._heatCache = {};
     const map = this._seriesMap;
-    if (!map) return Object.keys(this._seriesData).map((idx) => this._drawnData(idx));
-    const split = {};
-    return map.map(({ src, elem, band }) => {
-      if (band) return this._bandData(src, band);
-      if (elem == null) return this._drawnData(src);
-      if (!split[src]) split[src] = this._splitArray(this._seriesData[src] || [], this._elementCount(src));
-      // element lines break at gaps (./gaps.mjs)
-      return this._elementLine(split[src][elem] || []);
-    });
+    let out;
+    if (!map) {
+      out = Object.keys(this._seriesData).map((idx) => this._drawnData(idx));
+    } else {
+      const split = {};
+      out = map.map(({ src, elem, band }) => {
+        if (band) return this._bandData(src, band);
+        if (elem == null) return this._drawnData(src);
+        if (!split[src]) split[src] = this._splitArray(this._seriesData[src] || [], this._elementCount(src));
+        // element lines break at gaps (./gaps.mjs)
+        return this._elementLine(split[src][elem] || []);
+      });
+    }
+    this._markEnd();
+    return out;
   },
 
   _applyInitialOption(echartsOption) {

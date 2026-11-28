@@ -71,7 +71,7 @@ defmodule SecantService.RecordingTracker do
   adopts or closes it. Other failures are logged and dropped.
 
   Each start and end of recording is also passed to the node's plot cache
-  (`SecantService.PlotCache.recording/3`), for the live plots.
+  (`SecantService.PlotCache.recording/4`, with the reason it stopped), for the live plots.
 
   The clock (`:recording_tracker_clock`, a function returning
   `{os_ms, monotonic_ms}`), the heartbeat interval
@@ -216,7 +216,7 @@ defmodule SecantService.RecordingTracker do
 
     if clean?(reason) and state.status == :recording do
       now = now_ms(state)
-      PlotCache.recording(state.node_id, :stopped, now)
+      PlotCache.recording(state.node_id, :stopped, now, :stopped)
       state |> close(now, :stopped, notify?: false) |> drain()
     else
       drain(state)
@@ -350,7 +350,8 @@ defmodule SecantService.RecordingTracker do
   end
 
   defp close(state, at, reason, opts \\ []) do
-    if Keyword.get(opts, :notify?, true), do: PlotCache.recording(state.node_id, :stopped, at)
+    if Keyword.get(opts, :notify?, true),
+      do: PlotCache.recording(state.node_id, :stopped, at, reason)
 
     %{state | status: :idle, span: nil, last_close_at: at}
     |> enqueue(close_row(state.span, at, reason, state.uuid))

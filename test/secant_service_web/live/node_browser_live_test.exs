@@ -113,7 +113,7 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
         })
       end
 
-      gap = [(1_000_000 + 100) * 1000, (1_000_000 + 400) * 1000]
+      gap = [(1_000_000 + 100) * 1000, (1_000_000 + 400) * 1000, "disconnected"]
 
       render_hook(chart, "fetch-chart-window", %{
         "from" => 1_000_000_000,
@@ -124,11 +124,17 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
       })
 
       render_async(view)
-      assert_push_event(view, "window-chart-data-" <> ^id, %{gaps: [^gap, [_, nil]]})
+
+      assert_push_event(view, "window-chart-data-" <> ^id, %{
+        gaps: [^gap, [_, nil, "disconnected"]]
+      })
 
       render_hook(chart, "fetch-chart-overview", %{"gen" => 2, "envelope" => false})
       render_async(view)
-      assert_push_event(view, "overview-chart-data-" <> ^id, %{gaps: [^gap, [_, nil]]})
+
+      assert_push_event(view, "overview-chart-data-" <> ^id, %{
+        gaps: [^gap, [_, nil, "disconnected"]]
+      })
     end
 
     test "an array plot's window reply takes its resolution from the drawn value alone" do
@@ -179,7 +185,7 @@ defmodule SecantServiceWeb.NodeBrowserLiveTest do
 
       assert_push_event(view, "window-chart-data-" <> ^id, %{
         aggregated: false,
-        gaps: [[_, nil]]
+        gaps: [[_, nil, "disconnected"]]
       })
     end
   end

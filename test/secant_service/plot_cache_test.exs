@@ -17,16 +17,16 @@ defmodule SecantService.PlotCacheTest do
     start_supervised!({PlotCache, ctx.node_db})
     send_value_update(ctx.node_id, "m", "value", [1.0, %{t: 1.0}])
 
-    PlotCache.recording(ctx.node_id, :stopped, 5_000)
+    PlotCache.recording(ctx.node_id, :stopped, 5_000, :disconnected)
 
     # the first message is the batch
     assert_receive msg
     assert {:plot_data, [{"m", "value", [[1.0, %{t: 1.0}]]}]} = msg
-    assert_receive {:recording, :stopped, 5_000}
+    assert_receive {:recording, :stopped, 5_000, :disconnected}
   end
 
   test "without a running cache, a stop is published at once", ctx do
     PlotCache.recording(ctx.node_id, :stopped, 7_000)
-    assert_receive {:recording, :stopped, 7_000}
+    assert_receive {:recording, :stopped, 7_000, nil}
   end
 end

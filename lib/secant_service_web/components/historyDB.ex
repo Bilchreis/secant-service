@@ -168,14 +168,16 @@ defmodule SecantServiceWeb.Components.HistoryDB do
   # Recording of the node stopped or resumed (`SecantService.PlotCache`):
   # a live plot that has gaps (number lines, numeric arrays) opens or
   # closes a gap there. Events that arrive while the plot loads are pushed
-  # after it.
-  def update(%{recording: {kind, ms}}, socket) do
+  # after it. An open carries why recording stopped, for the gap's readout.
+  def update(%{recording: {kind, ms, reason}}, socket) do
     event = %{
       kind: if(kind == :stopped, do: "open", else: "close"),
       ms: ms,
       # when the server sent it, to order it against loaded gaps
       at: System.os_time(:millisecond)
     }
+
+    event = if reason, do: Map.put(event, :reason, to_string(reason)), else: event
 
     socket =
       cond do

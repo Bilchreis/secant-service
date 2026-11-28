@@ -211,7 +211,7 @@ export const Live = {
         this._rebuild();
         return;
       }
-      patch.series = this._chartSeriesData().map((data, j) => this._dataPatch(data, j));
+      patch.series = this._withRegions(this._chartSeriesData().map((data, j) => this._dataPatch(data, j)));
       if (this._isArrayPlot() && this._arrayMode !== "lines") Object.assign(patch, this._heatPatch());
       this._renderEmpty();
     } else if (this._targetIdx && this._targetIdx.size > 0) {

@@ -7,8 +7,10 @@ import {
   arrayLineColor,
   escHtml,
   formatAxisNumber,
+  formatBucket,
   formatTime,
 } from "./common";
+import { gapAt, gapText } from "./gaps.mjs";
 
 export const Arrays = {
   // the array is wider than the chart has room for
@@ -47,20 +49,10 @@ export const Arrays = {
         ctx.setTransform(dpr, 0, 0, dpr, -cs.x * dpr, -cs.y * dpr);
         ctx.clearRect(cs.x, cs.y, cs.width, cs.height);
 
-        // readings: [first item, timestamp] in time order
-        const starts = [];
-        const times = [];
-        for (let j = 0; j < n; j++) {
-          const t = api.value(0, j);
-          if (j === 0 || t !== times[times.length - 1]) {
-            starts.push(j);
-            times.push(t);
-          }
-        }
+        // readings: [first item, timestamp] in time order; the last one
+        // holds until now (live) or for one typical interval (./gaps.mjs)
+        const { starts, times, held } = this._heatRows((j) => api.value(0, j), n, live);
         const g = times.length;
-        // the last reading holds until now (live) or for one typical interval
-        const lastSpan = g > 1 ? times[g - 1] - times[g - 2] : 1000;
-        const held = times.map((t, k) => (k + 1 < g ? times[k + 1] : live ? Math.max(Date.now(), t) : t + lastSpan));
         // rows end at recording gaps (./gaps.mjs)
         const ends = this._heatRowEnds(times, held);
 
@@ -122,27 +114,64 @@ export const Arrays = {
       retip(p);
     });
     const zr = this._chart.getZr();
-    const hide = () => this._heatTip && (this._heatTip.style.display = "none");
     zr.on("mousemove", (e) => {
-      const hit = this._heatCellAt(e.offsetX, e.offsetY);
-      if (!hit) return hide();
-      if (!this._heatTip || !this._heatTip.isConnected) {
-        this._heatTip = document.createElement("div");
-        this._heatTip.className =
-          "pointer-events-none absolute z-10 rounded border border-line bg-base-100 px-2 py-1 font-mono text-[11px] whitespace-nowrap shadow-sm";
-        this.el.style.position = this.el.style.position || "relative";
-        this.el.appendChild(this._heatTip);
-      }
+      this._pointer = { x: e.offsetX, y: e.offsetY };
+      this._showReadout();
+    });
+    zr.on("globalout", () => {
+      // the class stays until the next move: ECharts fades its tooltip out
+      // after the pointer left, and it would flash up meanwhile
+      this._pointer = null;
+      if (this._heatTip) this._heatTip.style.display = "none";
+    });
+    // after every redraw (a live tick that only moves the axis too): the
+    // region under a resting pointer may have moved or closed
+    this._chart.on("finished", () => this._pointer && this._showReadout());
+  },
+
+  // The readout at the pointer: a heatmap cell's reading, else the gap
+  // region's description (hiding the axis tooltip), else nothing.
+  _showReadout() {
+    const p = this._pointer;
+    const hit = p && this._heatCellAt(p.x, p.y);
+    const gap = p && !hit && this._gapAtPixel(p.x, p.y);
+    this.el.classList.toggle("gap-hover", !!gap);
+    if (!hit && !gap) {
+      if (this._heatTip) this._heatTip.style.display = "none";
+      return;
+    }
+    if (!this._heatTip || !this._heatTip.isConnected) {
+      this._heatTip = document.createElement("div");
+      this._heatTip.className =
+        "pointer-events-none absolute z-10 rounded border border-line bg-base-100 px-2 py-1 font-mono text-[11px] whitespace-pre-wrap shadow-sm";
+      this.el.style.position = this.el.style.position || "relative";
+      this.el.appendChild(this._heatTip);
+    }
+    if (hit) {
       const time = formatTime(hit.t);
       const unit = this._arrayUnit ? ` ${this._arrayUnit}` : "";
       const value = typeof hit.v === "number" ? formatAxisNumber(hit.v) : hit.v;
       this._heatTip.textContent = `${time}  [${hit.i}]  ${value}${unit}${hit.label ? `  ${hit.label}` : ""}`;
-      this._heatTip.style.display = "";
-      const left = Math.min(e.offsetX + 12, this.el.clientWidth - this._heatTip.offsetWidth - 4);
-      this._heatTip.style.left = `${Math.max(0, left)}px`;
-      this._heatTip.style.top = `${Math.max(0, e.offsetY - 30)}px`;
-    });
-    zr.on("globalout", hide);
+    } else {
+      this._heatTip.textContent = gapText(gap, Date.now(), { time: formatTime, duration: formatBucket });
+    }
+    this._heatTip.style.display = "";
+    // within the chart: a gap's long line wraps in a narrow panel. Measured
+    // at the left edge, so the last position doesn't squeeze it.
+    this._heatTip.style.maxWidth = `${Math.max(120, this.el.clientWidth - 8)}px`;
+    this._heatTip.style.left = "0px";
+    const left = Math.min(p.x + 12, this.el.clientWidth - this._heatTip.offsetWidth - 4);
+    this._heatTip.style.left = `${Math.max(0, left)}px`;
+    const top = Math.min(p.y - 30, this.el.clientHeight - this._heatTip.offsetHeight - 4);
+    this._heatTip.style.top = `${Math.max(0, top)}px`;
+  },
+
+  // The marked gap at a pixel inside the plot area, if any (./gaps.mjs)
+  _gapAtPixel(x, y) {
+    const regions = this._gapsOn ? this._gapRegions() : [];
+    if (regions.length === 0 || !this._chart.containPixel({ gridIndex: 0 }, [x, y])) return null;
+    const t = this._chart.convertFromPixel({ xAxisIndex: 0 }, x);
+    return Number.isFinite(t) ? gapAt(t, regions) : null;
   },
 
   _heatCellAt(x, y) {
