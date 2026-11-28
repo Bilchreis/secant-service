@@ -156,11 +156,14 @@ export const Arrays = {
       this._heatTip.textContent = gapText(gap, Date.now(), { time: formatTime, duration: formatBucket });
     }
     this._heatTip.style.display = "";
-    // within the chart: a gap's long line wraps in a narrow panel
+    // within the chart: a gap's long line wraps in a narrow panel. Measured
+    // at the left edge, so the last position doesn't squeeze it.
     this._heatTip.style.maxWidth = `${Math.max(120, this.el.clientWidth - 8)}px`;
+    this._heatTip.style.left = "0px";
     const left = Math.min(p.x + 12, this.el.clientWidth - this._heatTip.offsetWidth - 4);
     this._heatTip.style.left = `${Math.max(0, left)}px`;
-    this._heatTip.style.top = `${Math.max(0, p.y - 30)}px`;
+    const top = Math.min(p.y - 30, this.el.clientHeight - this._heatTip.offsetHeight - 4);
+    this._heatTip.style.top = `${Math.max(0, top)}px`;
   },
 
   // The marked gap at a pixel inside the plot area, if any (./gaps.mjs)
