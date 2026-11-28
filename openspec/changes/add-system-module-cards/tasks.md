@@ -164,7 +164,7 @@
 
 ## 6. Integration
 
-- [ ] 6.1 Load the `run-app` skill. `test/support` is not compiled in dev, so ask the user before a temporary, uncommitted setup:
+- [x] 6.1 Load the `run-app` skill. `test/support` is not compiled in dev, so ask the user before a temporary, uncommitted setup:
   - copies of the test systems under `lib/` and a `:systems` entry in `config/dev.exs` (the user restarts the dev server; never start or stop it yourself);
   - nodes that declare the systems: e.g. a frappy sim config with a `systems` property for a power supply and an MFC group, and the ROCK-IT `gas_analysis` sim's `mass_spec` bound to the mass spec test systems.
 
@@ -175,4 +175,4 @@
   - the mass spec heatmap's `m/z` axis, its lines mode and the mass-picked traces.
 
   Report what was seen. Afterwards remove the temporary systems and config, and verify that `git status` shows neither.
-- [ ] 6.2 Run `mix precommit` and fix everything it reports. Verify it exits cleanly.
+- [x] 6.2 Run `mix precommit` and fix everything it reports. Verify it exits cleanly.

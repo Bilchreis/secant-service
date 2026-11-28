@@ -5,7 +5,9 @@ defmodule SecantService.PlotDB.TracesTest do
   the latest readings, and reading numbers and labels out of node values
   without ever raising.
   """
-  use SecantService.DataCase, async: true
+  # inserts readings: hypertable chunk creation deadlocks with other tests
+  # inserting readings concurrently
+  use SecantService.DataCase, async: false
 
   alias SecantService.PlotDB.ArrayPlot
   alias SecantService.PlotDB.LabelSource

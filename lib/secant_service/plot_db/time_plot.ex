@@ -229,9 +229,11 @@ defmodule SecantService.PlotDB.TimePlot do
         splitLine: %{show: false}
       }
 
+      # the right axis's name sits in the top right corner, where the zoom
+      # tools are: the plot starts lower, so both axis names clear them
       option
       |> Map.update!(:yAxis, &[&1, right])
-      |> Map.update!(:grid, &Map.put(&1, :right, 64))
+      |> Map.update!(:grid, &(&1 |> Map.put(:right, 64) |> Map.put(:top, 64)))
     else
       option
     end
