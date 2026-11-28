@@ -2,9 +2,10 @@ defmodule SecantService.PlotDB.Gaps do
   @moduledoc """
   Gaps of a session: time in which it was not recorded, from its recording
   spans (`SecantService.SecNodes.RecordingSpan`). Number-line plots and
-  numeric array plots (not setpoints) get them as intervals `[g0, g1]` (Unix
-  milliseconds; `g1` nil when no span follows), and the chart hook breaks
-  the lines and ends the heatmap rows there (`assets/js/charts/gaps.mjs`).
+  numeric array plots (not setpoints) get them as intervals `[g0, g1]` or
+  `[g0, g1, reason]` (Unix milliseconds; `g1` nil when no span follows), and
+  the chart hook breaks the lines and ends the heatmap rows there, and marks
+  them with a region that names the reason (`assets/js/charts/gaps.mjs`).
 
     * A gap is time after the session's first span that no span covers,
       including the time after its last span. Time before the first span is
@@ -12,6 +13,10 @@ defmodule SecantService.PlotDB.Gaps do
     * An open span whose `alive_until` is more than #{div(45_000, 1000)} s old
       ends there: its tracker is gone (a server kill, a power loss). An open
       span alive more recently ends now.
+    * A gap's reason is the `end_reason` of the span whose end starts it, as
+      a string: why recording stopped. A stale open span gives
+      `"interrupted"`, as the tracker closes such a span once it finds it.
+      Without a reason the gap has two elements.
     * Sessions without any span (recorded before spans existed) get
       `:no_spans`; their number plots break `value` lines by the spacing of
       the readings instead, using the module's poll interval
@@ -29,7 +34,7 @@ defmodule SecantService.PlotDB.Gaps do
 
   @stale_ms 45_000
 
-  @type gap :: [integer | nil]
+  @type gap :: [integer | nil | String.t()]
 
   @doc """
   The gaps of the session of parameter `param_id` that overlap
@@ -45,40 +50,58 @@ defmodule SecantService.PlotDB.Gaps do
       on: p.module_id == m.id,
       where: p.id == ^param_id,
       order_by: s.started_at,
-      select: {s.started_at, s.alive_until, s.ended_at}
+      select: {s.started_at, s.alive_until, s.ended_at, s.end_reason}
     )
     |> Repo.all()
     |> gaps(now_ms(), from_ms, to_ms)
   end
 
   @doc false
-  # The gaps between `spans` (`{started_at, alive_until, ended_at}`, oldest
-  # first) that overlap the window.
+  # The gaps between `spans` (`{started_at, alive_until, ended_at,
+  # end_reason}`, oldest first) that overlap the window.
   def gaps([], _now, _from, _to), do: :no_spans
 
   def gaps(spans, now, from_ms, to_ms) do
     intervals =
-      Enum.map(spans, fn {started, alive, ended} ->
-        {ms(started), span_end(ms(alive), ms(ended), now)}
+      Enum.map(spans, fn {started, alive, ended, reason} ->
+        {stop, reason} = span_end(ms(alive), ms(ended), now, reason)
+        {ms(started), stop, reason}
       end)
 
-    {gaps, last_end} =
-      Enum.reduce(intervals, {[], nil}, fn {start, stop}, {gaps, prev_end} ->
-        gaps = if prev_end && start > prev_end, do: [[prev_end, start] | gaps], else: gaps
-        {gaps, max(prev_end || stop, stop)}
+    # the reason travels with the span that ends the covered time so far
+    {gaps, last_end, last_reason} =
+      Enum.reduce(intervals, {[], nil, nil}, fn {start, stop, reason},
+                                                {gaps, prev_end, prev_reason} ->
+        gaps =
+          if prev_end && start > prev_end,
+            do: [gap(prev_end, start, prev_reason) | gaps],
+            else: gaps
+
+        if is_nil(prev_end) or stop > prev_end,
+          do: {gaps, stop, reason},
+          else: {gaps, prev_end, prev_reason}
       end)
 
     # after the last span, unless it is still open and alive
-    gaps = if last_end < now, do: [[last_end, nil] | gaps], else: gaps
+    gaps = if last_end < now, do: [gap(last_end, nil, last_reason) | gaps], else: gaps
 
     {:spans, gaps |> Enum.reverse() |> Enum.filter(&overlaps?(&1, from_ms, to_ms))}
   end
 
-  defp span_end(_alive, ended, _now) when is_integer(ended), do: ended
-  defp span_end(alive, nil, now) when now - alive > @stale_ms, do: alive
-  defp span_end(_alive, nil, now), do: now
+  defp span_end(_alive, ended, _now, reason) when is_integer(ended),
+    do: {ended, reason_text(reason)}
 
-  defp overlaps?([g0, g1], from_ms, to_ms),
+  defp span_end(alive, nil, now, _reason) when now - alive > @stale_ms, do: {alive, "interrupted"}
+  defp span_end(_alive, nil, now, _reason), do: {now, nil}
+
+  defp reason_text(nil), do: nil
+  defp reason_text(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp reason_text(reason) when is_binary(reason), do: reason
+
+  defp gap(g0, g1, nil), do: [g0, g1]
+  defp gap(g0, g1, reason), do: [g0, g1, reason]
+
+  defp overlaps?([g0, g1 | _], from_ms, to_ms),
     do: (is_nil(to_ms) or g0 <= to_ms) and (is_nil(from_ms) or is_nil(g1) or g1 >= from_ms)
 
   @doc """

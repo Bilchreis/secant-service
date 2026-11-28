@@ -10,9 +10,10 @@ defmodule SecantService.PlotCache do
   `SecantService.Topics.plot_data/1`, reports oldest first.
 
   When recording of the node stops or resumes (`SecantService.RecordingTracker`
-  calls `recording/3`), the buffered batch is published first and then
-  `{:recording, :stopped | :resumed, ms}` on the same topic, so a plot gets
-  the readings from before a stop before the stop itself.
+  calls `recording/4`), the buffered batch is published first and then
+  `{:recording, :stopped | :resumed, ms, reason}` on the same topic, so a
+  plot gets the readings from before a stop before the stop itself. `reason`
+  is why recording stopped (a span's `end_reason`), nil on a resume.
   """
   use GenServer
 
@@ -35,20 +36,21 @@ defmodule SecantService.PlotCache do
   def flush(node_id), do: call(node_id, :flush)
 
   @doc """
-  Recording of the node stopped or resumed at `ms` (Unix milliseconds).
-  Published after the readings buffered so far. Without a running cache (it
+  Recording of the node stopped or resumed at `ms` (Unix milliseconds), for
+  `reason` (why it stopped; nil on a resume). Published after the readings
+  buffered so far. Without a running cache (it
   is the process that crashed), published at once: its buffer is gone anyway.
   """
-  def recording(node_id, kind, ms) when kind in [:stopped, :resumed] do
+  def recording(node_id, kind, ms, reason \\ nil) when kind in [:stopped, :resumed] do
     case Registry.lookup(Registry.PlotCache, node_id) do
       [{pid, _}] ->
-        GenServer.cast(pid, {:recording, kind, ms})
+        GenServer.cast(pid, {:recording, kind, ms, reason})
 
       [] ->
         Phoenix.PubSub.broadcast(
           @service_pubsub,
           Topics.plot_data(node_id),
-          {:recording, kind, ms}
+          {:recording, kind, ms, reason}
         )
     end
   end
@@ -94,9 +96,9 @@ defmodule SecantService.PlotCache do
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
-  def handle_cast({:recording, kind, ms}, state) do
+  def handle_cast({:recording, kind, ms, reason}, state) do
     state = publish(state)
-    Phoenix.PubSub.broadcast(@service_pubsub, state.topic, {:recording, kind, ms})
+    Phoenix.PubSub.broadcast(@service_pubsub, state.topic, {:recording, kind, ms, reason})
     {:noreply, state}
   end
 

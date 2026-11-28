@@ -253,3 +253,9 @@ html {
   flex: 1 1 0%;
   min-width: 0;
 }
+
+/* Over a recording gap the chart's own readout describes the gap; the axis
+   tooltip (inline display styles, hence !important) stays hidden there. */
+.gap-hover .sc-chart-tooltip {
+  display: none !important;
+}

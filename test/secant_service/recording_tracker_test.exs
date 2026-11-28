@@ -122,7 +122,7 @@ defmodule SecantService.RecordingTrackerTest do
 
     assert [%{ended_at: nil} = span] = spans(ctx, pid)
     assert ms(span.started_at) == @t0
-    assert_receive {:recording, :resumed, @t0}
+    assert_receive {:recording, :resumed, @t0, nil}
   end
 
   test "a node inactive at start opens with the first value update after its activation", ctx do
@@ -148,7 +148,7 @@ defmodule SecantService.RecordingTrackerTest do
     report(ctx, pid, state: :disconnected)
     assert [%{end_reason: :disconnected} = first] = spans(ctx, pid)
     assert ms(first.ended_at) == @t0 + 10_000
-    assert_receive {:recording, :stopped, _}
+    assert_receive {:recording, :stopped, _, :disconnected}
 
     # reconnected, `active` still true from before; no values yet
     pass(ctx.clock, 60_000)
@@ -227,12 +227,12 @@ defmodule SecantService.RecordingTrackerTest do
     start_statem(ctx)
     pid = start_tracker(ctx)
     beat(pid)
-    assert_receive {:recording, :resumed, _}
+    assert_receive {:recording, :resumed, _, nil}
 
     pass(ctx.clock, 5_000)
     stop_supervised!(:tracker)
 
-    assert_receive {:recording, :stopped, stopped}
+    assert_receive {:recording, :stopped, stopped, :stopped}
     assert stopped == @t0 + 5_000
 
     assert [%{end_reason: :stopped} = span] =
@@ -311,7 +311,7 @@ defmodule SecantService.RecordingTrackerTest do
 
     assert [%{end_reason: :interrupted} = span] = spans(ctx, pid)
     assert ms(span.ended_at) == @t0 + 10_000
-    assert_receive {:recording, :stopped, stopped}
+    assert_receive {:recording, :stopped, stopped, :interrupted}
     assert stopped == @t0 + 10_000
 
     # the next value update opens a new span

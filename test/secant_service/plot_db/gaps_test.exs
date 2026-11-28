@@ -22,15 +22,19 @@ defmodule SecantService.PlotDB.GapsTest do
       started_at: at(from),
       alive_until: at(alive),
       ended_at: to && at(to),
-      end_reason: to && :disconnected
+      end_reason: to && Keyword.get(opts, :reason, :disconnected)
     })
   end
 
   describe "gaps/4" do
-    # spans as {started, alive, ended} in seconds from @start
+    # spans as {started, alive, ended} or {started, alive, ended, reason},
+    # in seconds from @start
     defp gaps(spans, now, from \\ nil, to \\ nil) do
       spans
-      |> Enum.map(fn {s, a, e} -> {at(s), at(a), e && at(e)} end)
+      |> Enum.map(fn
+        {s, a, e} -> {at(s), at(a), e && at(e), nil}
+        {s, a, e, r} -> {at(s), at(a), e && at(e), r}
+      end)
       |> Gaps.gaps(ms(now), from && ms(from), to && ms(to))
     end
 
@@ -43,7 +47,7 @@ defmodule SecantService.PlotDB.GapsTest do
 
     test "an open span ends now while alive, at its last heartbeat once stale" do
       assert gaps([{0, 100, nil}], 120) == {:spans, []}
-      assert gaps([{0, 100, nil}], 700) == {:spans, [[ms(100), nil]]}
+      assert gaps([{0, 100, nil}], 700) == {:spans, [[ms(100), nil, "interrupted"]]}
     end
 
     test "time before the first span is no gap; no spans at all is :no_spans" do
@@ -60,6 +64,24 @@ defmodule SecantService.PlotDB.GapsTest do
       assert gaps(spans, 1001, 400, 500) == {:spans, [[ms(300), ms(1000)]]}
       assert gaps(spans, 1001, 0, 150) == {:spans, [[ms(100), ms(200)]]}
     end
+
+    test "a gap carries the reason of the span whose end starts it" do
+      assert gaps([{0, 3590, 3590, :interrupted}, {4320, 4320, nil}], 4321) ==
+               {:spans, [[ms(3590), ms(4320), "interrupted"]]}
+
+      # as stored: a string
+      assert gaps([{0, 100, 100, "disconnected"}], 200) ==
+               {:spans, [[ms(100), nil, "disconnected"]]}
+
+      # a stale open span: recording was interrupted
+      assert gaps([{0, 100, nil}], 700) == {:spans, [[ms(100), nil, "interrupted"]]}
+    end
+
+    test "the reason is the one of the span that ends the covered time" do
+      # a short span inside a longer one doesn't take over its reason
+      spans = [{0, 1000, 1000, :stopped}, {100, 200, 200, :disconnected}, {1100, 1100, nil}]
+      assert gaps(spans, 1101) == {:spans, [[ms(1000), ms(1100), "stopped"]]}
+    end
   end
 
   describe "for_param/3" do
@@ -68,7 +90,12 @@ defmodule SecantService.PlotDB.GapsTest do
       span(node, 0, 100)
       span(node, 200, 300)
 
-      assert {:spans, [[g0, g1], [g2, nil]]} = Gaps.for_param(param.id, nil, nil)
+      span(node, 400, 500, reason: :deactivated)
+
+      assert {:spans,
+              [[g0, g1, "disconnected"], [g2, _, "disconnected"], [_, nil, "deactivated"]]} =
+               Gaps.for_param(param.id, nil, nil)
+
       assert {g0, g1, g2} == {ms(100), ms(200), ms(300)}
 
       # another session's spans don't count
@@ -101,7 +128,10 @@ defmodule SecantService.PlotDB.GapsTest do
       span(node, 200, 200, alive: 200)
 
       plot = PlotDB.init(value, :historical)
-      assert %{gaps: [[g0, g1], [_, nil]], fallback: %{}} = plot.option._gaps
+
+      assert %{gaps: [[g0, g1, "disconnected"], [_, nil, "disconnected"]], fallback: %{}} =
+               plot.option._gaps
+
       assert {g0, g1} == {ms(100), ms(200)}
 
       {enum_node, enum} =
@@ -149,7 +179,7 @@ defmodule SecantService.PlotDB.GapsTest do
 
       plot = PlotDB.init(value, :historical)
       assert plot.plot_type == :array_heatmap
-      assert %{gaps: [[g0, g1], [_, nil]], fallback: %{}} = plot.option._gaps
+      assert %{gaps: [[g0, g1 | _], [_, nil | _]], fallback: %{}} = plot.option._gaps
       assert {g0, g1} == {ms(100), ms(200)}
     end
 

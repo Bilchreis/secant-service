@@ -8,8 +8,11 @@ import {
   breakLine,
   breakRows,
   clipRowEnds,
+  gapAt,
+  gapText,
   isolatedPoints,
   mergeGaps,
+  regionMarks,
   spacingGaps,
 } from "./gaps.mjs";
 
@@ -291,4 +294,215 @@ test("a span-less number line with fallback breaks keeps its gap patch", () => {
   const patch = hook._gapPatch(broken, 0);
   assert.equal(patch.sampling, "none");
   assert.equal(patch.showSymbol, true);
+});
+
+// -- reasons and regions -------------------------------------------------------
+
+test("gaps keep their reason through joins, same starts and live events", () => {
+  // joined: the earliest reason known
+  assert.deepEqual(mergeGaps([[[s(100), s(500), "interrupted"]], [[s(450), s(700), "disconnected"]]]), [
+    [s(100), s(700), "interrupted"],
+  ]);
+  assert.deepEqual(mergeGaps([[[s(100), s(500)]], [[s(450), s(700), "disconnected"]]]), [
+    [s(100), s(700), "disconnected"],
+  ]);
+  // a gap that joins nothing keeps its own
+  assert.deepEqual(mergeGaps([[[s(10), s(20), "stopped"], [s(30), s(40), "deactivated"]]]), [
+    [s(10), s(20), "stopped"],
+    [s(30), s(40), "deactivated"],
+  ]);
+  // an open gap with a reason, then a finite one without: the reason moves over
+  assert.deepEqual(mergeGaps([[[s(100), null, "disconnected"]], [[s(100), s(250)]]]), [
+    [s(100), s(250), "disconnected"],
+  ]);
+  // ... and a finite gap's own reason wins
+  assert.deepEqual(mergeGaps([[[s(100), null, "disconnected"]], [[s(100), s(250), "stopped"]]]), [
+    [s(100), s(250), "stopped"],
+  ]);
+  // live: the open event's reason, kept by the close
+  assert.deepEqual(
+    mergeGaps([], [
+      { kind: "open", ms: s(100), at: 1, reason: "disconnected" },
+      { kind: "close", ms: s(160), at: 2 },
+    ]),
+    [[s(100), s(160), "disconnected"]],
+  );
+  // no reason: two elements, as before
+  assert.deepEqual(mergeGaps([[[s(1), s(2)]]]), [[s(1), s(2)]]);
+});
+
+test("breakLine reports every gap that qualifies, also two between the same readings", () => {
+  const data = [[0, 1], [s(1000), 2]];
+  const a = [s(100), s(220)];
+  const b = [s(400), s(700)];
+  const used = new Set();
+  const { data: out } = breakLine(data, [a, b], { used });
+  assert.equal(nulls(out).length, 1);
+  assert.deepEqual([...used], [a, b]);
+
+  // a 30 s gap at a 15-minute width is not shown, so not reported
+  const coarse = new Set();
+  breakLine(data, [[s(100), s(130)]], { widthAt: () => s(900), used: coarse });
+  assert.equal(coarse.size, 0);
+});
+
+test("breakHeld reports only gaps it ended the line at", () => {
+  const before = [s(10), s(50)];
+  const after = [s(200), s(300)];
+  const used = new Set();
+  breakHeld([[s(100), 5]], [before, after], { used });
+  // no setpoint in force before the first reading: nothing broke there
+  assert.deepEqual([...used], [after]);
+});
+
+test("clipRowEnds reports a second qualifying gap inside a row's hold", () => {
+  const first = [s(100), s(200)];
+  const second = [s(400), s(700)];
+  const used = new Set();
+  const ends = clipRowEnds([0, s(1000)], [s(1000), s(1010)], [first, second], { used });
+  assert.equal(ends[0], s(100));
+  assert.deepEqual([...used], [first, second]);
+});
+
+test("gapAt finds the region under a time, at its edges and between regions", () => {
+  const regions = [[s(10), s(20), "stopped"], [s(50), null]];
+  assert.equal(gapAt(s(9), regions), null);
+  assert.equal(gapAt(s(10), regions), regions[0]);
+  assert.equal(gapAt(s(19), regions), regions[0]);
+  assert.equal(gapAt(s(20), regions), null);
+  assert.equal(gapAt(s(30), regions), null);
+  assert.equal(gapAt(s(9999), regions), regions[1]);
+  assert.equal(gapAt(0, []), null);
+});
+
+test("gapText says what, why and when", () => {
+  const fmt = { time: (ms) => `t${ms / 1000}`, duration: (ms) => `${ms / 1000} s` };
+  const reasons = {
+    disconnected: "Node disconnected",
+    deactivated: "Node deactivated",
+    stopped: "Recording stopped",
+    interrupted: "Recording interrupted",
+  };
+  for (const [reason, label] of Object.entries(reasons)) {
+    assert.equal(gapText([s(20), s(28), reason], 0, fmt), `Not recorded\n${label}\nt20 → t28 · 8 s`);
+  }
+  // unknown: no reason line
+  assert.equal(gapText([s(20), s(28)], 0, fmt), "Not recorded\nt20 → t28 · 8 s");
+  // ongoing: the duration so far
+  assert.equal(
+    gapText([s(20), null, "disconnected"], s(200), fmt),
+    "Not recorded\nNode disconnected\nsince t20 · 180 s, ongoing",
+  );
+});
+
+test("regionMarks: an area per region, an open one to the edge, lines at the ends it has", () => {
+  const { areas, lines } = regionMarks([[s(10), s(20)], [s(50), null, "disconnected"]]);
+  assert.deepEqual(areas, [
+    [{ xAxis: s(10) }, { xAxis: s(20) }],
+    [{ xAxis: s(50) }, { xAxis: Infinity }],
+  ]);
+  assert.deepEqual(lines, [{ xAxis: s(10) }, { xAxis: s(20) }, { xAxis: s(50) }]);
+});
+
+// a fake number-plot hook: buffers by series index, which are setpoints
+const plotHook = (gaps, seriesData, extra = {}) => ({
+  ...Gaps,
+  _isArrayPlot: () => false,
+  _gapsOn: true,
+  _gapSets: [gaps],
+  _gapLive: [],
+  _gapFallback: {},
+  _rangeButtons: null,
+  _resolution: null,
+  _detail: null,
+  _seriesData: seriesData,
+  _targetIdx: new Set(),
+  _heldTarget: (d) => [...d, [s(99999), d.length ? d[d.length - 1][1] : null]],
+  _pointTs: (p) => p[0],
+  ...extra,
+});
+
+// what _chartSeriesData does around the series data
+const mark = (hook) => {
+  hook._markBegin();
+  Object.keys(hook._seriesData).forEach((idx) => hook._drawnData(idx));
+  hook._markEnd();
+  return hook._gapRegions();
+};
+
+test("the regions are the gaps a line or setpoint breaks at, not a too-short one", () => {
+  const value = [...every(0, 100), ...every(400, 500), ...every(800, 900)];
+  const target = [[0, 5], [s(850), 6]];
+  const shown = [s(100), s(400), "disconnected"];
+  const short = [s(600), s(601)];
+  const held = [s(700), s(800)];
+  // value: readings 1 s apart through the short and the held gap: no break;
+  // the setpoint breaks at both qualifying gaps (it holds through them)
+  const hook = plotHook([shown, short, held], { 0: value, 1: target }, { _targetIdx: new Set(["1"]) });
+  const regions = mark(hook);
+  assert.deepEqual(regions, [shown, held]);
+});
+
+test("gaps at the ends of the readings are marked: no reading after, or none before", () => {
+  const value = every(100, 200);
+  const closedAfter = [s(250), s(300)];
+  const open = [s(400), null, "disconnected"];
+  const before = [s(10), s(50)];
+  const hook = plotHook([before, closedAfter, open], { 0: value });
+  assert.deepEqual(mark(hook), [before, closedAfter, open]);
+  // no readings at all: every gap
+  assert.deepEqual(mark(plotHook([before], { 0: [] })), [before]);
+});
+
+test("an open gap stays marked with a reading stamped just after its start", () => {
+  // the node's clock runs 2 s ahead of the server's g0
+  const value = [...every(100, 200), [s(201), 7]];
+  const open = [s(200), null];
+  assert.deepEqual(mark(plotHook([open], { 0: value })), [open]);
+});
+
+test("a held setpoint's point at now doesn't unmark an open gap", () => {
+  const open = [s(300), null];
+  // the hold adds a point at s(99999); only recorded readings count
+  const hook = plotHook([open], { 0: every(0, 100), 1: [[0, 5]] }, { _targetIdx: new Set(["1"]) });
+  assert.deepEqual(mark(hook), [open]);
+});
+
+test("a module plot whose setpoint keeps its pre-window reading marks a gap past the left edge", () => {
+  // live 10-minute window from s(600); the value's pre-outage readings trimmed,
+  // the setpoint's reading in force kept from s(0)
+  const gap = [s(60), s(700), "disconnected"];
+  const hook = plotHook([gap], { 0: every(700, 1200), 1: [[0, 5]] }, { _targetIdx: new Set(["1"]) });
+  assert.deepEqual(mark(hook), [gap]);
+});
+
+test("the regions are in time order when a later gap is found first", () => {
+  const early = [s(100), s(300)];
+  const late = [s(700), s(900)];
+  // series 0 breaks only at the late gap, series 1 only at the early one
+  const hook = plotHook([early, late], {
+    0: [[0, 1], ...every(300, 600), ...every(900, 1000)],
+    1: [...every(0, 100), [s(300), 1], [s(600), 1], [s(1000), 1]],
+  });
+  const regions = mark(hook);
+  assert.deepEqual(regions, [early, late]);
+});
+
+test("fallback breaks of a session without spans mark nothing", () => {
+  const data = [[0, 1], [s(600), 2], [s(1200), 3]];
+  const hook = plotHook([], { 0: data }, { _gapFallback: { 0: 2000 } });
+  assert.equal(nulls(hook._broken(0).data).length, 2);
+  assert.deepEqual(mark(hook), []);
+});
+
+test("a heatmap marks the gaps its rows end at", () => {
+  const cells = [];
+  for (let t = 0; t <= 100; t += 10) cells.push([s(t), 0, 1], [s(t), 1, 2]);
+  for (let t = 400; t <= 500; t += 10) cells.push([s(t), 0, 1], [s(t), 1, 2]);
+  const gap = [s(105), s(400)];
+  const short = [s(450), s(451)];
+  const hook = arrayHook([gap, short], { _arrayMode: "heatmap", _seriesData: { 0: cells }, _pointTs: (p) => p[0] });
+  hook._markBegin();
+  hook._markEnd();
+  assert.deepEqual(hook._gapRegions(), [gap]);
 });

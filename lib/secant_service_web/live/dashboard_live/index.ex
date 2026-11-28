@@ -372,13 +372,13 @@ defmodule SecantServiceWeb.DashboardLive.Index do
   end
 
   # recording of the node stopped or resumed: the open plot breaks its lines
-  def handle_info({:recording, kind, ms}, socket) do
+  def handle_info({:recording, kind, ms, reason}, socket) do
     %{current_node: node, selected_module: selected, plot_param: plot_param} = socket.assigns
 
     if node && selected do
       send_update(SecantServiceWeb.Components.HistoryDB,
         id: plot_id(node, selected, plot_param),
-        recording: {kind, ms}
+        recording: {kind, ms, reason}
       )
     end
 

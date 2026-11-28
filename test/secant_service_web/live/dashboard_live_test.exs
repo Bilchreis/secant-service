@@ -210,13 +210,20 @@ defmodule SecantServiceWeb.DashboardLiveTest do
     id = SecantServiceWeb.DashboardLive.Index.plot_id(node, "temp", nil)
 
     send_value_update(node_id, "temp", "value", [3.75, %{t: 1_700_000_002.0}])
-    SecantService.PlotCache.recording(node_id, :stopped, 1_700_000_003_000)
+    SecantService.PlotCache.recording(node_id, :stopped, 1_700_000_003_000, :disconnected)
     SecantService.PlotCache.recording(node_id, :resumed, 1_700_000_009_000)
     rerender(view)
 
     assert_push_event(view, "extend-chart-" <> ^id, %{seriesUpdates: [_ | _]})
-    assert_push_event(view, "gap-chart-" <> ^id, %{kind: "open", ms: 1_700_000_003_000})
-    assert_push_event(view, "gap-chart-" <> ^id, %{kind: "close", ms: 1_700_000_009_000})
+
+    assert_push_event(view, "gap-chart-" <> ^id, %{
+      kind: "open",
+      ms: 1_700_000_003_000,
+      reason: "disconnected"
+    })
+
+    assert_push_event(view, "gap-chart-" <> ^id, %{kind: "close", ms: 1_700_000_009_000} = close)
+    refute Map.has_key?(close, :reason)
   end
 
   test "a recording event leaves a plot without a graph (status, a table) alone",

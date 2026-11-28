@@ -12,7 +12,7 @@ defmodule SecantService.Topics do
   On `SecantService.PubSub`:
     * `processed_values/1`: values that changed, from `SecantService.NodeValues`
     * `plot_data/1`: batched plot points, `{:plot_data, batch}`, and the
-      starts and ends of recording, `{:recording, :stopped | :resumed, ms}`,
+      starts and ends of recording, `{:recording, :stopped | :resumed, ms, reason}`,
       from `SecantService.PlotCache`
     * `node_services/0`: services started and stopped, from `SecantService.NodeManager`
   """
