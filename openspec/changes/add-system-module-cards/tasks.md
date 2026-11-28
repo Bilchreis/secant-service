@@ -5,7 +5,7 @@
 - [ ] 1.1 Add `SecantService.Systems` with the `Binding` struct (including `parents`), `bindings/1`, `bindings_for/2` and `parse_reference/1`, following design.md Decision 1:
   - read `custom_properties` `"systems"` or `:systems`, normalising keys with `to_string/1` and creating no atoms;
   - parse references (no `:` is version 0, digits-only suffix, non-empty name) and drop malformed entries and entries without a `modules` map;
-  - bind module names (module names win over local names); record subsystem containment and resolve parents outwards with a visited set, following the containing entry first by local name;
+  - bind module names (module names win over local names); record subsystem containment and resolve parents outwards with a visited set, following the containing entry first by local system name;
   - sort each module's bindings by local system name.
 
   Verify `mix compile --warnings-as-errors`.
@@ -27,7 +27,7 @@
   - `TestPowerSupply` (system `PowerSupply`, versions `[0]`), with role modules:
     - `current`: requires and shows `control_active`; its card body has a `#sys-body-<module>` element rendering `value` and `control_active` through the 3.1 helpers; plot traces `value`, `target` (setpoint) and `voltage_limit` (axis 1);
     - `voltage`: card only, no plot;
-  - `TestMfcGroup`: one role, plot only. Its traces are `value` → `composition` per element, labelled `{:path, ["gas_list"]}`, and `value` → `total_flow` on axis 1.
+  - `TestMfcGroup`: one role, plot only. Its traces draw `value.composition` per element, with labels read from `value.gas_list` (`{:path, ["gas_list"]}`), and `value.total_flow` on axis 1.
 
   Unit-test the registry in `test/secant_service_web/systems_test.exs`:
   - no config gives no matches;
@@ -42,10 +42,10 @@
 ## 3. Custom cards on the dashboard
 
 - [ ] 3.1 Add `SecantServiceWeb.Systems.Components` (`card_param`, `card_status`, `card_sparkline`, `card_command`), building ids from `node`, `module` and `location` as design.md Decision 3 describes. Verify `mix compile --warnings-as-errors`.
-- [ ] 3.2 In `DashboardLive`, add the uuid-keyed `systems` assign (`{uuid, matches, shown}`) and pass `matches` to `ModuleGrid` and `ModuleDetail`. In the node browser, compute `matches` once per loaded session and pass it to `ModuleDetail`. Verify that the existing dashboard and node browser LiveView tests pass unchanged.
+- [ ] 3.2 In `DashboardLive`, add the uuid-keyed `systems` assign (`{uuid, matches, shown}`) through an `assign_systems/1` helper piped after each `Model.to_socket/2` call (not inside `SecantService.Model`), and pass `matches` to `ModuleGrid` and `ModuleDetail`. In the node browser, compute `matches` once per loaded session and pass it to `ModuleDetail`. Verify that the existing dashboard and node browser LiveView tests pass unchanged.
 - [ ] 3.3 Load the `daisyui` skill. In `ModuleGrid`:
   - move the chrome of `module_card/1` into a private `card_shell/1` with `:badge`, `:inner_block` and `:actions` slots, keeping the generic card's rendered markup unchanged;
-  - add `system_card/1`: the shell, the `#card-<name>-system` badge, `data-system`/`data-role` on the article, and the role's card body with assigns including `location: "module_dash"`;
+  - add `system_card/1`: the shell (keeping its `data-stale` and `data-status` attributes), the `#card-<name>-system` badge, `data-system`/`data-role` on the article, the role's card body with assigns including `location: "module_dash"`, and a params button counting all of the module's commands;
   - use it for matched modules whose role gives a card, among the non-acquisition modules only.
 
   Update the `DashboardComponents` moduledoc, which says cards may assume nothing beyond SECoP's standard parameters, to explain the system-card exception. Verify that the existing dashboard and acquisition-card LiveView tests pass unchanged.
@@ -64,38 +64,50 @@
 
 ## 4. Live values of card parameters
 
-- [ ] 4.1 In `DashboardLive`, add the pure `card_route/3` and use it in `update_components` to route the shown pairs to `module_dash:<node>:<module>:<param>`, skipping those `update_cards/4` already sends (design.md Decision 4). Test:
-  - `card_route/3` in a unit test (a shown extra parameter is routed; `value` is not routed twice; an undeclared parameter is not routed);
+- [ ] 4.1 In `DashboardLive`, add the pure `card_route/3` and use it in `update_components` (now taking `shown` as a sixth argument) to route the shown pairs to `module_dash:<node>:<module>:<param>`, skipping only `value` and `target`, which `update_cards/4` already sends there (design.md Decision 4). Test:
+  - `card_route/3` in a unit test (a shown `control_active` and a shown `goal` are routed; `value` and `target` are not routed twice; an undeclared parameter is not routed);
   - in `system_card_test.exs`, that a pushed `control_active` value reaches the custom card's display, and that the card shows the node's current `control_active` on first render.
 
   Verify both pass.
 
 ## 5. Custom module plot
 
-- [ ] 5.1 Add `Trace.extract/2` (never raises; string-then-existing-atom keys, array indices, non-numbers give nil) and `PlotDB.traces/2` (find the parameter, check the declared type gives a number at the path, expand `each` from `Channels.declared_length/1` or the latest reading, cut to 16, stable series names, fall back to the generic lines when empty). Unit-test in `test/secant_service/plot_db/traces_test.exs`:
+- [ ] 5.1 Add:
+  - `Trace.extract/2`: never raises; string-then-existing-atom keys, array indices; non-numbers give nil;
+  - `PlotDB.drawable?/2`: declared types only, no database access;
+  - `PlotDB.traces/3`: find the parameter, keep it if `drawable?` holds, expand `each` from `Channels.declared_length(…, max: 16)` or the latest reading without ever building more than the slots left under the cap, cut to 16, give stable series names, dedupe by series name, and fall back to the generic lines when empty.
+
+  Unit-test in `test/secant_service/plot_db/traces_test.exs`:
   - `extract/2` on atom- and string-key structs, short arrays, nil and error values;
-  - traces: a missing parameter, a path to a string, an all-undrawable spec, a 200-element `maxlen` cut to 16, and stable names (`value`, `value.composition[2]`).
+  - traces: a missing parameter, a path to a string, an all-undrawable spec, a 350 000-element `maxlen` giving 16 traces without building more, a duplicate trace, and stable names (`value`, `value.composition[2]`);
+  - `drawable?/2` making no Repo query.
 
   Verify the file passes.
 - [ ] 5.2 In `TimePlot`/`Scalar`, add `build_custom/3`:
   - one window fetch per distinct parameter (the held fetch for setpoint parameters), with traces extracted from it;
-  - labels from the latest reading (`_label` on the series), fallback labels;
+  - labels from the latest reading of the trace's own parameter in the first window (`_label` on the series), fallback labels;
   - setpoint (`_held`) and hidden (`legend.selected`) traces;
-  - bands only for whole-parameter, non-setpoint traces;
-  - `Gaps.put/3`;
+  - bands only for whole-parameter, non-setpoint traces (`Bands.eligible?/1` requires an empty path);
+  - `Gaps.put/3`, with `Gaps.fallback/2` requiring an empty path;
   - the two-axis option.
 
-  Give the plot `traces`, and make `trace_updates/3` fan readings out to their traces. Make `Scalar.series_updates/3` return `[]` for an unknown series instead of series 0. Test in `test/secant_service/plot_db_test.exs` with stored readings:
-  - query count: one window per parameter, as design.md states;
+  Give the plot both a line-shaped `lines` list (one entry per resolved trace) and the `traces` fan-out map (design.md Decision 5). Make `trace_updates/3` fan a parameter's readings out by parameter name, each trace taking the value at its path. Make `Scalar.series_updates/3` return `[]` for an unknown series instead of series 0. Test in `test/secant_service/plot_db_test.exs` with stored readings:
+  - query count: one window query per distinct parameter, counted through the Repo's query telemetry;
+  - the custom plot carries `_gaps` and a gap reply, and a span-less session's estimate applies only to the whole `value` trace;
   - the MFC group gives four labelled composition traces plus `total_flow` on axis 1, with `yAxisIndex: 1` and the axis labels;
   - a missing label falls back;
   - live `trace_updates/3` fans out by stable name, and a gas-list change keeps the labels;
   - the band and gap rules.
 
   Verify the file passes.
-- [ ] 5.3 In `echarts_chart.js`, show `_label || name` in the legend and tooltip. Verify with 6.1, and with a `node --test` case alongside `assets/js/charts/gaps.test.mjs` if the formatter is a pure function.
-- [ ] 5.4 In `HistoryDB`, accept an optional `plot_spec` assign. Use it for `plottable?` and `init` on mount and reloads. When the loaded plot carries `traces`, make the range, window and overview handlers fetch once per distinct parameter and fan out, and make the live filter read the plot's traces. Plots without `traces` keep today's code. Verify that the existing `HistoryDB`, plot and LiveView tests pass unchanged.
-- [ ] 5.5 In `ModuleDetail`, pass the matched role's `plot()` as `plot_spec` to the module plot only (never to a parameter plot), and gate it on `@plot_parameter || @has_value || custom plot drawable`. In `system_card_test.exs`, test that:
+- [ ] 5.3 Show `_label || name`, escaped with `escHtml` from `common.js`, in three places:
+  - the legend formatter in `echarts_chart.js`;
+  - a new axis-tooltip formatter for number plots (today ECharts' default);
+  - `bands.js` `_envelopeTooltip`.
+
+  Put the label/escape logic in a pure `.mjs` helper and test it with `node --test` alongside `assets/js/charts/gaps.test.mjs`, including a `<b>N2</b>` label shown literally. Verify both tests pass.
+- [ ] 5.4 In `HistoryDB`, accept an optional `plot_spec` assign. Use `PlotDB.drawable?/2` on mount when a spec is given, and pass the spec to `init` on mount and reloads. When the loaded plot carries `traces`, make the range, window and overview handlers fetch once per distinct `line.param.id` and fan out, and make the live filter read the plot's `lines`. Plots without `traces` keep today's code. Verify that the existing `HistoryDB`, plot and LiveView tests pass unchanged.
+- [ ] 5.5 In `ModuleDetail`, pass the matched role's `plot()` as `plot_spec` to the module plot only (never to a parameter plot), and gate it on `@plot_parameter || @has_value || PlotDB.drawable?(module, spec)`. In `system_card_test.exs`, test that:
   - the live module plot of the matched `current` module draws the three test traces;
   - a pushed `voltage_limit` reading is sent as an `extend-chart-<id>` update;
   - a parameter plot opened from a row stays generic;
@@ -112,7 +124,7 @@
   In headless Chrome, check:
   - the custom card;
   - the two-axis module plot extending live, zooming in the data browser, and breaking at a recording gap (pause and resume the node);
-  - the gas-name labels in the legend and tooltip.
+  - the gas-name labels in the legend, the live tooltip and the banded historical tooltip.
 
   Report what was seen. Afterwards remove the temporary systems and config, and verify that `git status` shows neither.
 - [ ] 6.2 Run `mix precommit` and fix everything it reports. Verify it exits cleanly.

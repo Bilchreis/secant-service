@@ -62,7 +62,7 @@ A reading that has no number at a trace's path SHALL give that trace no point, a
 - **THEN** the fourth trace gets no point for that reading, and the dashboard keeps working
 
 ### Requirement: Trace labels
-A trace's legend and tooltip label SHALL be fixed text, or SHALL be read from the latest reading when the plot loads: a path in the same parameter's value (for per-element traces, the element at the same index of an array) or a path in another parameter's value. Without a usable label (missing, empty or not a string), a trace SHALL be labelled by its parameter and path.
+A trace's legend and tooltip label SHALL be fixed text, or SHALL be read when the plot loads from a path in the latest reading of the trace's own parameter (for per-element traces, the element at the same index of an array). Without a usable label (missing, empty or not a string, or no reading yet), a trace SHALL be labelled by its parameter and path, e.g. `value.composition[2]`. Labels SHALL be shown as text, never as markup.
 
 #### Scenario: Gas names
 - **WHEN** the MFC group's latest `value` has `gas_list` `[N2, H2, CO, O2]` and the plot labels the composition traces from `gas_list`
@@ -74,6 +74,10 @@ A trace's legend and tooltip label SHALL be fixed text, or SHALL be read from th
 
 ### Requirement: Labels are display only
 Labels SHALL stay as loaded until the plot loads again. Labels SHALL NOT change how the plot's lines are identified, so equal labels or a changed label leave zooming, live updates and the legend's hidden lines intact.
+
+#### Scenario: Label with markup
+- **WHEN** the latest `gas_list` holds the string `<b>N2</b>`
+- **THEN** the legend and tooltip show the literal text `<b>N2</b>`
 
 #### Scenario: Equal labels
 - **WHEN** two composition traces get the same gas name as their label
@@ -102,11 +106,15 @@ Traces marked for the second axis SHALL be drawn against an axis on the right, a
 - **THEN** the left axis is labelled A and the right axis V, and `voltage_limit` is drawn against the right axis
 
 ### Requirement: Recording gaps and bands
-Every trace SHALL break at the session's recording gaps as the number lines of a module plot do. For a session recorded without spans, the gap estimate SHALL apply only to a trace that is the whole `value` parameter. In the data browser, an envelope band SHALL be drawn only for a trace that is a whole number parameter and not a setpoint.
+Every trace SHALL break at the session's recording gaps as the number lines of a module plot do, and a live custom plot SHALL break when recording stops. For a session recorded without spans, the gap estimate SHALL apply only to a trace that is the whole `value` parameter. In the data browser, an envelope band SHALL be drawn only for a trace that is a whole number parameter and not a setpoint.
 
 #### Scenario: Trace across a gap
 - **WHEN** the session has a recording gap inside the shown window
 - **THEN** every trace of the custom plot is broken there
+
+#### Scenario: Session without spans
+- **WHEN** a session recorded before recording spans existed is plotted with a whole `value` trace and a `value.composition[2]` trace
+- **THEN** only the whole `value` trace gets the estimated gaps
 
 #### Scenario: Band on a whole parameter only
 - **WHEN** a thinned historical custom plot draws a whole number parameter `pressure` and a `composition` element of `value`

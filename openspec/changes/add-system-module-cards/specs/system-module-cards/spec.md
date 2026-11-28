@@ -77,6 +77,10 @@ Every parameter a custom card declares it shows SHALL be updated live on the car
 - **WHEN** the dashboard is opened on a node whose `magcur_x` has `control_active` true
 - **THEN** the custom card shows `control_active` true right away
 
+#### Scenario: Shown goal
+- **WHEN** a custom card of an unclaimed acquisition channel declares that it shows `goal` and the node reports a new `goal`
+- **THEN** the card's `goal` display shows the new value
+
 #### Scenario: Shown value
 - **WHEN** a custom card declares that it shows `value` and the node reports a new `value`
 - **THEN** the card's value display gets that reading once
