@@ -12,8 +12,10 @@ defmodule SecantService.PlotDB.TimePlot do
   so live readings and zoomed windows of a parameter find the series they
   belong to (see `SecantService.PlotDB.trace_updates/3`).
 
-  Number-line plots also carry the gaps of their session (`_gaps` on the
-  option, see `SecantService.PlotDB.Gaps`), where the chart breaks its lines.
+  Number-line plots and numeric array plots (not setpoints) also carry the
+  gaps of their session (`_gaps` on the option, see
+  `SecantService.PlotDB.Gaps`), where the chart breaks its lines and ends
+  its heatmap rows.
   """
 
   alias SecantService.PlotDB.Bands
@@ -60,6 +62,7 @@ defmodule SecantService.PlotDB.TimePlot do
       )
       |> plot([value], ArrayHeatmap, [resolution])
       |> Map.put(:plot_type, :array_heatmap)
+      |> array_gaps(value, mode)
     end
   end
 
@@ -124,6 +127,11 @@ defmodule SecantService.PlotDB.TimePlot do
     |> Bands.put(fetched, mode)
     |> Gaps.put(lines, gap_window(mode))
   end
+
+  # a numeric array gets its session's gaps, unless it is a setpoint (held
+  # from before the window, see `fetch/2`)
+  defp array_gaps(plot, %{setpoint?: true}, _mode), do: plot
+  defp array_gaps(plot, value, mode), do: Gaps.put(plot, [value], gap_window(mode))
 
   # what the first load covers, for its gaps (`SecantService.PlotDB.Gaps`):
   # a historical plot all of its session, a live one its range
